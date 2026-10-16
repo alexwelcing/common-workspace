@@ -2,7 +2,19 @@
 
 A browser workspace for password-protected team sessions: invite links, a shared canvas, text, sticky notes, images, shapes, freehand drawing, Mermaid and PlantUML diagrams, chat, presence, simultaneous window sharing, and shared layer controls.
 
+Live at [commonwork.netlify.app](https://commonwork.netlify.app/).
+
 WebAssembly runs the canvas geometry kernel for grid snapping and drawing simplification. The interface is JavaScript, with a JavaScript geometry fallback. Yjs synchronizes canvas content directly between browsers over WebRTC data channels. Netlify Functions and a small Postgres database handle temporary room access, presence, chat, and connection signaling; a standalone Bun server is also included for local or self-hosted use.
+
+## Browser agents and product walkthroughs
+
+Open **Agent tools** and enable agent control in the current tab. Browser agents can use its labeled JSON command runner, or `window.commonAgent` when their tools permit page JavaScript. They can inspect object IDs, write text, draw annotations, import generated images, change geometry and layers, focus objects, and guide a walkthrough. Edits use the same shared document as human edits. Solo walkthroughs and window sharing also work on the personal canvas without creating a room.
+
+Agents discover instructions at [`/agents.md`](https://commonwork.netlify.app/agents.md) and capabilities at [`/.well-known/agent.json`](https://commonwork.netlify.app/.well-known/agent.json). See [AGENT_API.md](AGENT_API.md) for commands and examples. Common supplies the canvas interface; an agent uses its own image-generation tool and imports the resulting raster image. There is no embedded model credential or remote MCP endpoint.
+
+Use **Canvas + annotations** to record the current canvas view, including live windows and drawings, or **Shared window only** to record a window already approved with the browser's native share picker. Recordings contain video only, stay in browser memory, and can be downloaded as WebM or MP4 depending on browser support. Download before reloading. Each recording is capped at five minutes or 100 MiB; a tab retains up to three recordings and 150 MiB total. PNG snapshots are available too. External PlantUML images use a placeholder in canvas captures.
+
+Agent control starts disabled on each page load. Position locks, screen ownership, room access, and disconnect behavior still apply. Commands and pending captures retain their original session scope, so changing rooms cannot redirect queued edits into another room. Recording controls remain available to the person using the canvas when agent control is off.
 
 ## Deploy to Netlify
 
@@ -93,7 +105,7 @@ Before a public rollout, assess your deployment's capacity, access requirements,
 
 ## Verified in this workspace
 
-The production build and 64 automated checks pass under Bun 1.4.3, including ten integration checks against real PostgreSQL. They cover transactional admission, access control, ordered signaling, lease expiry, cleanup, TURN credential expiry, polling recovery, peer transport, Yjs synchronization, concurrent layer edits, and size limits. Database integration tests skip when `COMMON_TEST_DATABASE_URL` is not set; the GitHub workflow provides a disposable Postgres service and runs all 64.
+The automated suite runs under Bun 1.4.3, including ten integration checks against real PostgreSQL when `COMMON_TEST_DATABASE_URL` is set. The GitHub workflow supplies a disposable Postgres service. Coverage includes transactional admission, signaling, leases, cleanup, TURN expiry, polling recovery, Yjs convergence, layer edits, agent command validation, session isolation, delayed-operation cancellation, capture limits, and recording lifecycle. DOM integration checks use the real application, board, shared model, and agent interface with injected media services; these do not claim native browser capture or codec verification.
 
 The Netlify adapter passes 12 browser checks across three Chromium profiles, using its production frontend and the actual Function handler against PostgreSQL: passwords, chat, layer ordering, shared move/resize/lock, late joining, reload recovery with the same identity, and two simultaneous real WebRTC streams decoded by peers. Six peer links connected through a local TURN TCP relay. The test confirms no application WebSocket connections, no HTTP canvas writes, empty server canvas snapshots, and no uncaught browser errors. This verifies the adapter locally; it does not claim a deployed Netlify site or production network verification.
 

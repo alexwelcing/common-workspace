@@ -433,7 +433,7 @@ export class Board {
       body.append(image); return;
     }
     body.append(element('span', 'board-diagram-loading', 'Bringing your diagram to life…'));
-    renderMermaid(entity.source || '').then(result => {
+    node._renderPromise = renderMermaid(entity.source || '').then(result => {
       if (!this.entities.has(entity.id) || node._signature !== currentSignature || !body.isConnected) return;
       const svgSource = typeof result === 'string' ? result : result.svg;
       const clean = DOMPurify.sanitize(svgSource, { USE_PROFILES: { svg: true, svgFilters: true } });
@@ -636,6 +636,13 @@ export class Board {
     node.querySelector('span').textContent = cursor.name || 'Teammate';
   }
   removeCursor(participantId) { this.cursors.get(participantId)?.remove(); this.cursors.delete(participantId); }
+  async whenReadyForCapture(timeoutMs = 8000) {
+    const pending = [...this.nodes.values()].map(node => node._renderPromise).filter(Boolean);
+    if (!pending.length) return;
+    let timer;
+    try { await Promise.race([Promise.allSettled(pending), new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })]); }
+    finally { clearTimeout(timer); }
+  }
   exportSvg() {
     const entities = this.listEntities().filter(e => e.type !== 'screen');
     const minX = entities.length ? Math.min(...entities.map(e => e.x)) - 24 : 0;

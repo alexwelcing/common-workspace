@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "name": "common",
+  "description": "An opt-in browser canvas interface for collaborative product walkthroughs, annotations, generated image imports, snapshots, and local video recording.",
+  "homepage": "https://commonwork.netlify.app/",
+  "documentation": "/agents.md",
+  "api_reference": "/agent-api.md",
+  "interfaces": {
+    "browser_ui": {
+      "open": "[aria-label=\"Agent tools\"]",
+      "enable": "#agent-enable",
+      "inspect": "#agent-inspect",
+      "command": "#agent-command",
+      "run": "#agent-run",
+      "result": "#agent-result",
+      "image_upload": "#agent-image-file",
+      "recording_source": "#agent-record-source",
+      "recording_start": "#agent-record-start",
+      "recording_stop": "#agent-record-stop",
+      "snapshot": "#agent-snapshot",
+      "recordings": "#agent-recordings",
+      "walkthrough_previous": "#agent-walkthrough-previous",
+      "walkthrough_next": "#agent-walkthrough-next",
+      "walkthrough_stop": "#agent-walkthrough-stop"
+    },
+    "browser_js": {
+      "global": "window.commonAgent",
+      "version": "1",
+      "methods": ["describe", "state", "execute", "batch"],
+      "command_field": "action"
+    }
+  },
+  "actions": [
+    "canvas.inspect",
+    "canvas.add",
+    "canvas.update",
+    "canvas.remove",
+    "canvas.layer",
+    "canvas.lock",
+    "canvas.export",
+    "view.focus",
+    "view.fit",
+    "image.add",
+    "walkthrough.load",
+    "walkthrough.next",
+    "walkthrough.previous",
+    "walkthrough.stop",
+    "capture.snapshot",
+    "recording.start",
+    "recording.stop",
+    "recording.list",
+    "recording.download"
+  ],
+  "access": {
+    "scope": "Current browser tab and its admitted canvas session",
+    "editing": "Disabled by default; enable through the visible Agent tools control",
+    "screen_capture": "Requires the user's native browser share picker approval",
+    "image_generation": "External agent capability; import generated raster output",
+    "recordings": "Video-only local browser blobs; download before reload",
+    "remote_mcp_endpoint": null
+  }
+}
