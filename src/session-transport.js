@@ -1,0 +1,176 @@
+// Room admission and signaling use short HTTP requests on Netlify. Canvas and
+// screen data still travel over the peers' WebRTC connections.
+export class PollingSessionTransport {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+
+  constructor({ room, token, fetchImpl = globalThis.fetch.bind(globalThis), basePath = '/api/rooms', pollIntervalMs = 1000, backgroundIntervalMs = 15000, requestTimeoutMs = 20000, outageTimeoutMs = 60000, documentImpl = globalThis.document, setTimeoutImpl = globalThis.setTimeout.bind(globalThis), clearTimeoutImpl = globalThis.clearTimeout.bind(globalThis), now = Date.now, random = Math.random }) {
+    this.readyState = PollingSessionTransport.CONNECTING;
+    this.onopen = null; this.onmessage = null; this.onclose = null; this.onerror = null;
+    this._url = `${basePath}/${encodeURIComponent(room)}`;
+    this._token = token; this._fetch = fetchImpl; this._document = documentImpl;
+    this._setTimeout = setTimeoutImpl; this._clearTimeout = clearTimeoutImpl;
+    this._pollInterval = pollIntervalMs; this._backgroundInterval = backgroundIntervalMs;
+    this._requestTimeout = requestTimeoutMs; this._outageTimeout = outageTimeoutMs;
+    this._now = now; this._random = random;
+    this._requests = new Set(); this._sendChain = Promise.resolve(); this._queued = 0;
+    this._failures = 0; this._failureSince = null; this._connectionId = null;
+    this._cursor = '0'; this._participants = ''; this._polling = false; this._leaving = false;
+    this._visibilityChange = () => {
+      if (this.readyState === PollingSessionTransport.OPEN && !this._document?.hidden && !this._polling) this._schedulePoll(0);
+    };
+    this._document?.addEventListener('visibilitychange', this._visibilityChange);
+    // Give callers the same opportunity to attach handlers as new WebSocket().
+    queueMicrotask(() => this._start());
+  }
+
+  _emit(type, data = {}) {
+    try { this[`on${type}`]?.({ type, target: this, ...data }); }
+    catch (error) { queueMicrotask(() => { throw error; }); }
+  }
+
+  async _request(path, { method = 'GET', body, keepalive = false } = {}) {
+    const controller = new AbortController(); this._requests.add(controller);
+    const timeout = this._setTimeout(() => controller.abort(), this._requestTimeout);
+    try {
+      const headers = { Authorization: `Bearer ${this._token}` };
+      if (this._connectionId) headers['X-Common-Connection'] = this._connectionId;
+      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      const response = await this._fetch(this._url + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: controller.signal, keepalive, cache: 'no-store' });
+      let data;
+      try { data = await response.json(); } catch { data = {}; }
+      if (!response.ok) {
+        const error = new Error(data.error || `Room connection failed (${response.status}).`);
+        error.status = response.status; error.code = data.code;
+        throw error;
+      }
+      return data;
+    } finally { this._clearTimeout(timeout); this._requests.delete(controller); }
+  }
+
+  _errorClose(error) {
+    if (this.readyState === PollingSessionTransport.CLOSED) return;
+    this._emit('error', { error, message: error.message });
+    const code = error.code === 'RESYNC_REQUIRED' ? 1012
+      : error.code === 'CONNECTION_REPLACED' || error.status === 403 ? 4003
+      : error.status === 401 ? 4001 : error.status === 404 ? 4004
+      : error.code === 'ROOM_FULL' ? 1008 : 1006;
+    this._finish(code, error.message);
+  }
+
+  async _start() {
+    if (this.readyState !== PollingSessionTransport.CONNECTING) return;
+    try {
+      const result = await this._request('/connect', { method: 'POST', body: {} });
+      if (this.readyState !== PollingSessionTransport.CONNECTING) return;
+      if (result.init?.type !== 'init' || !result.connectionId || result.cursor === undefined) throw new Error('The room connection returned an invalid response.');
+      this._connectionId = result.connectionId; this._cursor = String(result.cursor);
+      this._participants = JSON.stringify(result.init.participants || []);
+      this.readyState = PollingSessionTransport.OPEN;
+      this._emit('open');
+      if (this.readyState !== PollingSessionTransport.OPEN) return;
+      this._message(result.init);
+      this._schedulePoll();
+    } catch (error) { if (this.readyState !== PollingSessionTransport.CLOSED) this._errorClose(error); }
+  }
+
+  _message(message) {
+    if (this.readyState === PollingSessionTransport.OPEN && message && typeof message.type === 'string') {
+      if (message.type === 'participants') this._participants = JSON.stringify(message.participants || []);
+      this._emit('message', { data: JSON.stringify(message) });
+      if (message.type === 'ended') this._finish(1000, 'Session ended');
+    }
+  }
+
+  _schedulePoll(delay = this._document?.hidden ? this._backgroundInterval : this._pollInterval) {
+    if (this.readyState !== PollingSessionTransport.OPEN) return;
+    this._clearTimeout(this._pollTimer);
+    this._pollTimer = this._setTimeout(() => { this._pollTimer = null; return this._poll(); }, delay);
+  }
+
+  async _poll() {
+    if (this.readyState !== PollingSessionTransport.OPEN || this._polling) return;
+    this._polling = true;
+    let nextDelay;
+    try {
+      const result = await this._request(`/events?after=${encodeURIComponent(this._cursor)}`);
+      if (this.readyState !== PollingSessionTransport.OPEN) return;
+      if (!Array.isArray(result.events) || result.cursor === undefined) throw new Error('The room update returned an invalid response.');
+      this._failures = 0; this._failureSince = null;
+      for (const event of result.events) this._message(event.message);
+      // The cursor also advances past events addressed to other participants.
+      this._cursor = String(result.cursor);
+      if (Array.isArray(result.participants) && this._participants !== JSON.stringify(result.participants)) this._message({ type: 'participants', participants: result.participants });
+    } catch (error) {
+      if (this.readyState !== PollingSessionTransport.OPEN) return;
+      if (error.status && error.status !== 429 && error.status < 500) { this._errorClose(error); return; }
+      this._failureSince ??= this._now();
+      if (this._now() - this._failureSince >= this._outageTimeout) { this._errorClose(error); return; }
+      // Poll failures are safe to retry; POSTs are not replayed after an
+      // ambiguous response, so a chat or signaling message cannot duplicate.
+      nextDelay = Math.min(15000, this._pollInterval * 2 ** Math.min(++this._failures, 4)) * (0.85 + this._random() * 0.3);
+    } finally {
+      this._polling = false;
+      if (this.readyState === PollingSessionTransport.OPEN) this._schedulePoll(nextDelay);
+    }
+  }
+
+  send(text) {
+    if (this.readyState !== PollingSessionTransport.OPEN) throw new DOMException('The room connection is not open.', 'InvalidStateError');
+    const message = JSON.parse(text);
+    if (!message || typeof message.type !== 'string') throw new TypeError('A room message needs a type.');
+    if (message.type === 'leave') { this._leave(); this.close(); return; }
+    if (message.type === 'cursor') {
+      this._pendingCursor = message;
+      if (!this._cursorTimer) this._cursorTimer = this._setTimeout(() => {
+        this._cursorTimer = null;
+        const latest = this._pendingCursor; this._pendingCursor = null;
+        if (latest && this.readyState === PollingSessionTransport.OPEN) this._enqueue(latest);
+      }, 1000);
+      return;
+    }
+    this._enqueue(message);
+  }
+
+  _enqueue(message) {
+    if (++this._queued > 128) { this._queued--; this._errorClose(new Error('Too many pending room messages. Please reconnect.')); return; }
+    this._sendChain = this._sendChain.then(async () => {
+      if (this.readyState !== PollingSessionTransport.OPEN) return;
+      try { await this._request('/messages', { method: 'POST', body: message }); }
+      catch (error) {
+        // A departed signal recipient or a rejected activity is a message
+        // error, matching the WebSocket server. Keep the other peers alive.
+        if ([400, 403, 422, 429].includes(error.status) || error.code === 'PEER_CANVAS') this._message({ type: 'error', error: error.message, code: error.code });
+        else this._errorClose(error);
+      }
+    }).finally(() => { this._queued--; });
+  }
+
+  _leave() {
+    // keepalive permits the authenticated leave request to finish during a
+    // navigation. A lease expires naturally if the browser cannot deliver it.
+    if (this._connectionId && !this._leaving) {
+      this._leaving = true;
+      const headers = { Authorization: `Bearer ${this._token}`, 'X-Common-Connection': this._connectionId, 'Content-Type': 'application/json' };
+      try { Promise.resolve(this._fetch(this._url + '/leave', { method: 'POST', headers, body: '{}', keepalive: true })).catch(() => {}); } catch {}
+    }
+  }
+
+  close(code = 1000, reason = '') {
+    // Closing a transport also happens on reload. Keep the room token valid so
+    // that the same tab can reconnect as its existing participant or host.
+    this._finish(code, reason);
+  }
+
+  _finish(code, reason) {
+    if (this.readyState === PollingSessionTransport.CLOSED) return;
+    this.readyState = PollingSessionTransport.CLOSED;
+    this._clearTimeout(this._pollTimer); this._clearTimeout(this._cursorTimer);
+    this._document?.removeEventListener('visibilitychange', this._visibilityChange);
+    for (const controller of this._requests) controller.abort();
+    this._requests.clear(); this._pendingCursor = null;
+    this._emit('close', { code, reason, wasClean: code === 1000 });
+  }
+}

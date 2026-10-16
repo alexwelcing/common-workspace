@@ -1,0 +1,38 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: common
+          POSTGRES_PASSWORD: common-ci-only
+          POSTGRES_DB: common_checks
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+        env:
+          COMMON_TEST_DATABASE_URL: postgres://common:common-ci-only@127.0.0.1:5432/common_checks
+      - run: bun run build
+        env:
+          VITE_SESSION_TRANSPORT: polling

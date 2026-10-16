@@ -1,0 +1,46 @@
+# Common session API
+
+The standalone Vite client proxies `/api` and `/ws` to port 3001. Standalone production runs `bun server.mjs` and serves `dist/`. Netlify uses the same room REST paths with a polling transport, described below. JSON errors use `{error,code}`. Passwords must contain 8–128 characters; names 1–60. Room participant limit is ten, including the host. Room links use `/room/:id`.
+
+## Netlify transport
+
+Netlify builds select `VITE_SESSION_TRANSPORT=polling`. The modern Function at `/api/*` uses Postgres only for room access, membership leases, chat and ordered signaling events. It accepts peer rooms only; public room metadata includes `collaboration:'peer',transport:'poll'`. Every canvas initialization has `entities:[]`; canvas writes return `409 PEER_CANVAS`.
+
+Room creation, join, metadata, saved-session validation, and ICE configuration follow the REST shapes below. `GET /api/health` checks database availability. Authenticated ICE configuration includes `expiresAt` in epoch milliseconds when using expiring TURN credentials.
+
+After obtaining a room token:
+
+1. `POST /api/rooms/:id/connect` with Bearer authorization and JSON `{}` returns `{init,cursor,connectionId}`. `init` has the same envelope as the standalone socket. Reconnecting preserves the participant's identity and host role, while replacing any older connection.
+2. `GET /api/rooms/:id/events?after=CURSOR` with Bearer authorization and `X-Common-Connection: connectionId` returns `{events:[{sequence,message}],cursor,participants}`. Deliver messages in order, then save the returned cursor. Sequence numbers are decimal strings. The cursor advances past messages addressed to other participants too. Poll every second while active and every 15 seconds while hidden.
+3. `POST /api/rooms/:id/messages` with the same authorization and connection header sends a JSON message envelope from the list below: `signal`, `chat`, `cursor`, `ping`, or host-only `end`. Signals can only target active participants in the same room. The client serializes sends and coalesces cursor requests to one per second. Requests are limited to 128 KiB.
+4. `POST /api/rooms/:id/leave` with the same headers and `{}` explicitly revokes that participant's token and frees the seat. A reload only stops polling; it preserves the token. Undelivered leaves expire through the presence lease.
+
+Room transactions lock the room row before checking capacity and allocating event sequence numbers. Connected seats expire after a two-minute lease without polling or accepted activity; unconnected reservations expire after one minute. An expired lease must atomically reclaim capacity on reconnect. Session tokens and rooms last up to 24 hours. Event history expires after ten minutes; an outdated cursor returns `409 RESYNC_REQUIRED`, requiring reconnect. Replaced connections return `409 CONNECTION_REPLACED`; expired tokens return `401 SESSION_EXPIRED`. Ending a room immediately denies further admission and lets active pollers receive `ended`.
+
+## Standalone Bun transport
+
+* `POST /api/rooms` with `{name,displayName,password,collaboration?:'peer'|'server'}` returns `{room,token,participantId,isAdmin:true}` (201). New browser sessions request `collaboration:'peer'`. Omitted mode defaults to `server` for existing clients. Other values return 400 `INVALID_COLLABORATION`. Peer room metadata is `{id,name,createdAt,collaboration:'peer'}`; legacy/server metadata remains `{id,name,createdAt}`. The mode is fixed when the room is created and appears consistently in room, join, session, and socket initialization responses.
+* `GET /api/rooms/:id` returns `{room:{id,name,createdAt}}` (404 after end).
+* `GET /api/rooms/:id/session` with `Authorization: Bearer TOKEN` validates saved/reconnecting credentials and returns `{room,participantId,isAdmin,displayName}`. Returns 401 for expired/revoked tokens, 404 if the room ended. Validate after unexpected WebSocket handshake failure; browsers hide the handshake HTTP status and report close code 1006.
+* `POST /api/rooms/:id/join` with `{displayName,password}` returns the same authentication object, with `isAdmin:false` (200). Save this object in sessionStorage by room ID. Password stays out of the URL and storage.
+* `GET /api/ice` returns public STUN only. `GET /api/ice?room=ID` with `Authorization: Bearer TOKEN` also returns configured TURN credentials to authenticated room participants. Configure `TURN_URLS` and `TURN_SECRET` for time-limited coturn-compatible HMAC credentials (`TURN_TTL_SECONDS`, default 3600, bounds 60–86400). Alternatively set `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` for a dedicated static account. Never distribute the shared secret to browsers.
+* Open `ws(s)://HOST/ws?room=ROOM_ID&token=TOKEN`. Tokens survive a reconnect for up to 24 hours. Each participant has one socket (new connection replaces the old one). Connecting consumes the participant's reserved spot; unused reservations expire after 60 seconds.
+
+All socket messages are JSON objects. Server sends an initial `{type:'init', room, self:{id,name,color,isAdmin}, participants:[...], entities:[...], chat:[...]}`. `participants` entries are `{id,name,color,isAdmin}`. Server then broadcasts `{type:'participants',participants:[...]}` on presence changes.
+
+For peer rooms, `entities` is always empty. Canvas objects, layer order, position locks, geometry, and screen-tile metadata are synchronized between admitted browsers as a Yjs document over WebRTC data channels. The server accepts no canvas upserts or deletes, stores no canvas snapshot, and never restores canvas data for peer rooms. A late joiner obtains the document from connected peers. When no browser retains that live document, a later admission starts with an empty canvas. Password admission, host authorization, the ten-person limit, presence, WebRTC signaling, chat, and TURN credential issuance still use this rendezvous server. Room credentials/metadata and chat retain the existing server persistence behavior. Screen metadata cleanup follows peer presence in the browser.
+
+Client → server:
+
+* `{type:'upsert',entity}` is available in server rooms only. The entity is `{id,type,x,y,width,height,...}`. Type is `text`, `sticky`, `rectangle`, `ellipse`, `arrow`, `draw`, `image`, `diagram`, or `screen`. Allowed fields: `text`, `color`, `fill`, `fontSize`, `points:[{x,y}]`, `url` (image data URL only), `source`, `language:'mermaid'|'plantuml'`, `externalConsent` (boolean, defaults false), `participantId` (screen must match sender), `title`, `streamId`, `screenId`, `z`, `orderKey` (1–200 ASCII letters/digits), and `locked` (boolean). `orderKey` carries fractional layer ordering; `locked` prevents accidental position/size edits in the interface and is not an authorization boundary. Server adds `updatedBy` and `updatedAt`. Each screen has one stream and optional screenId. Coordinates may range −100000…100000; positive width/height ≤10000. Max image ~2 MB base64; max text/source 20000 characters. Peer rooms return `PEER_CANVAS` without accepting the entity.
+* `{type:'delete',id}` removes an entity in server rooms only. Only the screen owner can edit a screen; its owner or the host can remove it. Any participant can edit board content. Peer rooms return `PEER_CANVAS`, even if the ID is unknown.
+* `{type:'cursor',x,y}` → other clients receive `{type:'cursor',participantId,x,y}`.
+* `{type:'signal',to,data}` → target in the same room receives `{type:'signal',from,data}`. `data` is an opaque WebRTC offer/answer/ICE payload; `{description}` or `{candidate}` is recommended. Never trust participant IDs supplied in payloads.
+* `{type:'chat',text}` → all receive `{type:'chat',message:{id,participantId,name,text,createdAt}}`.
+* `{type:'end'}` (host only) → all receive `{type:'ended'}` and sockets close. Room and board are deleted.
+* `{type:'leave'}` revokes this token and closes the connection; the host leaving does not end the room.
+* `{type:'ping'}` → `{type:'pong'}`.
+
+In server rooms, the server broadcasts accepted `{type:'upsert',entity}` and `{type:'delete',id}` to **all**, including sender. Errors on socket use `{type:'error',error,code}` in both modes. Server-room screen entities are ephemeral and removed on disconnect; other server-room entities and both modes' chat persist in `data/rooms.json`. Password hashes and token hashes are private server data. Abrupt disconnect updates presence in both modes and emits screen deletions in server rooms. Server-room incoming canvas changes use server receive order (last change wins per entity); peer rooms converge through Yjs instead.
+
+Browser screen sharing requires HTTPS (localhost allowed), an explicit user click, and the browser picker. A browser cannot accept an operating system window by drag and drop; the share button opens the picker. This API carries signaling, not media; media travels over WebRTC and TURN when configured.

@@ -1,0 +1,41 @@
+[build]
+  command = "bun install --frozen-lockfile && bun run build"
+  publish = "dist"
+
+[build.environment]
+  BUN_VERSION = "1.4.3"
+  NODE_VERSION = "22"
+  VITE_SESSION_TRANSPORT = "polling"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["@netlify/database"]
+
+# Function path routing handles /api/* before this history fallback.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), display-capture=(self)"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[dev]
+  command = "bun --bun vite --host 0.0.0.0"
+  targetPort = 5173
+  port = 8888
+  framework = "#custom"
+
+[context.dev.environment]
+  VITE_SESSION_TRANSPORT = "polling"
