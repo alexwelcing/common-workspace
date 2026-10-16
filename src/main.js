@@ -8,10 +8,6 @@ import {SharedCanvas} from './shared-canvas.js';
 import {PeerCanvas} from './peer-canvas.js';
 import {PollingSessionTransport} from './session-transport.js';
 import {initGeometry, geometryBackend} from './geometry.js';
-import {createAgentAPI} from './agent-api.js';
-import {CanvasCapture} from './capture.js';
-import {Walkthrough} from './walkthrough.js';
-import {installAgentTools} from './agent-tools.js';
 
 const $=s=>document.querySelector(s);
 const icon=(name,size=18)=>{const node=createElement(icons[name]||icons.Circle,{width:size,height:size,'stroke-width':1.7});return node.outerHTML};
@@ -170,6 +166,8 @@ function setupMedia(){
 function updateCanvasStatus(){
   if(sandbox)return;
   const count=peerCanvas?.peers.size||0;
+  // Once every peer is linked over WebRTC, the room server only relays presence and chat.
+  socket?.setIdle?.(isPeerRoom()&&count>=participants.length-1);
   const text=!connected?'Reconnecting…':isPeerRoom()?(participants.length<=1?'Live · Connected':count?`Live · Connected · ${count} ${count===1?'peer':'peers'}`:'Live · Connected · finding peers…'):'Live · Connected';
   $('#connection-status').innerHTML=icon(connected?'CloudUpload':'CloudOff',15)+' '+text;
 }
@@ -265,16 +263,31 @@ function updateShareButton(){
   capture?.syncSource();agentTools?.refresh();
 }
 function diagramModal(){modal(`<span class="modal-symbol">${icon('Workflow',25)}</span><h2 id="modal-title">A little structure for your ideas.</h2><p>Turn a few lines of text into a shared diagram.</p><form><label>Diagram language<select name="language" id="diagram-language"><option value="mermaid">Mermaid · renders in your browser</option><option value="plantuml">PlantUML · external renderer</option></select></label><label>Diagram source<textarea name="source" rows="8" spellcheck="false" required>flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]</textarea></label><label class="consent-label" id="plant-consent" hidden><input type="checkbox" name="consent">Allow sending this diagram to plantuml.com for rendering. Everyone in this room can see the result.</label><button class="primary modal-submit">Add to canvas ${icon('Plus',17)}</button></form>`,e=>{e.preventDefault();const vals=Object.fromEntries(new FormData(e.target));if(vals.language==='plantuml'&&!vals.consent){formError(e.target,'Allow external rendering to use PlantUML.');return}board.add('diagram',{source:vals.source,language:vals.language,externalConsent:vals.language==='plantuml',title:vals.language==='mermaid'?'Mermaid diagram':'PlantUML diagram',width:500,height:300});closeModal();chooseTool('select')});$('#diagram-language').onchange=e=>{$('#plant-consent').hidden=e.target.value!=='plantuml';const input=$('textarea[name=source]');input.value=e.target.value==='plantuml'?'@startuml\nAlice -> Bob: An idea\nBob --> Alice: Let’s build it\n@enduml':'flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]'}}
+// Images sync to every peer, so large photos are resized and re-encoded in the browser first.
+const IMAGE_EDGE=1600, MAX_IMAGE_URL=Math.floor(1.3*1024*1024*4/3);
+function compactImage(file,image,url){
+  // Re-encoding would drop the frames of an animated GIF.
+  if(file.type==='image/gif'||(file.size<=256*1024&&Math.max(image.naturalWidth,image.naturalHeight)<=IMAGE_EDGE))return url;
+  const scale=Math.min(1,IMAGE_EDGE/Math.max(image.naturalWidth,image.naturalHeight));
+  const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
+  const context=canvas.getContext?.('2d');if(!context)return url;
+  context.drawImage(image,0,0,canvas.width,canvas.height);
+  // Browsers that cannot encode WebP fall back to PNG, which is rarely smaller.
+  const encoded=canvas.toDataURL('image/webp',.85);
+  return encoded.startsWith('data:image/webp;')&&encoded.length<url.length?encoded:url;
+}
 async function addImage(file){
   const targetModel=shared;
   if(!file||!/^image\/(png|jpeg|webp|gif|avif)$/.test(file.type)){toast('Choose a PNG, JPEG, WebP, GIF, or AVIF image.');return}
-  if(file.size>1.3*1024*1024){toast('Choose an image smaller than 1.3 MB.');return}
+  if(file.size>(file.type==='image/gif'?1.3:20)*1024*1024){toast(file.type==='image/gif'?'Choose a GIF smaller than 1.3 MB.':'Choose an image smaller than 20 MB.');return}
   try{
     const url=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('This image could not be opened.'));reader.readAsDataURL(file)});
     const image=await new Promise((resolve,reject)=>{const value=new Image();value.onload=()=>resolve(value);value.onerror=()=>reject(new Error('This image could not be decoded.'));value.src=url});
+    const compact=compactImage(file,image,url);
+    if(compact.length>MAX_IMAGE_URL){toast('This image is still larger than 1.3 MB after resizing. Try a smaller one.');return}
     if(shared!==targetModel||board.readOnly){toast('The canvas changed. Choose the image again in this session.');return}
     const width=Math.min(460,image.naturalWidth);
-    board.add('image',{url,width,height:width*image.naturalHeight/image.naturalWidth,title:file.name});chooseTool('select');
+    board.add('image',{url:compact,width,height:width*image.naturalHeight/image.naturalWidth,title:file.name});chooseTool('select');
   }catch(error){toast(error.message||'This image could not be added.')}
 }
 $('#image-input').onchange=e=>{addImage(e.target.files[0]);e.target.value=''};let dragDepth=0;const wrap=$('.canvas-wrap');wrap.addEventListener('dragenter',e=>{if(e.dataTransfer.types.includes('Files')){e.preventDefault();dragDepth++;$('#drop-overlay').classList.add('visible')}});wrap.addEventListener('dragleave',()=>{if(--dragDepth<=0)$('#drop-overlay').classList.remove('visible')});wrap.addEventListener('dragover',e=>e.preventDefault());wrap.addEventListener('drop',e=>{e.preventDefault();dragDepth=0;$('#drop-overlay').classList.remove('visible');[...e.dataTransfer.files].slice(0,5).forEach(addImage)});
@@ -284,6 +297,9 @@ function roomMenu(){modal(`<h2 id="modal-title">Your space, your way.</h2><div c
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();chooseTool('select');return}if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.target.isContentEditable||$('#modal-root').children.length||document.querySelector('dialog[open]'))return;if(e.ctrlKey||e.metaKey)return;const keys={v:'select',h:'hand',p:'draw',t:'text',n:'sticky',r:'rectangle',a:'arrow'};if(keys[e.key.toLowerCase()])chooseTool(keys[e.key.toLowerCase()]);});
 window.addEventListener('beforeunload',()=>{intentionalClose=true;capture?.destroy();walkthrough?.stop();agentTools?.destroy();media?.destroy();peerCanvas?.destroy();shared?.destroy();socket?.close()});window.addEventListener('popstate',()=>location.reload());
 // Public, opt-in browser agent interface. It never exposes room credentials.
+// Loaded in its own chunk so it never delays the first paint of the canvas.
+async function loadAgentTools(){
+const [{createAgentAPI},{CanvasCapture},{Walkthrough},{installAgentTools}]=await Promise.all([import('./agent-api.js'),import('./capture.js'),import('./walkthrough.js'),import('./agent-tools.js')]);
 capture=new CanvasCapture({getBoard:()=>board,getSession:()=>shared,getWindowStream:()=>localStream,onChange:()=>agentTools?.refresh(),onStatus:toast});
 capture.exportCanvas=(data,{mimeType,filename,download=false}={})=>{
   if(download){
@@ -307,4 +323,6 @@ agentTools=installAgentTools({
   onRequestWindowShare:()=>$('#share-screen').click(),onStatus:toast,buttonParent:$('.top-actions')
 });
 window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:false}}));
+}
+loadAgentTools().catch(()=>toast('Agent tools could not be loaded. Reload to try again.'));
 const path=location.pathname.match(/^\/room\/([^/]+)$/);if(path)joinFromPath(decodeURIComponent(path[1]));

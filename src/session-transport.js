@@ -6,13 +6,14 @@ export class PollingSessionTransport {
   static CLOSING = 2;
   static CLOSED = 3;
 
-  constructor({ room, token, fetchImpl = globalThis.fetch.bind(globalThis), basePath = '/api/rooms', pollIntervalMs = 1000, backgroundIntervalMs = 15000, requestTimeoutMs = 20000, outageTimeoutMs = 60000, documentImpl = globalThis.document, setTimeoutImpl = globalThis.setTimeout.bind(globalThis), clearTimeoutImpl = globalThis.clearTimeout.bind(globalThis), now = Date.now, random = Math.random }) {
+  constructor({ room, token, fetchImpl = globalThis.fetch.bind(globalThis), basePath = '/api/rooms', pollIntervalMs = 1000, idleIntervalMs = 3000, activeWindowMs = 10000, backgroundIntervalMs = 15000, requestTimeoutMs = 20000, outageTimeoutMs = 60000, documentImpl = globalThis.document, setTimeoutImpl = globalThis.setTimeout.bind(globalThis), clearTimeoutImpl = globalThis.clearTimeout.bind(globalThis), now = Date.now, random = Math.random }) {
     this.readyState = PollingSessionTransport.CONNECTING;
     this.onopen = null; this.onmessage = null; this.onclose = null; this.onerror = null;
     this._url = `${basePath}/${encodeURIComponent(room)}`;
     this._token = token; this._fetch = fetchImpl; this._document = documentImpl;
     this._setTimeout = setTimeoutImpl; this._clearTimeout = clearTimeoutImpl;
     this._pollInterval = pollIntervalMs; this._backgroundInterval = backgroundIntervalMs;
+    this._idleInterval = idleIntervalMs; this._activeWindow = activeWindowMs; this._idle = false; this._activeAt = 0;
     this._requestTimeout = requestTimeoutMs; this._outageTimeout = outageTimeoutMs;
     this._now = now; this._random = random;
     this._requests = new Set(); this._sendChain = Promise.resolve(); this._queued = 0;
@@ -84,7 +85,17 @@ export class PollingSessionTransport {
     }
   }
 
-  _schedulePoll(delay = this._document?.hidden ? this._backgroundInterval : this._pollInterval) {
+  /** Peers that already share a WebRTC link need the server less; poll slower until activity resumes. */
+  setIdle(idle) {
+    const wasIdle = this._idle; this._idle = !!idle;
+    if (wasIdle && !this._idle && this.readyState === PollingSessionTransport.OPEN && !this._polling && !this._document?.hidden) this._schedulePoll(0);
+  }
+
+  _visibleInterval() {
+    return this._idle && this._now() - this._activeAt >= this._activeWindow ? this._idleInterval : this._pollInterval;
+  }
+
+  _schedulePoll(delay = this._document?.hidden ? this._backgroundInterval : this._visibleInterval()) {
     if (this.readyState !== PollingSessionTransport.OPEN) return;
     this._clearTimeout(this._pollTimer);
     this._pollTimer = this._setTimeout(() => { this._pollTimer = null; return this._poll(); }, delay);
@@ -99,6 +110,7 @@ export class PollingSessionTransport {
       if (this.readyState !== PollingSessionTransport.OPEN) return;
       if (!Array.isArray(result.events) || result.cursor === undefined) throw new Error('The room update returned an invalid response.');
       this._failures = 0; this._failureSince = null;
+      if (result.events.length) this._activeAt = this._now();
       for (const event of result.events) this._message(event.message);
       // The cursor also advances past events addressed to other participants.
       this._cursor = String(result.cursor);
@@ -135,6 +147,8 @@ export class PollingSessionTransport {
   }
 
   _enqueue(message) {
+    // Replies to a signal or chat usually follow right away.
+    this._activeAt = this._now();
     if (++this._queued > 128) { this._queued--; this._errorClose(new Error('Too many pending room messages. Please reconnect.')); return; }
     this._sendChain = this._sendChain.then(async () => {
       if (this.readyState !== PollingSessionTransport.OPEN) return;

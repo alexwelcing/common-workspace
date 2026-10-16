@@ -13,18 +13,27 @@ const timestamp = value => new Date(value).getTime();
 const error = (status, code, message) => Object.assign(new Error(message), { status, code });
 const roomMissing = () => error(404, 'ROOM_NOT_FOUND', 'This session has ended or the link is invalid.');
 const sessionExpired = () => error(401, 'SESSION_EXPIRED', 'Please enter the room password again.');
+const resync = () => error(409, 'RESYNC_REQUIRED', 'Reconnect to refresh the session.');
 const full = () => error(409, 'ROOM_FULL', 'This session already has ten people.');
 const publicRoom = room => ({ id: room.id, name: room.name, createdAt: timestamp(room.created_at), collaboration: 'peer', transport: 'poll' });
 const publicMember = member => ({ id: member.id, name: member.name, color: member.color, isAdmin: member.is_admin });
 const defaultEnv = key => globalThis.Netlify?.env?.get(key) ?? process.env[key];
 
-function json(value, status = 200) {
+function json(value, status = 200, headers = {}) {
   return Response.json(value, { status, headers: {
     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY',
     'Permissions-Policy': 'display-capture=(self), camera=(), microphone=()',
+    ...headers,
   } });
 }
+
+// Public responses with no member data may be served from Netlify's CDN, which
+// is purged on every deploy. Browsers still revalidate each time.
+const edgeCached = seconds => ({
+  'Cache-Control': 'public, max-age=0, must-revalidate',
+  'Netlify-CDN-Cache-Control': `public, s-maxage=${seconds}, stale-while-revalidate=${seconds * 4}`,
+});
 
 async function body(request) {
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) throw error(415, 'JSON_REQUIRED', 'Send JSON content.');
@@ -56,10 +65,14 @@ function verifyOrigin(request) {
   if (origin && origin !== new URL(request.url).origin) throw error(403, 'INVALID_ORIGIN', 'This request must come from the app.');
 }
 
-/** All room transactions lock the room row before touching seats or event order. */
-export function createApiHandler({ pool, env = defaultEnv, now = Date.now, leaseMs = 120000, reservationMs = 60000, eventTtlMs = 600000, roomTtlMs = 86400000, sessionTtlMs = 86400000, rateLimits = true } = {}) {
+/**
+ * Room writes lock the room row before touching seats or event order. Polling
+ * only reads, so it skips the lock; cleanup runs in sweep() on a schedule.
+ */
+export function createApiHandler({ pool, env = defaultEnv, now = Date.now, leaseMs = 120000, leaseRefreshMs = 30000, reservationMs = 60000, eventTtlMs = 600000, roomTtlMs = 86400000, sessionTtlMs = 86400000, rateLimits = true } = {}) {
   if (!pool?.connect) throw new TypeError('A PostgreSQL pool is required.');
   if (leaseMs < 90000) throw new TypeError('Presence leases must be at least 90 seconds.');
+  if (leaseRefreshMs < 0 || leaseRefreshMs > leaseMs / 2) throw new TypeError('Lease refreshes must happen within the first half of a lease.');
 
   async function transaction(work) {
     const client = await pool.connect();
@@ -72,6 +85,11 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
       await client.query('ROLLBACK').catch(() => {});
       throw failure;
     } finally { client.release(); }
+  }
+
+  async function connection(work) {
+    const client = await pool.connect();
+    try { return await work(client); } finally { client.release(); }
   }
 
   async function limit(context, kind, maximum, time) {
@@ -88,8 +106,8 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     if (result.rows[0].attempts > maximum) throw error(429, 'RATE_LIMITED', 'Too many attempts. Try again in a minute.');
   }
 
-  async function roomRow(client, id, time, allowEnded = false) {
-    const { rows } = await client.query('SELECT * FROM common_rooms WHERE id = $1 FOR UPDATE', [id]);
+  async function roomRow(client, id, time, allowEnded = false, lock = true) {
+    const { rows } = await client.query(`SELECT * FROM common_rooms WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id]);
     const room = rows[0];
     if (!room || timestamp(room.expires_at) <= time || (!allowEnded && room.ended_at)) throw roomMissing();
     return room;
@@ -169,7 +187,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
 
     if (url.pathname === '/api/health' && method === 'GET') {
       await pool.query('SELECT 1');
-      return json({ ok: true, transport: 'poll', collaboration: 'peer' });
+      return json({ ok: true, transport: 'poll', collaboration: 'peer' }, 200, edgeCached(15));
     }
 
     if (url.pathname === '/api/ice' && method === 'GET') {
@@ -194,7 +212,9 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         }
         iceServers.push({ urls: urls.split(',').map(value => value.trim()).filter(Boolean), username, credential });
       }
-      return json({ iceServers, ...(expiresAt ? { expiresAt } : {}) });
+      // Only the STUN-only answer for requests without a room is shareable.
+      const shared = !url.searchParams.has('room') && { ...edgeCached(3600), 'Netlify-Vary': 'query=room' };
+      return json({ iceServers, ...(expiresAt ? { expiresAt } : {}) }, 200, shared || {});
     }
 
     if (url.pathname === '/api/rooms' && method === 'POST') {
@@ -211,7 +231,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         // Serialize creation only, both for bounded storage and opportunistic cleanup.
         await client.query('SELECT pg_advisory_xact_lock(74629001)');
         await client.query('DELETE FROM common_rooms WHERE expires_at <= $1', [new Date(time)]);
-        await client.query('DELETE FROM common_auth_limits WHERE expires_at <= $1', [new Date(time)]);
+        if (rateLimits) await client.query('DELETE FROM common_auth_limits WHERE expires_at <= $1', [new Date(time)]);
         const count = await client.query('SELECT COUNT(*)::integer AS count FROM common_rooms');
         if (count.rows[0].count >= 1000) throw error(503, 'CAPACITY', 'This service has reached its session capacity.');
         const room = { id: randomId(), name: roomName, created_at: new Date(time), expires_at: new Date(time + roomTtlMs) };
@@ -276,16 +296,22 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     if (method === 'GET' && action === 'events') {
       const after = url.searchParams.get('after') ?? '0';
       if (!/^\d{1,19}$/.test(after) || BigInt(after) > 9223372036854775807n) throw error(400, 'INVALID_CURSOR', 'Invalid event cursor.');
-      return json(await transaction(async client => {
-        const room = await roomRow(client, id, time, true);
+      return json(await connection(async client => {
+        const room = await roomRow(client, id, time, true, false);
         const member = await memberRow(client, room, request, time);
         checkConnection(member, request, time);
         if (room.ended_at) return { events: [{ sequence: String(room.event_seq), message: { type: 'ended' } }], cursor: String(room.event_seq), participants: [] };
-        await prune(client, room, time);
-        if (BigInt(after) < BigInt(room.event_floor) || BigInt(after) > BigInt(room.event_seq)) throw error(409, 'RESYNC_REQUIRED', 'Reconnect to refresh the session.');
-        await client.query('UPDATE common_members SET lease_until = $2 WHERE id = $1', [member.id, new Date(time + leaseMs)]);
+        if (BigInt(after) < BigInt(room.event_floor) || BigInt(after) > BigInt(room.event_seq)) throw resync();
+        // Most polls skip this write; the lease only needs refreshing every leaseRefreshMs.
+        if (timestamp(member.lease_until) - time < leaseMs - leaseRefreshMs) {
+          await client.query('UPDATE common_members SET lease_until = $2 WHERE id = $1', [member.id, new Date(time + leaseMs)]);
+        }
         // Advance across all rows, including messages intended for another peer.
-        const { rows } = await client.query('SELECT seq, target_id, except_id, payload FROM common_events WHERE room_id = $1 AND seq > $2 ORDER BY seq LIMIT 500', [room.id, after]);
+        const { rows } = await client.query(`SELECT seq, target_id, except_id, payload, created_at < $3 AS expired
+          FROM common_events WHERE room_id = $1 AND seq > $2 ORDER BY seq LIMIT 500`, [room.id, after, new Date(time - eventTtlMs)]);
+        // Sequences are contiguous until pruned, so a gap or an expired row means
+        // this cursor fell behind retained history, even before the sweep runs.
+        if (rows.length ? BigInt(rows[0].seq) !== BigInt(after) + 1n || rows.some(event => event.expired) : BigInt(after) < BigInt(room.event_seq)) throw resync();
         const cursor = rows.length ? String(rows[rows.length - 1].seq) : String(room.event_seq);
         const events = rows.filter(event => (!event.target_id || event.target_id === member.id) && event.except_id !== member.id)
           .map(event => ({ sequence: String(event.seq), message: event.payload }));
@@ -299,7 +325,6 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         const room = await roomRow(client, id, time);
         const member = await memberRow(client, room, request, time);
         checkConnection(member, request, time);
-        await prune(client, room, time);
         if (action === 'leave' || input.type === 'leave') {
           await client.query('DELETE FROM common_members WHERE id = $1', [member.id]);
           await presence(client, room, time);
@@ -342,11 +367,32 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     throw error(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
   }
 
-  return async function apiHandler(request, context = {}) {
+  /** Expire rooms, rate-limit rows, old events and stale leases outside the request path. */
+  async function sweep() {
+    const time = now();
+    await pool.query('DELETE FROM common_rooms WHERE expires_at <= $1', [new Date(time)]);
+    if (rateLimits) await pool.query('DELETE FROM common_auth_limits WHERE expires_at <= $1', [new Date(time)]);
+    const { rows } = await pool.query(`SELECT room_id FROM common_events WHERE created_at < $1
+      UNION SELECT room_id FROM common_members WHERE connection_id IS NOT NULL AND (lease_until <= $2 OR expires_at <= $2)`,
+    [new Date(time - eventTtlMs), new Date(time)]);
+    let pruned = 0;
+    for (const { room_id: id } of rows) {
+      try {
+        await transaction(async client => {
+          const { rows: [room] } = await client.query('SELECT * FROM common_rooms WHERE id = $1 FOR UPDATE', [id]);
+          if (room) { await prune(client, room, time); pruned++; }
+        });
+      } catch (failure) { console.error('Common sweep failure:', failure.code ?? failure.name ?? 'unknown'); }
+    }
+    return { pruned };
+  }
+
+  async function apiHandler(request, context = {}) {
     try { return await handle(request, context); }
     catch (failure) {
       if (!failure.status) console.error('Common API failure:', failure.code ?? failure.name ?? 'unknown');
       return json({ error: failure.status ? failure.message : 'Session storage is unavailable. Please try again.', code: failure.status ? failure.code : 'SERVICE_UNAVAILABLE' }, failure.status ?? 503);
     }
-  };
+  }
+  return Object.assign(apiHandler, { sweep });
 }

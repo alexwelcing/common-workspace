@@ -31,6 +31,28 @@
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
+# Unhashed public files. Netlify's CDN already serves them until the next deploy;
+# a short browser cache avoids a revalidation request on every visit.
+[[headers]]
+  for = "/favicon.svg"
+  [headers.values]
+    Cache-Control = "public, max-age=300, stale-while-revalidate=86400"
+
+[[headers]]
+  for = "/agents.md"
+  [headers.values]
+    Cache-Control = "public, max-age=300, stale-while-revalidate=86400"
+
+[[headers]]
+  for = "/agent-api.md"
+  [headers.values]
+    Cache-Control = "public, max-age=300, stale-while-revalidate=86400"
+
+[[headers]]
+  for = "/.well-known/*"
+  [headers.values]
+    Cache-Control = "public, max-age=300, stale-while-revalidate=86400"
+
 [dev]
   command = "bun --bun vite --host 0.0.0.0"
   targetPort = 5173

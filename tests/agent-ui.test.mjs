@@ -233,6 +233,8 @@ test('the full application boots with opt-in agent control and shares a personal
   });
   cleanup.push(() => window.dispatchEvent(new window.Event('beforeunload')));
   await import('../src/main.js');
+  // Agent tools load in their own chunk after the canvas renders.
+  for (let attempt = 0; attempt < 200 && !window.commonAgent; attempt++) await new Promise(resolve => setTimeout(resolve, 5));
   await settle();
   assert.equal(document.documentElement.dataset.commonAgent, '1');
   assert.equal(window.commonAgent.state().enabled, false);

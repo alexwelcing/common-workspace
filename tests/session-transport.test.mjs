@@ -190,3 +190,28 @@ test('ending a room delivers the final envelope and stops polling', async () => 
     assert.equal(f.timers.size, 0);
   } finally { f.destroy(); }
 });
+
+test('linked peers poll slowly when quiet and speed up again for room activity', async () => {
+  let pending = [];
+  const f = fixture(request => {
+    if (request.url.includes('/events?')) { const events = pending; pending = []; return response({ events, cursor: '7', participants: init.participants }); }
+  });
+  try {
+    await f.open();
+    await f.run(1000);
+    f.transport.setIdle(true);
+    f.advance(10000);
+    await f.run(1000);
+    await f.run(3000);
+    pending = [{ sequence: '8', message: { type: 'chat', message: { text: 'hi' } } }];
+    await f.run(3000);
+    await f.run(1000);
+    f.advance(10000);
+    await f.run(1000);
+    f.transport.send(JSON.stringify({ type: 'chat', text: 'hello' }));
+    await f.run(3000);
+    await f.run(1000);
+    f.transport.setIdle(false);
+    assert.ok([...f.timers.values()].some(timer => timer.delay === 0));
+  } finally { f.destroy(); }
+});
