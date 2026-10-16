@@ -6,7 +6,7 @@ import { initGeometry, geometryBackend, snap, simplifyPoints } from '../src/geom
 import { plantUmlUrl } from '../src/diagrams.js';
 
 test('the compiled WebAssembly kernel performs real geometry calculations', async () => {
-  const bytes = await readFile(new URL('../public/geometry.wasm', import.meta.url));
+  const bytes = await readFile(new URL('../src/geometry.wasm', import.meta.url));
   const { instance } = await WebAssembly.instantiate(bytes);
   const kernel = instance.exports;
   assert.equal(kernel.snap_grid(31, 20), 40);

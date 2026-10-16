@@ -1,18 +1,6 @@
-import { getDatabase } from '@netlify/database';
-import { createApiHandler } from '../lib/api.mjs';
+import { handle } from '../lib/netlify-handler.mjs';
 
-let handler;
+export default handle;
 
-export default async function api(request, context) {
-  // Lazy initialization also lets imports/build analysis run without credentials.
-  try {
-    if (!handler) handler = createApiHandler({ pool: getDatabase().pool });
-    return handler(request, context);
-  } catch {
-    return Response.json({ error: 'Session storage is unavailable. Please try again.', code: 'SERVICE_UNAVAILABLE' }, {
-      status: 503, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
-    });
-  }
-}
-
-export const config = { path: '/api/*' };
+// Room creation and joining are served by their own rate-limited functions.
+export const config = { path: '/api/*', excludedPath: ['/api/rooms', '/api/rooms/:id/join'] };

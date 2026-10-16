@@ -1,8 +1,11 @@
 let wasm = null;
 let initialization = null;
 
+// Vite fingerprints this asset, so it is served from /assets/ with an immutable cache.
+const defaultSource = new URL('./geometry.wasm', import.meta.url);
+
 /** Load the real WASM kernel. A failed download leaves the board usable in JS. */
-export async function initGeometry(source = '/geometry.wasm') {
+export async function initGeometry(source = defaultSource) {
   if (wasm) return true;
   if (initialization) return initialization;
 

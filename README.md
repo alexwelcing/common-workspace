@@ -18,7 +18,7 @@ Agent control starts disabled on each page load. Position locks, screen ownershi
 
 ## Deploy to Netlify
 
-Import this repository from GitHub into your Netlify team. The committed `netlify.toml` pins Bun 1.4.3, builds the Vite/WASM frontend, publishes `dist`, bundles the API function, and enables the browser's HTTP polling transport. Functions run on Node.js 22; they do not require a persistent Bun process or a separate WebSocket host.
+Import this repository from GitHub into your Netlify team. The committed `netlify.toml` pins Bun 1.4.3, builds the Vite/WASM frontend, publishes `dist`, bundles the API, rate-limited room admission and scheduled cleanup functions, and enables the browser's HTTP polling transport. Functions run on Node.js 22; they do not require a persistent Bun process or a separate WebSocket host.
 
 `@netlify/database` and the committed SQL migrations provision the small room database during deployment. Netlify Database requires a credit-based plan; this setup does not change your account plan. If the team's plan does not support it, enable a supported database plan before importing. No canvas objects, images, or screen recordings are stored in the database.
 
@@ -105,7 +105,7 @@ Before a public rollout, assess your deployment's capacity, access requirements,
 
 ## Verified in this workspace
 
-The automated suite runs under Bun 1.4.3, including ten integration checks against real PostgreSQL when `COMMON_TEST_DATABASE_URL` is set. The GitHub workflow supplies a disposable Postgres service. Coverage includes transactional admission, signaling, leases, cleanup, TURN expiry, polling recovery, Yjs convergence, layer edits, agent command validation, session isolation, delayed-operation cancellation, capture limits, and recording lifecycle. DOM integration checks use the real application, board, shared model, and agent interface with injected media services; these do not claim native browser capture or codec verification.
+The automated suite runs under Bun 1.4.3, including twelve integration checks against real PostgreSQL when `COMMON_TEST_DATABASE_URL` is set. The GitHub workflow supplies a disposable Postgres service. Coverage includes transactional admission, signaling, leases, cleanup, TURN expiry, polling recovery, Yjs convergence, layer edits, agent command validation, session isolation, delayed-operation cancellation, capture limits, and recording lifecycle. DOM integration checks use the real application, board, shared model, and agent interface with injected media services; these do not claim native browser capture or codec verification.
 
 The Netlify adapter passes 12 browser checks across three Chromium profiles, using its production frontend and the actual Function handler against PostgreSQL: passwords, chat, layer ordering, shared move/resize/lock, late joining, reload recovery with the same identity, and two simultaneous real WebRTC streams decoded by peers. Six peer links connected through a local TURN TCP relay. The test confirms no application WebSocket connections, no HTTP canvas writes, empty server canvas snapshots, and no uncaught browser errors. This verifies the adapter locally; it does not claim a deployed Netlify site or production network verification.
 

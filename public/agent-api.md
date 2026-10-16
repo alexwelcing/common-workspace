@@ -12,8 +12,10 @@ For tools that can use DOM actions but cannot execute page JavaScript, fill **Ag
 
 Use the JavaScript API only when the browser tool permits page JavaScript. This interface neither changes that tool's policy nor bypasses room membership, screen ownership, disconnected/read-only state, position locks, file-download rules, or native screen-capture permission.
 
+The interface loads just after the canvas. If `window.commonAgent` is not defined yet, wait for the `common-agent-ready` window event.
+
 ```js
-const api = window.commonAgent;
+const api = window.commonAgent ?? await new Promise(resolve => addEventListener('common-agent-ready', () => resolve(window.commonAgent), { once: true }));
 const description = api.describe();
 const current = api.state();
 const response = await api.execute({

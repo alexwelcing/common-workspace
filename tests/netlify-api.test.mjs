@@ -56,7 +56,7 @@ async function fixture(t, options = {}) {
   const poll = (auth, after = auth.cursor) => request(`/api/rooms/${auth.room.id}/events?after=${encodeURIComponent(after)}`, { auth });
   const send = (auth, message) => post(`/api/rooms/${auth.room.id}/messages`, message, auth);
   const leave = auth => post(`/api/rooms/${auth.room.id}/leave`, {}, auth);
-  return { pool, request, post, create, join, connect, poll, send, leave, advance: milliseconds => { clock += milliseconds; } };
+  return { pool, handler, request, post, create, join, connect, poll, send, leave, advance: milliseconds => { clock += milliseconds; } };
 }
 
 test('Netlify admission protects passwords, bearer sessions, and same-origin writes', integration, async t => {
@@ -258,4 +258,57 @@ test('TURN credentials require room admission and secret-derived credentials exp
   const refreshed = await f.request(`/api/ice?room=${host.room.id}`, { auth: host });
   assert.ok(refreshed.expiresAt > admitted.expiresAt);
   assert.notEqual(refreshed.iceServers.find(server => server.credential).credential, relay.credential);
+});
+
+test('polling reads without locking, refreshes leases sparingly, and leaves cleanup to the sweep', integration, async t => {
+  const f = await fixture(t, { leaseMs: 120000, leaseRefreshMs: 30000, eventTtlMs: 60000 });
+  const host = await f.create();
+  const guest = await f.join(host.room);
+  await f.connect(host);
+  await f.connect(guest);
+  const lease = async auth => (await f.pool.query('SELECT lease_until FROM common_members WHERE id = $1', [auth.participantId])).rows[0].lease_until.getTime();
+  const connected = await lease(guest);
+  f.advance(10000);
+  assert.equal((await f.poll(guest)).status, 200);
+  assert.equal(await lease(guest), connected);
+  f.advance(25000);
+  assert.equal((await f.poll(guest)).status, 200);
+  assert.ok(await lease(guest) > connected);
+
+  // A row lock held by a room write must not block a reader.
+  const blocker = await f.pool.connect();
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT 1 FROM common_rooms WHERE id = $1 FOR UPDATE', [host.room.id]);
+    const result = await Promise.race([f.poll(guest), new Promise(resolve => setTimeout(() => resolve('blocked'), 2000))]);
+    assert.equal(result.status, 200);
+  } finally { await blocker.query('ROLLBACK'); blocker.release(); }
+
+  await f.send(host, { type: 'chat', text: 'Old news' });
+  f.advance(121000);
+  assert.equal((await f.poll(guest)).code, 'RESYNC_REQUIRED');
+  assert.deepEqual(await f.handler.sweep(), { pruned: 1 });
+  const left = await f.pool.query('SELECT COUNT(*)::integer AS count FROM common_members WHERE room_id = $1 AND connection_id IS NOT NULL', [host.room.id]);
+  assert.equal(left.rows[0].count, 0);
+  const events = await f.pool.query("SELECT payload->>'type' AS type FROM common_events WHERE room_id = $1 ORDER BY seq", [host.room.id]);
+  assert.deepEqual(events.rows.map(row => row.type), ['participants']);
+  assert.deepEqual(await f.handler.sweep(), { pruned: 0 });
+});
+
+test('only public, member-free responses are cacheable at the CDN', integration, async t => {
+  const settings = { TURN_URLS: 'turn:relay.example:3478', TURN_SECRET: 'local-test-secret' };
+  const f = await fixture(t, { env: key => settings[key] });
+  const host = await f.create();
+  const get = (route, headers = {}) => f.handler(new Request(`${origin}${route}`, { headers }), { ip: '127.0.0.1' });
+  const publicIce = await get('/api/ice');
+  assert.match(publicIce.headers.get('netlify-cdn-cache-control'), /s-maxage=3600/);
+  assert.equal(publicIce.headers.get('netlify-vary'), 'query=room');
+  const health = await get('/api/health');
+  assert.match(health.headers.get('netlify-cdn-cache-control'), /s-maxage=15/);
+  const admitted = await get(`/api/ice?room=${host.room.id}`, { Authorization: `Bearer ${host.token}` });
+  assert.equal(admitted.status, 200);
+  assert.equal(admitted.headers.get('cache-control'), 'no-store');
+  assert.equal(admitted.headers.get('netlify-cdn-cache-control'), null);
+  const session = await get(`/api/rooms/${host.room.id}/session`, { Authorization: `Bearer ${host.token}` });
+  assert.equal(session.headers.get('cache-control'), 'no-store');
 });
