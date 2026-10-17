@@ -2,7 +2,7 @@
 
 Common exposes the current browser canvas through `window.commonAgent` and a visible **Agent tools** panel. This supports product walkthrough annotations, text and diagrams, imports from an agent's image generator, canvas snapshots, and local video recordings. It does not run an agent, navigate the product being demonstrated, provide a model API key, or expose a remote MCP server.
 
-Discovery files are served at [`/agents.md`](https://commonwork.netlify.app/agents.md) and [`/.well-known/agent.json`](https://commonwork.netlify.app/.well-known/agent.json). The manifest describes this app's interfaces; it is not a claim that every agent client automatically discovers them.
+Discovery files are served at [`/agents.md`](agents.md) and [`/.well-known/agent.json`](.well-known/agent.json) on the current app's origin, including local installations. The manifest describes this app's interfaces; it is not a claim that every agent client automatically discovers them.
 
 ## Access from a browser agent
 

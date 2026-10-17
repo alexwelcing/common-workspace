@@ -1,0 +1,13 @@
+{
+	auto_https disable_redirects
+	skip_install_trust
+}
+
+# For a shared session, replace localhost with this laptop's reachable LAN/VPN
+# IP or internal DNS name. Every participant, including the host, opens that URL.
+# Example: https://192.168.1.50:8443
+https://localhost:8443 {
+	tls internal
+	# Preserve the browser's Host header. Caddy handles WebSocket upgrades too.
+	reverse_proxy 127.0.0.1:3001
+}

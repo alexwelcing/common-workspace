@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "common",
   "description": "An opt-in browser canvas interface for collaborative product walkthroughs, annotations, generated image imports, snapshots, and local video recording.",
-  "homepage": "https://commonwork.netlify.app/",
+  "homepage": "/",
   "documentation": "/agents.md",
   "api_reference": "/agent-api.md",
   "interfaces": {

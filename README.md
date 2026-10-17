@@ -2,35 +2,25 @@
 
 A browser workspace for password-protected team sessions: invite links, a shared canvas, text, sticky notes, images, shapes, freehand drawing, Mermaid and PlantUML diagrams, chat, presence, simultaneous window sharing, and shared layer controls.
 
-Live at [commonwork.netlify.app](https://commonwork.netlify.app/).
+Try the hosted app at [commonwork.netlify.app](https://commonwork.netlify.app/), or [run it on your own laptop](public/self-hosting.html). The standalone version needs Bun and a local room file; it needs no Netlify account, Postgres database, or hosted API key.
 
-WebAssembly runs the canvas geometry kernel for grid snapping and drawing simplification. The interface is JavaScript, with a JavaScript geometry fallback. Yjs synchronizes canvas content directly between browsers over a sparse WebRTC network. Video connections are selected separately, so joining a room does not require receiving everyone's screen. Netlify Functions and a small Postgres database handle temporary room access, presence, chat, and connection signaling; a standalone Bun server is also included for local or self-hosted use.
+WebAssembly runs the canvas geometry kernel for grid snapping and drawing simplification. The interface is JavaScript, with a JavaScript geometry fallback. Yjs synchronizes canvas content directly between browsers over a sparse WebRTC network. Video connections are selected separately, so joining a room does not require receiving everyone's screen. The standalone Bun server handles temporary room access, presence, chat, and connection signaling on your own machine. The optional Netlify deployment uses Functions and a small Postgres database for those same tasks.
 
 ## Browser agents and product walkthroughs
 
 Open **Agent tools** and enable agent control in the current tab. Browser agents can use its labeled JSON command runner, or `window.commonAgent` when their tools permit page JavaScript. They can inspect object IDs, write text, draw annotations, import generated images, change geometry and layers, focus objects, and guide a walkthrough. Edits use the same shared document as human edits. Solo walkthroughs and window sharing also work on the personal canvas without creating a room.
 
-Agents discover instructions at [`/agents.md`](https://commonwork.netlify.app/agents.md) and capabilities at [`/.well-known/agent.json`](https://commonwork.netlify.app/.well-known/agent.json). See [AGENT_API.md](AGENT_API.md) for commands and examples. Common supplies the canvas interface; an agent uses its own image-generation tool and imports the resulting raster image. There is no embedded model credential or remote MCP endpoint.
+Agents discover instructions at `/agents.md` and capabilities at `/.well-known/agent.json` on the current installation's origin, so local sessions do not send agents to the hosted app. See [AGENT_API.md](AGENT_API.md) for commands and examples. Common supplies the canvas interface; an agent uses its own image-generation tool and imports the resulting raster image. There is no embedded model credential or remote MCP endpoint.
 
 Use **Canvas + annotations** to record the current canvas view, including live windows and drawings, or **Shared window only** to record a window already approved with the browser's native share picker. Recordings contain video only, stay in browser memory, and can be downloaded as WebM or MP4 depending on browser support. Download before reloading. Each recording is capped at five minutes or 100 MiB; a tab retains up to three recordings and 150 MiB total. PNG snapshots are available too. External PlantUML images use a placeholder in canvas captures.
 
 Agent control starts disabled on each page load. Position locks, screen ownership, room access, and disconnect behavior still apply. Commands and pending captures retain their original session scope, so changing rooms cannot redirect queued edits into another room. Recording controls remain available to the person using the canvas when agent control is off.
 
-## Deploy to Netlify
+## Run on your own laptop
 
-Import this repository from GitHub into your Netlify team. The committed `netlify.toml` pins Bun 1.4.3, builds the Vite/WASM frontend, publishes `dist`, bundles the API, rate-limited room admission and scheduled cleanup functions, and enables the browser's HTTP polling transport. Functions run on Node.js 22; they do not require a persistent Bun process or a separate WebSocket host.
+Use Bun 1.4.3 (the pinned version in `package.json`). Clone this repository using an account with read access, or unpack a source archive supplied by your administrator. This is currently a private repository; public access to the hosted app does not grant source access.
 
-`@netlify/database` and the committed SQL migrations provision the small room database during deployment. Netlify Database requires a credit-based plan; this setup does not change your account plan. If the team's plan does not support it, enable a supported database plan before importing. No canvas objects, images, or screen recordings are stored in the database.
-
-Configure a production TURN relay under **Project configuration → Environment variables**, scoped to Functions: `TURN_URLS` plus `TURN_SECRET`, or `TURN_USERNAME` and `TURN_CREDENTIAL`. These are server secrets; never prefix them with `VITE_`. Without a relay, STUN-only connections can be used for a pilot, but some network combinations will not connect. No production relay is included in this repository.
-
-After the first deploy, open the HTTPS site in two separate browser profiles, create a room, join its invite link, and check shared objects, chat, each person's window capture, and Watch/Pause controls. Verify the operating system picker and the networks and devices your team actually uses before wider use. The absence of a participant cap does not establish a supported room size or video audience.
-
-For local Netlify development, authenticate the Netlify CLI, link the project, run `bun run dev:netlify`, then apply local migrations in a second terminal with `bunx netlify-cli@26.0.0 database migrations apply`. Netlify applies the committed migrations automatically on hosted deploys. The regular `bun run dev` below uses the standalone Bun/WebSocket backend.
-
-## Run locally
-
-Use Bun 1.4.3 (the pinned version in `package.json`).
+The [self-hosting guide](public/self-hosting.html), available from **How it works → Run Common on your own laptop**, covers installation, team networking, HTTPS, and data handling. It is also served at `/self-hosting.html` on each local installation.
 
 ```sh
 bun install --frozen-lockfile
@@ -43,11 +33,39 @@ To run the built app:
 
 ```sh
 bun install --frozen-lockfile
-bun run build
+bun run build:local
 bun run start
 ```
 
+`build:local` explicitly selects the standalone WebSocket transport, even if your shell or `.env` was configured for Netlify polling. It does not change the hosted build.
+
 Open http://localhost:3001. The server serves `dist/` and the API on the same port. `bun run test` runs the automated checks. See [API.md](API.md) for the collaboration protocol.
+
+### Invite teammates over LAN or VPN
+
+One laptop runs the Bun server; the other participants only need a browser. Run the built app behind HTTPS with the [included Caddy example](public/self-hosting/Caddyfile). Bind Bun to `127.0.0.1:3001` in `.env`, replace `localhost` in the Caddy site address with the host's reachable LAN/VPN IP or internal DNS name, and run:
+
+```sh
+caddy run --config public/self-hosting/Caddyfile --adapter caddyfile
+```
+
+The example uses port `8443`, Caddy's local certificate authority, and WebSocket-aware proxying. Every participant must trust that authority through their organization's certificate process, or use an organization-issued TLS certificate instead. See the guide for certificate export and trust steps. Forward the original `Host` header; Caddy does this automatically.
+
+Everyone, including the host, opens the same address, for example `https://192.168.1.50:8443`, **before creating the room**. Share its generated link and password separately. `localhost` on a teammate's laptop refers to that teammate's own machine; separate Bun servers create separate room stores. Keep the host awake and both processes running. Permit the HTTPS port and browser-to-browser WebRTC connections through the LAN/VPN; a working web page alone does not prove peer connectivity.
+
+Self-hosting removes the Netlify runtime dependency, but the current defaults still use Google Fonts and public Google/Cloudflare STUN servers. Consented PlantUML rendering sends diagram source to the public renderer; Mermaid stays local. This is not a preconfigured offline deployment. The guide explains these external requests and the changes a disconnected installation would need.
+
+## Deploy to Netlify
+
+Import this repository from GitHub into your Netlify team. The committed `netlify.toml` pins Bun 1.4.3, builds the Vite/WASM frontend, publishes `dist`, bundles the API, rate-limited room admission and scheduled cleanup functions, and enables the browser's HTTP polling transport. Functions run on Node.js 22; they do not require a persistent Bun process or a separate WebSocket host.
+
+`@netlify/database` and the committed SQL migrations provision the small room database during deployment. Netlify Database requires a credit-based plan; this setup does not change your account plan. If the team's plan does not support it, enable a supported database plan before importing. No canvas objects, images, or screen recordings are stored in the database.
+
+Configure a production TURN relay under **Project configuration → Environment variables**, scoped to Functions: `TURN_URLS` plus `TURN_SECRET`, or `TURN_USERNAME` and `TURN_CREDENTIAL`. These are server secrets; never prefix them with `VITE_`. Without a relay, STUN-only connections can be used for a pilot, but some network combinations will not connect. No production relay is included in this repository.
+
+After the first deploy, open the HTTPS site in two separate browser profiles, create a room, join its invite link, and check shared objects, chat, each person's window capture, and Watch/Pause controls. Verify the operating system picker and the networks and devices your team actually uses before wider use. The absence of a participant cap does not establish a supported room size or video audience.
+
+For local Netlify development, authenticate the Netlify CLI, link the project, run `bun run dev:netlify`, then apply local migrations in a second terminal with `bunx netlify-cli@26.0.0 database migrations apply`. Netlify applies the committed migrations automatically on hosted deploys. The regular `bun run dev` uses the standalone Bun/WebSocket backend.
 
 ## Sharing and collaboration
 

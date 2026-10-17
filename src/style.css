@@ -178,6 +178,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .tour-steps span { color: var(--muted); font-size: 12px; line-height: 1.7; }
 .tour-steps strong { display: block; color: #4e6742; font-size: 13px; font-weight: 550; }
 .modal .help-detail { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.local-guide-link { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; color: var(--green); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.local-guide-link:hover { color: #294b39; }
 .sessions-list a { display: flex; align-items: center; gap: 12px; padding: 15px 0; border-bottom: 1px solid var(--border); color: #567147; font-size: 13px; }
 .sessions-list a > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .sessions-list > p { color: var(--muted); font-size: 13px; line-height: 1.7; }

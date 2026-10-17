@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Run Common on your own laptop, or host an HTTPS session for a team on your LAN or VPN, without Netlify or a database service.">
+  <title>Self-host Common · A canvas on your own terms</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #fbf8f0;
+      --surface: #fffef9;
+      --ink: #34483b;
+      --muted: #697565;
+      --green: #365d49;
+      --border: #e3dfd3;
+      --sage: #e7eddf;
+      --butter: #f0e4ad;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-size: 16px; line-height: 1.75; }
+    a { color: var(--green); text-underline-offset: 4px; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible, summary:focus-visible { outline: 3px solid var(--green); outline-offset: 5px; border-radius: 3px; }
+    .skip-link { position: fixed; top: -100px; left: 18px; z-index: 10; padding: 8px 15px; border-radius: 8px; background: var(--green); color: white; }
+    .skip-link:focus { top: 14px; }
+    .site-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 1120px; margin: auto; padding: 25px 32px; border-bottom: 1px solid var(--border); }
+    .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: 29px; line-height: 1; text-decoration: none; letter-spacing: -1px; }
+    .brand-mark { display: inline-grid; place-items: center; width: 33px; height: 33px; border: 1px solid #cbd6bd; border-radius: 10px; background: var(--sage); color: #557348; font-family: Georgia, serif; font-size: 27px; }
+    .back-link { font-size: 13px; white-space: nowrap; }
+    main { max-width: 1056px; margin: 0 auto; padding: 0 32px 70px; }
+    .hero { max-width: 820px; padding: 58px 0 30px; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 13px; color: #5c7051; font-size: 11px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; }
+    .eyebrow::before { content: "✦"; font-size: 17px; letter-spacing: 0; }
+    h1, h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; }
+    h1 { margin: 0 0 19px; font-size: clamp(36px, 5.5vw, 55px); line-height: 1.1; letter-spacing: -1.8px; }
+    .lead { max-width: 720px; margin: 0; color: var(--muted); font-size: 18px; line-height: 1.7; }
+    .intro-note { display: flex; align-items: flex-start; gap: 12px; max-width: 820px; margin: 0 0 32px; padding: 17px 19px; border: 1px solid #d8dfca; border-radius: 13px; background: var(--sage); font-size: 14px; line-height: 1.65; }
+    .intro-note > span { font-size: 23px; line-height: 1.2; }
+    .intro-note p { margin: 0; }
+    .layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 40px; align-items: start; }
+    .contents { position: sticky; top: 24px; padding: 12px 0; }
+    .contents p { margin: 0 0 12px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+    .contents ol { margin: 0; padding: 0; list-style: none; }
+    .contents li { margin: 0 0 11px; }
+    .contents a { display: inline-block; font-size: 13px; line-height: 1.5; text-decoration: none; }
+    .contents a:hover { text-decoration: underline; }
+    article { min-width: 0; }
+    section { scroll-margin-top: 25px; margin: 0 0 37px; padding: 29px 0 0; border-top: 1px solid var(--border); }
+    h2 { margin: 0 0 15px; font-size: 30px; letter-spacing: -.6px; line-height: 1.2; }
+    h3 { margin: 26px 0 8px; font-size: 16px; font-weight: 650; line-height: 1.5; }
+    p { margin: 0 0 15px; }
+    ul, ol { margin: 0 0 18px; padding-left: 22px; }
+    li { padding-left: 2px; margin-bottom: 8px; }
+    code { border-radius: 4px; background: #efede3; padding: 2px 4px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .84em; overflow-wrap: anywhere; }
+    pre { margin: 15px 0 18px; padding: 16px 18px; overflow-x: auto; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); line-height: 1.7; }
+    pre code { padding: 0; background: none; font-size: 12px; white-space: pre; overflow-wrap: normal; }
+    .note { margin: 20px 0; padding: 14px 17px; border-left: 3px solid #b3c29b; border-radius: 0 9px 9px 0; background: #f0f2e7; font-size: 14px; line-height: 1.7; }
+    .note p:last-child { margin-bottom: 0; }
+    .important { border-left-color: #b59b54; background: #f6efd3; }
+    .table-scroll { margin: 18px 0; overflow-x: auto; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.7; text-align: left; }
+    caption { padding: 13px 15px; color: var(--muted); text-align: left; font-size: 12px; }
+    th, td { padding: 13px 15px; vertical-align: top; border-top: 1px solid var(--border); }
+    th { color: var(--green); background: #f2f3e9; font-weight: 600; }
+    th[scope="row"] { width: 27%; color: var(--ink); background: transparent; }
+    details { padding: 16px 0; border-bottom: 1px solid var(--border); }
+    summary { color: var(--green); font-size: 15px; font-weight: 600; cursor: pointer; }
+    details p { margin: 12px 0 0; font-size: 14px; }
+    footer { max-width: 1056px; margin: 0 auto; padding: 24px 32px 34px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+    footer p { margin: 0; }
+    @media (max-width: 760px) {
+      .site-header { padding: 22px 22px; }
+      main { padding: 0 22px 35px; }
+      .hero { padding: 38px 0 25px; }
+      .lead { font-size: 16px; }
+      .layout { display: block; }
+      .contents { position: static; padding: 0 0 24px; }
+      .contents ol { display: flex; flex-wrap: wrap; gap: 7px 16px; }
+      .contents li { margin: 0; }
+      h2 { font-size: 27px; }
+      section { margin-bottom: 28px; padding-top: 25px; }
+      footer { padding-inline: 22px; }
+    }
+    @media (max-width: 430px) {
+      body { font-size: 15px; }
+      .site-header { padding-inline: 18px; }
+      main { padding-inline: 18px; }
+      .brand { font-size: 27px; }
+      .back-link { font-size: 12px; }
+      h1 { letter-spacing: -1px; }
+      .intro-note { padding: 14px; }
+      pre { padding: 14px; }
+      th, td { padding: 11px; }
+    }
+    @media print {
+      :root { background: white; color: black; }
+      .skip-link, .back-link, .contents { display: none; }
+      .site-header, main, footer { max-width: none; padding-left: 0; padding-right: 0; }
+      .hero { padding-top: 20px; }
+      .layout { display: block; }
+      section, pre, .note { break-inside: avoid; }
+      pre { white-space: pre-wrap; }
+      pre code { white-space: pre-wrap; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#quickstart">Skip to quick start</a>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Common home"><span class="brand-mark" aria-hidden="true">✳</span>common</a>
+    <a class="back-link" href="./">← Back to the canvas</a>
+  </header>
+  <main>
+    <div class="hero">
+      <p class="eyebrow">The self-hosting guide</p>
+      <h1>A little common ground.<br>On your own laptop.</h1>
+      <p class="lead">Run Common for a solo walkthrough, or let one laptop host a shared canvas for colleagues on your LAN or VPN. Keep the application server with your team.</p>
+    </div>
+    <aside class="intro-note" aria-label="What you need">
+      <span aria-hidden="true">✦</span>
+      <p><strong>No Netlify account or Postgres needed.</strong> The standalone app uses Bun and local files. Team screen sharing adds a trusted HTTPS address through Caddy. The app still has some external defaults, described below.</p>
+    </aside>
+    <div class="layout">
+      <nav class="contents" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#quickstart">1. Start on your laptop</a></li>
+          <li><a href="#team">2. Invite the team</a></li>
+          <li><a href="#trust">3. Trust the certificate</a></li>
+          <li><a href="#data">Where the data lives</a></li>
+          <li><a href="#network">Network &amp; external services</a></li>
+          <li><a href="#troubleshooting">Troubleshooting</a></li>
+        </ol>
+      </nav>
+      <article aria-label="Self-hosting instructions">
+        <section id="quickstart" aria-labelledby="quickstart-title">
+          <h2 id="quickstart-title">1. Start on your laptop</h2>
+          <p>Install <a href="https://bun.sh/docs/installation">Bun 1.4.3</a> and Git. Get read access to the repository, or ask your administrator for a source archive. This repository is currently private; a public app link does not grant source access. The commands below work in macOS/Linux terminals and Windows PowerShell.</p>
+          <pre><code>git clone https://github.com/alexwelcing/common-workspace.git
+cd common-workspace
+bun install --frozen-lockfile
+cp .env.example .env</code></pre>
+          <p>If you use a source archive, open a terminal in its extracted project folder instead. In <code>.env</code>, set these two values, leaving the other optional settings as needed:</p>
+          <pre><code>HOST=127.0.0.1
+PORT=3001</code></pre>
+          <p>Build the standalone frontend, then start its local application server:</p>
+          <pre><code>bun run build:local
+bun run start</code></pre>
+          <p>Open <a href="http://localhost:3001">http://localhost:3001</a> on this laptop. Use the personal canvas for a solo walkthrough, notes, agent tools, or recording. Browsers treat localhost as a secure context, so <strong>Share a window</strong> can open the normal capture picker here.</p>
+          <div class="note"><p><strong>Use <code>build:local</code> for this setup.</strong> It builds the WASM/frontend with the standalone WebSocket transport, including when your shell previously selected Netlify polling. The resulting app serves its API, canvas, and session connections from this Bun server; it makes no Netlify runtime API calls and needs no Netlify login.</p></div>
+        </section>
+
+        <section id="team" aria-labelledby="team-title">
+          <h2 id="team-title">2. Give the team one HTTPS address</h2>
+          <p>Choose one laptop to host the session. All teammates use that same server; running separate copies on their laptops does not join or federate the canvases.</p>
+          <ol>
+            <li>Keep the Bun server above running. Install the free, open-source <a href="https://caddyserver.com/docs/install">Caddy server</a> on the host laptop.</li>
+            <li>Find the host's LAN or VPN IP address that every participant can reach, such as <code>192.168.1.50</code>. This example uses an IP directly and needs no DNS setup.</li>
+            <li>Open <code>public/self-hosting/Caddyfile</code> from the source, or <a href="./self-hosting/Caddyfile" download="Caddyfile">download the Caddyfile</a>. Change its first site address from <code>https://localhost:8443</code> to your address, for example <code>https://192.168.1.50:8443</code>.</li>
+            <li>Leave its internal TLS, trust settings, and reverse proxy to <code>127.0.0.1:3001</code> intact. Open a second terminal in the same project folder, then run:</li>
+          </ol>
+          <pre><code>caddy run --config public/self-hosting/Caddyfile --adapter caddyfile</code></pre>
+          <p>If you downloaded the file somewhere else, use that file's path after <code>--config</code> instead.</p>
+          <p>The example handles HTTPS and WebSocket upgrades and preserves the request host. Bun remains available only on loopback; teammates connect to Caddy on TCP port <code>8443</code>. Keep Caddy's local administration endpoint on its default loopback address; do not publish port <code>2019</code>.</p>
+          <p>Complete the certificate trust step below, then <strong>everyone, including the host, opens the same HTTPS address before creating the session</strong>. Create a room there and distribute its invite link and password separately.</p>
+          <div class="note important"><p>A link beginning with <code>localhost</code> points to the person opening it, not your hosting laptop. Browser storage also belongs to each origin: <code>http://localhost:3001</code> and <code>https://192.168.1.50:8443</code> have separate saved identities and personal canvases. Start at the shared HTTPS address to get the correct invite link.</p></div>
+          <p>Keep both terminals running and the host laptop awake. If its IP changes, update Caddy's site address and have everyone use the new origin; existing browser session storage does not move with it.</p>
+        </section>
+
+        <section id="trust" aria-labelledby="trust-title">
+          <h2 id="trust-title">3. Trust the same local certificate authority</h2>
+          <p>The example uses Caddy's internal certificate authority (CA), rather than requesting a public certificate. Its <code>skip_install_trust</code> setting leaves device trust to your organization. HTTPS must be trusted on <strong>every participating device</strong>, including the host, before browser screen capture will work reliably.</p>
+          <p>While Caddy is running, open another terminal on the host laptop and run this command. It reads Caddy's local administration API and saves only the public root certificate to <code>common-local-root.crt</code> in the current directory:</p>
+          <pre><code>bun -e "const response = await fetch('http://localhost:2019/pki/ca/local'); if (response.ok === false) throw new Error('CA export failed'); await Bun.write('common-local-root.crt', (await response.json()).root_certificate);"</code></pre>
+          <p>Distribute <code>common-local-root.crt</code> through your organization's approved trust process. Install that same CA in the trust store used by each browser or device; some browsers use a separate store. Your IT team can use managed certificate deployment or its standard device instructions. This includes the hosting laptop: the example does not automatically install trust there.</p>
+          <div class="note important"><p><strong>Share the public root certificate only.</strong> Never distribute <code>root.key</code>, other private keys, or Caddy's full data directory. Trusting a CA is a device-level change; use your organization's process and verify that browsers show a trusted connection. Do not work around certificate warnings.</p></div>
+          <p>If your organization already has a trusted internal HTTPS proxy or certificate system, it can replace this Caddy setup. Preserve the incoming <code>Host</code> header, forward WebSocket upgrades on <code>/ws</code>, and proxy the app and <code>/api</code> to the same Bun server. See Caddy's official documentation for <a href="https://caddyserver.com/docs/automatic-https#local-https">local HTTPS</a>, the <a href="https://caddyserver.com/docs/api#get-pkicaltidgt">CA export API</a>, and <a href="https://caddyserver.com/docs/caddyfile/options#skip-install-trust">manual trust installation</a>.</p>
+          <p>To use an organization-issued certificate with the supplied Caddyfile, replace <code>tls internal</code> with the line below. Set the site's address to a hostname or IP covered by that certificate, and make sure every device can resolve and reach it. Keep the private key on the host.</p>
+          <pre><code>tls /absolute/path/to/server-chain.pem /absolute/path/to/server-key.pem</code></pre>
+        </section>
+
+        <section id="data" aria-labelledby="data-title">
+          <h2 id="data-title">Where the data lives</h2>
+          <div class="table-scroll">
+            <table>
+              <caption>Standalone hosting, using new peer-canvas rooms</caption>
+              <thead><tr><th scope="col">Content</th><th scope="col">Location &amp; lifetime</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Room access &amp; chat</th><td>The host's <code>data/rooms.json</code> contains room metadata and names, password hashes, token hashes, and recent chat. Restrict access to that file. <code>DATA_FILE</code> can select another writable location.</td></tr>
+                <tr><th scope="row">Shared canvas &amp; images</th><td>New rooms keep their Yjs canvas and embedded images in participants' browser memory and synchronize between peers. The host server stores no canvas snapshot. Export anything you want to keep before the last copy closes. The personal canvas saves on that browser's device.</td></tr>
+                <tr><th scope="row">Shared windows</th><td>Video travels over WebRTC between peers, with TURN relaying only if configured. The application server does not store the video.</td></tr>
+                <tr><th scope="row">Recordings &amp; snapshots</th><td>Recordings remain local browser blobs until downloaded; reloading or closing the tab loses them. Downloads live wherever that user's browser saves files. Recordings are not uploaded or synchronized.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>The standalone server's rooms have a default seven-day lifetime. Access tokens last 24 hours and are renewed when their browser reconnects. Explicitly leaving revokes that token; ending the room denies further access. Save needed exports and recordings before leaving.</p>
+          <p>Common's room creator is the host. This version has password-based rooms and open room creation for visitors who can reach it; it does not add enterprise SSO, administrator-only room creation, or host-account recovery. Use it on a trusted network appropriate to that access model.</p>
+        </section>
+
+        <section id="network" aria-labelledby="network-title">
+          <h2 id="network-title">Local hosting, with a few external defaults</h2>
+          <p>This setup removes Netlify and Postgres from the runtime. It is not a turnkey offline or air-gapped edition. Source/dependency installation needs access to its repositories, and the canvas app has these defaults:</p>
+          <ul>
+            <li><strong>Fonts:</strong> the app requests DM Sans from Google Fonts. Self-hosting fonts, or removing that request, needs a source change. This guide itself uses system fonts and loads no external scripts or fonts.</li>
+            <li><strong>STUN:</strong> Google and Cloudflare STUN servers help browsers discover reachable network addresses. They receive connection metadata and do not relay the screen video. There is currently no configuration switch to disable the default STUN servers; an organization-only setup needs a source change.</li>
+            <li><strong>Diagrams:</strong> Mermaid renders locally. PlantUML rendering sends the full diagram source to <code>plantuml.com</code> after consent. A diagram's shared <code>externalConsent</code> can permit its rendering in other participants' browsers too; do not add confidential source expecting a separate consent prompt on every device.</li>
+          </ul>
+          <p>For restricted networks, your team may need its own STUN/TURN infrastructure and corresponding configuration or source changes. The existing <code>TURN_URLS</code> plus <code>TURN_SECRET</code> settings, or dedicated <code>TURN_USERNAME</code>/<code>TURN_CREDENTIAL</code>, can point at an organization relay. Keep those credentials in the host's environment, not frontend code.</p>
+          <p>One HTTPS endpoint gets people into the room; canvas and video also need working peer connections. Wi-Fi client isolation, VPN routing, NAT, or firewall policy can block them. Browser WASM does not bypass those network boundaries. There is no fixed room admission cap, but device memory, the full replicated canvas, host signaling work, and presenter upload still limit practical room size.</p>
+        </section>
+
+        <section id="troubleshooting" aria-labelledby="troubleshooting-title">
+          <h2 id="troubleshooting-title">A few things to check</h2>
+          <details>
+            <summary>The page opens, but screen sharing is unavailable</summary>
+            <p>Remote devices need a trusted <code>https://</code> origin. Plain <code>http://192.168…</code> is not equivalent to localhost. Finish certificate trust, then check browser/operating-system capture permissions and choose the window with the native picker. An organization's browser policy may also restrict capture.</p>
+          </details>
+          <details>
+            <summary>A colleague cannot open the invite link</summary>
+            <p>Check that it uses the host's reachable LAN/VPN IP, not <code>localhost</code>. Keep Bun and Caddy running, prevent laptop sleep, and allow the team's access to TCP port <code>8443</code> in the host firewall. Confirm that devices can reach each other on the chosen LAN or VPN.</p>
+          </details>
+          <details>
+            <summary>Rooms open, but the canvas or video never connects</summary>
+            <p>HTTPS room admission can work while peer traffic is blocked. Check VPN routes, Wi-Fi client isolation, peer/UDP firewall rules, and whether your network requires an organization TURN relay. For remote video, use <strong>Watch window</strong> on its tile; a paused view does not receive live frames.</p>
+          </details>
+          <details>
+            <summary>The local app tries to use polling routes or gets API errors</summary>
+            <p>Rebuild with <code>bun run build:local</code>, restart the Bun process, and reload the page. A frontend built for Netlify polling is not the standalone WebSocket frontend. Confirm that you are using the new local build rather than an older deployed tab.</p>
+          </details>
+          <details>
+            <summary>The room rejects an origin or the WebSocket fails</summary>
+            <p>Use the supplied Caddy reverse proxy with its host-preserving upstream, and have everyone use one common HTTPS origin. A replacement proxy must preserve <code>Host</code> and WebSocket upgrades. <code>ALLOWED_ORIGINS</code> can allow a deliberate additional origin; it does not repair a proxy that sends requests to the wrong server.</p>
+          </details>
+          <details>
+            <summary>The host restarts, and a room or canvas looks different</summary>
+            <p>Room metadata and recent chat use the host's data file, but new shared canvas content lives in browser memory. Keep a browser holding the live document or export what you need. Switching IP, protocol, or port also switches browser origin and its saved identity. An expired token requires joining again with the password.</p>
+          </details>
+        </section>
+      </article>
+    </div>
+  </main>
+  <footer><p>Built for a little space to think together. <a href="./">Return to Common</a> · <a href="#quickstart">Back to quick start</a></p></footer>
+</body>
+</html>

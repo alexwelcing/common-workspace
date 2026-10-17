@@ -19,6 +19,8 @@ Room writes lock the room row to serialize admission and allocate event sequence
 
 ## Standalone Bun transport
 
+Build with `bun run build:local` and start with `bun run start`. The local build selects WebSocket transport even if the parent environment was configured for Netlify polling. The [self-hosting guide](public/self-hosting.html) covers localhost use, a shared LAN/VPN HTTPS origin, and the included Caddy proxy.
+
 * `POST /api/rooms` with `{name,displayName,password,collaboration?:'peer'|'server'}` returns `{room,token,participantId,isAdmin:true}` (201). New browser sessions request `collaboration:'peer'`. Omitted mode defaults to `server` for existing clients. Other values return 400 `INVALID_COLLABORATION`. Peer room metadata is `{id,name,createdAt,collaboration:'peer'}`; legacy/server metadata remains `{id,name,createdAt}`. The mode is fixed when the room is created and appears consistently in room, join, session, and socket initialization responses.
 * `GET /api/rooms/:id` returns `{room:{id,name,createdAt}}` (404 after end).
 * `GET /api/rooms/:id/session` with `Authorization: Bearer TOKEN` validates saved/reconnecting credentials and returns `{room,participantId,isAdmin,displayName}`. Returns 401 for expired/revoked tokens, 404 if the room ended. Validate after unexpected WebSocket handshake failure; browsers hide the handshake HTTP status and report close code 1006.

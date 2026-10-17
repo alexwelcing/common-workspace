@@ -1,6 +1,6 @@
 # Common for browser agents
 
-Common is a shared browser canvas for product walkthroughs, live windows, text, drawings, diagrams, generated image imports, and local recordings. Open the user's session at the current origin. The live site is https://commonwork.netlify.app/.
+Common is a shared browser canvas for product walkthroughs, live windows, text, drawings, diagrams, generated image imports, and local recordings. Open the user's session at the current origin. A local installation has its own rooms; use its links and documentation without switching to a hosted instance. The [self-hosting guide](self-hosting.html) explains laptop and team setup.
 
 Use the browser interface when your browser tool supports DOM actions only. Use `window.commonAgent` only when your tool permits page JavaScript. These are two interfaces to the same canvas; there is no remote MCP endpoint or server-side agent execution service.
 
