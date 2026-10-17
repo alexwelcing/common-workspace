@@ -10,10 +10,11 @@ async function until(predicate) {
   assert.ok(predicate(), 'asynchronous transport work did not settle');
 }
 
-function fixture(handler = () => undefined, { hidden = false } = {}) {
+function fixture(handler = () => undefined, { hidden = false, ...transportOptions } = {}) {
   const requests = []; const timers = new Map(); let timerId = 0; let time = 0;
   const document = new EventTarget(); document.hidden = hidden;
   const transport = new PollingSessionTransport({
+    ...transportOptions,
     room: 'room', token: 'room-access-token', documentImpl: document, random: () => 0.5, now: () => time,
     setTimeoutImpl: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; },
     clearTimeoutImpl: id => timers.delete(id),
@@ -214,4 +215,83 @@ test('linked peers poll slowly when quiet and speed up again for room activity',
     f.transport.setIdle(false);
     assert.ok([...f.timers.values()].some(timer => timer.delay === 0));
   } finally { f.destroy(); }
+});
+
+test('versioned polling retains an omitted roster, suppresses replay, and immediately drains batches', async () => {
+  let polls = 0; const delivered = [];
+  const f = fixture(request => {
+    if (request.url.endsWith('/connect')) return response({ init, cursor: '7', connectionId: 'connection-one', rosterVersion: '2', capabilities: { targetedEvents: true } });
+    if (request.url.includes('/events?')) {
+      polls++;
+      return response(polls === 1 ? { events: [{ sequence: '8', message: { type: 'chat', message: { text: 'one' } } }], cursor: '8', hasMore: true, rosterVersion: '2' }
+        : { events: [{ sequence: '8', message: { type: 'chat', message: { text: 'replayed' } } }, { sequence: '11', message: { type: 'chat', message: { text: 'two' } } }], cursor: '15', hasMore: false, rosterVersion: '2' });
+    }
+  });
+  f.transport.onmessage = event => delivered.push(JSON.parse(event.data));
+  try {
+    await f.open(); await f.run(1000); await f.run(0);
+    assert.match(f.requests[1].url, /after=7&delivery=targeted-v1&rosterVersion=2$/);
+    assert.match(f.requests[2].url, /after=8&delivery=targeted-v1&rosterVersion=2$/);
+    assert.deepEqual(delivered.map(message => message.type), ['init', 'chat', 'chat']);
+    assert.deepEqual(delivered.slice(1).map(message => message.message.text), ['one', 'two']);
+    assert.equal(f.transport._participants, JSON.stringify(init.participants));
+  } finally { f.destroy(); }
+});
+
+test('capability-negotiated signal retries reuse one request ID and preserve the send queue', async () => {
+  let posts = 0;
+  const f = fixture(request => {
+    if (request.url.endsWith('/connect')) return response({ init, cursor: '7', connectionId: 'connection-one', capabilities: { signalIdempotency: true } });
+    if (request.url.endsWith('/messages') && ++posts === 1) throw new TypeError('Accepted response was lost');
+  });
+  try {
+    await f.open();
+    f.transport.send(JSON.stringify({ type: 'signal', to: 'guest', data: { order: 1 } }));
+    f.transport.send(JSON.stringify({ type: 'signal', to: 'guest', data: { order: 2 } }));
+    await f.transport._sendChain;
+    const sends = f.requests.filter(request => request.url.endsWith('/messages')).map(request => request.body);
+    assert.equal(sends.length, 3);
+    assert.equal(sends[0].requestId, sends[1].requestId);
+    assert.notEqual(sends[1].requestId, sends[2].requestId);
+    assert.deepEqual(sends.map(send => send.data.order), [1, 1, 2]);
+    assert.equal(f.transport.getDiagnostics().postRetries, 1);
+    assert.equal(f.transport.readyState, PollingSessionTransport.OPEN);
+  } finally { f.destroy(); }
+});
+
+test('signal retries are bounded and chat still never retries an ambiguous POST', async () => {
+  for (const type of ['signal', 'chat']) {
+    const f = fixture(request => {
+      if (request.url.endsWith('/connect')) return response({ init, cursor: '7', connectionId: 'connection-one', capabilities: { signalIdempotency: true } });
+      if (request.url.endsWith('/messages')) return response({ error: 'Temporary outage' }, 503);
+    });
+    try {
+      await f.open();
+      f.transport.send(JSON.stringify(type === 'signal' ? { type, to: 'guest', data: {} } : { type, text: 'Only once' }));
+      await f.transport._sendChain;
+      assert.equal(f.requests.filter(request => request.url.endsWith('/messages')).length, type === 'signal' ? 3 : 1);
+      assert.equal(f.transport.readyState, PollingSessionTransport.CLOSED);
+    } finally { f.destroy(); }
+  }
+});
+
+test('transport diagnostics contain only bounded counters and lifecycle states', async () => {
+  const diagnostics = []; const pending = deferred();
+  const f = fixture(request => request.url.endsWith('/messages') ? pending.promise : undefined,
+    { onDiagnostic: (type, values) => diagnostics.push({ type, values }) });
+  try {
+    await f.open();
+    f.transport.send(JSON.stringify({ type: 'signal', to: 'private-person', data: { secret: 'private SDP' } }));
+    f.advance(250);
+    assert.equal(f.transport.diagnostics().queuedMessages, 1);
+    assert.equal(f.transport.diagnostics().queueAgeMs, 250);
+    pending.resolve(response({ ok: true })); await f.transport._sendChain;
+    await f.run(1000);
+    assert.equal(f.transport.diagnostics().pollCount, 1);
+    assert.equal(f.transport.diagnostics().queuedMessages, 0);
+    const serialized = JSON.stringify(diagnostics);
+    for (const secret of ['private-person', 'private SDP', 'room-access-token', 'connection-one']) assert.equal(serialized.includes(secret), false);
+    assert.ok(diagnostics.every(entry => ['poll', 'queue', 'connection'].includes(entry.type)));
+    assert.ok(diagnostics.every(entry => Object.values(entry.values).every(value => typeof value === 'number' || ['connecting', 'connected', 'disconnected'].includes(value))));
+  } finally { pending.resolve(response({ ok: true })); f.destroy(); }
 });

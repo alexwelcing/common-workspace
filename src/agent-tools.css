@@ -619,3 +619,16 @@
 
   .agent-walkthrough p { max-height: 70px; }
 }
+.agent-grants {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid #dfe6df;
+  border-radius: 12px;
+}
+.agent-grants legend { padding: 0 6px; color: #305e48; font-weight: 650; font-size: 13px; }
+.agent-grant-row { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 13px; cursor: pointer; }
+.agent-grant-row input { margin-top: 3px; flex-shrink: 0; accent-color: #305e48; }
+.agent-grant-row span { display: grid; gap: 4px; }
+.agent-grant-row strong { color: #304239; font-size: 13px; }
+.agent-grant-row small { color: #66756b; font-size: 12px; line-height: 1.45; }
+.agent-grants .agent-small { margin-bottom: 0; }

@@ -7,10 +7,15 @@
     "dev": "bun scripts/dev.mjs",
     "dev:netlify": "bunx netlify-cli@26.0.0 dev",
     "dev:netlify-harness": "bun scripts/netlify-local.mjs",
-    "build": "bun scripts/build-wasm.mjs && bun --bun vite build",
+    "local": "bun scripts/local.mjs",
+    "doctor": "bun scripts/doctor.mjs",
+    "media:export": "bun scripts/media-worker.mjs",
+    "build": "bun scripts/build.mjs",
     "build:local": "bun scripts/build-local.mjs",
     "start": "bun server.mjs",
+    "lint": "oxlint scripts vite.config.js",
     "test": "bun test ./tests/*.test.mjs",
+    "test:local": "bun tests/dev-built-smoke.mjs",
     "test:browser": "bun tests/browser-smoke.mjs",
     "test:layers": "bun tests/browser-layers.mjs",
     "test:netlify-browser": "bun tests/browser-netlify.mjs"
@@ -27,6 +32,7 @@
   },
   "devDependencies": {
     "happy-dom": "^21.0.3",
+    "oxlint": "^1.88.0",
     "pg": "^8.23.1",
     "vite": "^6.3.6",
     "wabt": "^1.0.38"

@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify';
 import { renderMermaid, plantUmlUrl } from './diagrams.js';
+import { getRuntimeConfig } from './runtime-config.js';
 import { initGeometry, snap, simplifyPoints } from './geometry.js';
 import './board.css';
 
@@ -460,16 +461,21 @@ export class Board {
     const body = element('div', 'board-diagram-body'); node.append(body);
     const currentSignature = node._signature;
     if (entity.language === 'plantuml') {
-      if (!this.allowExternalPlantUml && !entity.externalConsent && !this.externalConsents.has(entity.id)) {
+      const renderer = getRuntimeConfig().plantUml;
+      if (!renderer.enabled) {
+        body.append(element('p', 'board-diagram-error', 'PlantUML rendering is disabled for this installation. Use Mermaid, or configure your organization’s renderer.')); return;
+      }
+      // A teammate's synchronized consent is not this browser's permission.
+      if (!this.allowExternalPlantUml && !this.externalConsents.has(entity.id)) {
         const message = element('div', 'board-diagram-consent');
-        message.append(icon('diagram', 27), element('strong', '', 'Render PlantUML diagram'), element('p', '', 'Rendering sends the diagram source to plantuml.com.'));
+        message.append(icon('diagram', 27), element('strong', '', 'Render PlantUML diagram'), element('p', '', `Rendering sends the diagram source to ${new URL(renderer.endpoint).host}.`));
         const allow = element('button', 'board-consent-button', 'Allow rendering'); allow.type = 'button';
         allow.addEventListener('pointerdown', e => e.stopPropagation());
         allow.addEventListener('click', e => { e.stopPropagation(); this.externalConsents.add(entity.id); node._signature = null; this.renderEntity(this.entities.get(entity.id)); });
         message.append(allow); body.append(message); return;
       }
       const image = document.createElement('img'); image.alt = entity.title || 'PlantUML diagram'; image.draggable = false;
-      try { image.src = plantUmlUrl(entity.source || ''); } catch (error) { body.append(element('p', 'board-diagram-error', error.message)); return; }
+      try { image.src = plantUmlUrl(entity.source || '', renderer.endpoint); } catch (error) { body.append(element('p', 'board-diagram-error', error.message)); return; }
       image.addEventListener('error', () => { body.replaceChildren(element('p', 'board-diagram-error', 'Unable to render this diagram. Double click to edit the source.')); });
       body.append(image); return;
     }

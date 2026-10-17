@@ -30,9 +30,19 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
+      - run: bun run lint
       - run: bun run test
         env:
           COMMON_TEST_DATABASE_URL: postgres://common:common-ci-only@127.0.0.1:5432/common_checks
-      - run: bun run build
+      - name: Build hosted frontend
+        run: bun run build
         env:
           VITE_SESSION_TRANSPORT: polling
+      - name: Check generated agent manifest
+        run: git diff --exit-code -- public/agent-tools.json
+      - name: Build standalone frontend with inherited hosted setting
+        run: bun run build:local
+        env:
+          VITE_SESSION_TRANSPORT: polling
+      - name: Smoke test standalone assets and WebSocket rooms
+        run: bun run test:local

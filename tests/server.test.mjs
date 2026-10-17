@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
@@ -8,6 +8,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { WebSocket } from 'ws';
 import { createApp } from '../server.mjs';
+import { creationCases, joinCases, activityCases, validCreation } from './protocol-cases.mjs';
 
 const PASSWORD = 'correct horse battery';
 const entity = (id, extra = {}) => ({ id, type: 'sticky', x: 20, y: 30, width: 240, height: 160, text: 'A shared idea', color: '#fff0b9', ...extra });
@@ -60,11 +61,13 @@ async function fixture(t, options = {}) {
   const connect = async (auth, wsOptions) => {
     const ws = new WebSocket(`${base.replace('http', 'ws')}/ws?room=${auth.room.id}&token=${auth.token}`, wsOptions);
     const queue = [];
+    let upgradeHeaders;
+    ws.on('upgrade', response => { upgradeHeaders = response.headers; });
     ws.on('message', data => queue.push(JSON.parse(data)));
     ws.on('error', () => {});
     await once(ws, 'open');
     const client = {
-      ws, queue,
+      ws, queue, upgradeHeaders,
       send(message) { ws.send(JSON.stringify(message)); },
       async next(type, predicate = () => true) {
         const deadline = Date.now() + 3000;
@@ -137,6 +140,94 @@ test('rooms require passwords, reject cross-origin writes, and keep credentials 
   assert.equal(JSON.stringify(client.init).includes(auth.token), false);
   assert.equal(await upgradeStatus(f.base, auth.room, 'incorrect'), 401);
   assert.equal(await upgradeStatus(f.base, auth.room, guest.token, { Origin: 'https://attacker.example' }), 403);
+});
+
+test('standalone admission and activity boundaries conform to the portable room protocol', async t => {
+  const f = await fixture(t);
+  for (const sample of creationCases) {
+    const result = await f.request('/api/rooms', sample.input);
+    assert.equal(result.status, sample.status, sample.label);
+    if (sample.code) assert.equal(result.code, sample.code, sample.label);
+    else assert.equal(result.room.name, sample.name);
+  }
+  const host = await f.request('/api/rooms', validCreation);
+  for (const sample of joinCases) {
+    const result = await f.request(`/api/rooms/${host.room.id}/join`, sample.input);
+    assert.equal(result.status, sample.status, sample.label);
+    if (sample.code) assert.equal(result.code, sample.code, sample.label);
+    else {
+      assert.equal(result.isAdmin, false);
+      const identity = await f.request(`/api/rooms/${host.room.id}/session`, undefined, { Authorization: `Bearer ${result.token}` });
+      assert.equal(identity.displayName, 'Guest');
+    }
+  }
+  const client = await f.connect(host);
+  assert.deepEqual(client.init.capabilities, { protocolVersion: 1, transport: 'websocket' });
+  for (const sample of activityCases) {
+    client.send(sample.message);
+    assert.equal((await client.next('error')).code, sample.code, sample.label);
+  }
+  client.send({ type: 'chat', text: '  Common contract  ' });
+  assert.equal((await client.next('chat')).message.text, 'Common contract');
+  client.send({ type: 'signal', to: host.participantId, data: { subscribe: true } });
+  assert.equal((await client.next('error')).code, 'INVALID_SIGNAL');
+});
+
+test('standalone storage failures log only fixed categories and safe codes', async t => {
+  const f = await fixture(t);
+  const blockedWrite = path.join(f.directory, 'rooms.json.tmp');
+  await mkdir(blockedWrite);
+  const original = console.error, logs = [];
+  console.error = (...values) => logs.push(values.join(' '));
+  try {
+    const result = await f.create('PRIVATE_CANVAS_ROOM');
+    assert.equal(result.status, 500);
+    assert.ok(logs.length > 0);
+    for (const line of logs) assert.match(line, /^(Session persistence failed:|Common request failed:) [A-Z0-9_]{1,40}$/);
+    for (const secret of [f.directory, 'PRIVATE_CANVAS_ROOM', PASSWORD, 'Error:', ' at ']) assert.equal(logs.join('').includes(secret), false);
+  } finally {
+    console.error = original;
+    await rm(blockedWrite, { recursive: true });
+  }
+});
+
+test('standalone public runtime configuration exposes private ICE policy without relay credentials', async t => {
+  const env = { COMMON_NETWORK_PROFILE: 'private', TURN_URLS: 'turn:internal.example:3478', TURN_SECRET: 'secret-that-must-stay-server-side' };
+  const f = await fixture(t, { env });
+  const config = await f.request('/api/config');
+  assert.equal(config.status, 200);
+  assert.equal(config.transport, 'websocket');
+  assert.equal(config.protocolVersion, 1);
+  assert.equal(config.networkProfile, 'private');
+  assert.deepEqual(config.rtc.iceServers, []);
+  assert.equal(JSON.stringify(config).includes(env.TURN_SECRET), false);
+  assert.equal(JSON.stringify(config).includes('turn:internal.example'), false);
+  const anonymous = await f.request('/api/ice');
+  assert.deepEqual(anonymous.iceServers, []);
+  const auth = await f.create();
+  assert.equal((await f.request(`/api/ice?room=${auth.room.id}`)).status, 401);
+  const authenticated = await f.request(`/api/ice?room=${auth.room.id}`, undefined, { Authorization: `Bearer ${auth.token}` });
+  assert.equal(authenticated.iceServers.length, 1);
+  assert.equal(authenticated.iceServers[0].urls[0], 'turn:internal.example:3478');
+  assert.equal(typeof authenticated.iceServers[0].credential, 'string');
+  assert.equal(JSON.stringify(authenticated).includes(env.TURN_SECRET), false);
+});
+
+test('standalone HTTP and WebSocket handshakes expose request correlation without credentials', async t => {
+  const f = await fixture(t, { env: { COMMON_BUILD_ID: 'test-build' } });
+  const traceId = '1'.repeat(32);
+  const response = await fetch(`${f.base}/api/health`, { headers: { traceparent: `00-${traceId}-${'2'.repeat(16)}-01` } });
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { ok: true });
+  assert.match(response.headers.get('x-common-request-id'), /^[a-f0-9]{32}$/);
+  assert.equal(response.headers.get('x-common-build'), 'test-build');
+  assert.equal(response.headers.get('x-common-protocol'), '1');
+  assert.match(response.headers.get('traceparent'), new RegExp(`^00-${traceId}-[a-f0-9]{16}-01$`));
+  const auth = await f.create(); const client = await f.connect(auth);
+  assert.match(client.init.diagnostics.requestId, /^[a-f0-9]{32}$/);
+  assert.equal(client.init.diagnostics.buildId, 'test-build');
+  assert.match(client.init.diagnostics.traceparent, /^00-[a-f0-9]{32}-[a-f0-9]{16}-00$/);
+  if (client.upgradeHeaders['x-common-request-id']) assert.equal(client.upgradeHeaders['x-common-request-id'], client.init.diagnostics.requestId);
+  assert.equal(JSON.stringify(client.upgradeHeaders).includes(auth.token), false);
 });
 
 test('more than ten participants can join and connect while explicit leave revokes access', async t => {

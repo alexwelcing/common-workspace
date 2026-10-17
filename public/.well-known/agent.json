@@ -5,10 +5,18 @@
   "homepage": "/",
   "documentation": "/agents.md",
   "api_reference": "/agent-api.md",
+  "tool_definitions": "/agent-tools.json",
   "interfaces": {
     "browser_ui": {
       "open": "[aria-label=\"Agent tools\"]",
       "enable": "#agent-enable",
+      "grant_inspect": "#agent-grant-inspect",
+      "grant_canvas_write": "#agent-grant-canvas-write",
+      "grant_media_capture": "#agent-grant-media-capture",
+      "grant_recording": "#agent-grant-recording",
+      "grant_duration": "#agent-grant-duration",
+      "grant_apply": "#agent-grant-apply",
+      "grant_revoke": "#agent-grant-revoke",
       "inspect": "#agent-inspect",
       "command": "#agent-command",
       "run": "#agent-run",
@@ -28,6 +36,14 @@
       "version": "1",
       "methods": ["describe", "state", "execute", "batch"],
       "command_field": "action"
+    },
+    "web_mcp": {
+      "experimental": true,
+      "feature": "document.modelContext.registerTool",
+      "tool_name_pattern": "common_<action_with_underscores>",
+      "definitions": "/agent-tools.json",
+      "arguments": "Tool inputSchema arguments without the action field",
+      "availability": "Only tools allowed by the current grant are registered"
     }
   },
   "actions": [
@@ -53,7 +69,12 @@
   ],
   "access": {
     "scope": "Current browser tab and its admitted canvas session",
-    "editing": "Disabled by default; enable through the visible Agent tools control",
+    "editing": "Disabled by default; select timed capabilities in the visible Agent tools controls",
+    "capabilities": ["inspect", "canvas-write", "media-capture", "recording"],
+    "default_capabilities": ["inspect", "canvas-write"],
+    "default_grant_minutes": 15,
+    "maximum_grant_minutes": 60,
+    "revocation": "Expiry, user revocation, disconnection, reload, or canvas session change ends access",
     "screen_capture": "Requires the user's native browser share picker approval",
     "image_generation": "External agent capability; import generated raster output",
     "recordings": "Video-only local browser blobs; download before reload",

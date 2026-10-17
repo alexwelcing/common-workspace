@@ -72,6 +72,24 @@ test('window stop keeps shared tracks alive, captures final data, and exposes me
   f.capture.destroy(); assert.equal(f.windowStream.track.stops, 0);
 });
 
+test('explicit local export getter returns an immutable saved Blob without exposing retained storage', async () => {
+  const f = setup();
+  assert.throws(() => f.capture.getRecordingBlob('missing'), /not found/);
+  const started = await f.capture.start({ source: 'window' });
+  assert.throws(() => f.capture.getRecordingBlob(started.id), /not found/, 'active recordings cannot be exported before they finish');
+  Recorder.instances.at(-1).chunk('first');
+  const saved = await f.capture.stop();
+  const blob = f.capture.getRecordingBlob(saved.id);
+  assert.ok(blob instanceof Blob); assert.equal(blob.size, saved.bytes);
+  assert.equal(await blob.text(), 'firstend');
+  assert.equal(blob.type, saved.mimeType);
+  assert.equal('blob' in f.capture.list()[0], false, 'ordinary metadata remains safe to expose');
+  const slice = blob.slice(0, 1); assert.equal(slice.size, 1); assert.equal(f.capture.getRecordingBlob(saved.id).size, saved.bytes);
+  f.capture.discard(saved.id);
+  assert.throws(() => f.capture.getRecordingBlob(saved.id), /not found/);
+  f.capture.destroy(); assert.throws(() => f.capture.getRecordingBlob(saved.id), /closed/);
+});
+
 test('loss or replacement of the window stops recording without ending a replacement share', async () => {
   const f = setup(); await f.capture.start({ source: 'window' });
   Recorder.instances.at(-1).chunk();

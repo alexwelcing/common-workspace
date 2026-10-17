@@ -9,6 +9,8 @@ import { randomUUID } from 'node:crypto';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import pg from 'pg';
 import { createApiHandler } from '../netlify/lib/api.mjs';
+import { publicRuntimeConfig } from '../lib/runtime-config.mjs';
+import { observeRequest } from '../lib/observability.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const databaseUrl = process.env.COMMON_TEST_DATABASE_URL;
@@ -69,7 +71,14 @@ try {
           headers,
           ...(incoming.method !== 'GET' && incoming.method !== 'HEAD' ? { body: Buffer.concat(chunks) } : {}),
         });
-        const response = await api(request, { ip: incoming.socket.remoteAddress });
+        const response = await observeRequest(request, () => {
+          if (incoming.method === 'GET' && url.pathname === '/api/config') {
+            return Response.json(publicRuntimeConfig(process.env, { transport: 'polling' }), {
+              headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
+            });
+          }
+          return api(request, { ip: incoming.socket.remoteAddress });
+        });
         outgoing.writeHead(response.status, Object.fromEntries(response.headers));
         outgoing.end(Buffer.from(await response.arrayBuffer()));
         return;

@@ -37,6 +37,7 @@ export class ScreenSharing {
     onPeerOpen = () => {},
     onPeerClose = () => {},
     getIceConfig = async () => DEFAULT_ICE,
+    fallbackIceConfig = DEFAULT_ICE,
     mediaDevices = globalThis.navigator?.mediaDevices,
     peerConnectionFactory = (configuration) => new globalThis.RTCPeerConnection(configuration),
     streamFactory = (tracks) => new globalThis.MediaStream(tracks),
@@ -49,6 +50,7 @@ export class ScreenSharing {
     this.onPeerOpen = onPeerOpen;
     this.onPeerClose = onPeerClose;
     this.getIceConfig = getIceConfig;
+    this.fallbackIceConfig = fallbackIceConfig;
     this.mediaDevices = mediaDevices;
     this.peerConnectionFactory = peerConnectionFactory;
     this.streamFactory = streamFactory;
@@ -389,8 +391,8 @@ export class ScreenSharing {
       // A transient outage must not permanently pin this session to STUN-only.
       this._iceConfig = null;
       this._iceExpiresAt = 0;
-      this._status('Connection settings could not be loaded; using the default connection service.');
-      return DEFAULT_ICE;
+      this._status('Connection settings could not be loaded. Retrying with this installation’s fallback settings.');
+      return typeof this.fallbackIceConfig === 'function' ? this.fallbackIceConfig() : this.fallbackIceConfig;
     }).finally(() => {
       if (this._icePromise === pending) this._icePromise = null;
     });

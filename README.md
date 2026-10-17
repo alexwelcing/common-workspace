@@ -4,17 +4,27 @@ A browser workspace for password-protected team sessions: invite links, a shared
 
 Try the hosted app at [commonwork.netlify.app](https://commonwork.netlify.app/), or [run it on your own laptop](public/self-hosting.html). The standalone version needs Bun and a local room file; it needs no Netlify account, Postgres database, or hosted API key.
 
-WebAssembly runs the canvas geometry kernel for grid snapping and drawing simplification. The interface is JavaScript, with a JavaScript geometry fallback. Yjs synchronizes canvas content directly between browsers over a sparse WebRTC network. Video connections are selected separately, so joining a room does not require receiving everyone's screen. The standalone Bun server handles temporary room access, presence, chat, and connection signaling on your own machine. The optional Netlify deployment uses Functions and a small Postgres database for those same tasks.
+WebAssembly runs the canvas geometry kernel for grid snapping and drawing simplification. The interface is JavaScript, with a JavaScript geometry fallback. Yjs synchronizes canvas content directly between browsers over a sparse WebRTC network. Video connections are selected separately, so joining a room does not require receiving everyone's screen. The standalone Bun server handles temporary room access, presence, chat, and connection signaling on your own machine. The optional Netlify deployment uses Functions and a small Postgres database for those same tasks. The frontend reads `/api/config` at startup, so the same built files select the local WebSocket or hosted polling transport at runtime.
 
 ## Browser agents and product walkthroughs
 
-Open **Agent tools** and enable agent control in the current tab. Browser agents can use its labeled JSON command runner, or `window.commonAgent` when their tools permit page JavaScript. They can inspect object IDs, write text, draw annotations, import generated images, change geometry and layers, focus objects, and guide a walkthrough. Edits use the same shared document as human edits. Solo walkthroughs and window sharing also work on the personal canvas without creating a room.
+Open **Agent tools** and grant access in the current tab. The default grant allows canvas inspection and editing for 15 minutes; capture and recording are separate choices. Access can be revoked and expires on a session change. Browser agents can use the labeled JSON command runner, or `window.commonAgent` when their tools permit page JavaScript. They can inspect object IDs, write text, draw annotations, import generated images, change geometry and layers, focus objects, and guide a walkthrough. Edits use the same shared document as human edits. Solo walkthroughs and window sharing also work on the personal canvas without creating a room.
 
-Agents discover instructions at `/agents.md` and capabilities at `/.well-known/agent.json` on the current installation's origin, so local sessions do not send agents to the hosted app. See [AGENT_API.md](AGENT_API.md) for commands and examples. Common supplies the canvas interface; an agent uses its own image-generation tool and imports the resulting raster image. There is no embedded model credential or remote MCP endpoint.
+Agents discover instructions at `/agents.md`, interfaces at `/.well-known/agent.json`, and generated command schemas at `/agent-tools.json` on the current installation's origin. Supported browsers can expose the same registry through experimental WebMCP, with only currently granted tools registered. The UI/JavaScript bridge works without WebMCP. See [AGENT_API.md](AGENT_API.md) for commands and examples. Image generation uses the agent's own tool and imports its output; there is no embedded model credential or remote MCP endpoint.
 
 Use **Canvas + annotations** to record the current canvas view, including live windows and drawings, or **Shared window only** to record a window already approved with the browser's native share picker. Recordings contain video only, stay in browser memory, and can be downloaded as WebM or MP4 depending on browser support. Download before reloading. Each recording is capped at five minutes or 100 MiB; a tab retains up to three recordings and 150 MiB total. PNG snapshots are available too. External PlantUML images use a placeholder in canvas captures.
 
-Agent control starts disabled on each page load. Position locks, screen ownership, room access, and disconnect behavior still apply. Commands and pending captures retain their original session scope, so changing rooms cannot redirect queued edits into another room. Recording controls remain available to the person using the canvas when agent control is off.
+Agent control starts disabled on each page load. Grants are limited to the current browser/session and at most 60 minutes; the agent API cannot grant itself more access. Position locks, screen ownership, room access, and disconnect behavior still apply. Commands and pending captures retain their original session scope, so changing rooms cannot redirect queued edits into another room. The browser's native picker and the person's manual recording controls remain separate from agent grants.
+
+### Optional local MP4 export
+
+Browser recording/downloads work on their own. To convert a saved clip or a sequence of PNG snapshots into MP4, install FFmpeg (`ffmpeg` and `ffprobe`) on the same computer as the browser and start:
+
+```sh
+bun run media:export --origin http://localhost:3001
+```
+
+Use your actual app origin, including its HTTPS port for a team installation. Open **Canvas options → Recording exports**, connect to the printed loopback worker address, and paste its session token. The token stays in this tab. Choose a retained recording, or 1–50 PNG frames and their duration, then export. The worker processes temporary files locally and removes them after the job; it does not require Cloudflare, Netlify, or Docker. Original browser recordings remain available. The self-hosting guide covers the optional Docker engine and limits. No agent command exposes worker tokens or starts conversion.
 
 ## Run on your own laptop
 
@@ -24,10 +34,12 @@ The [self-hosting guide](public/self-hosting.html), available from **How it work
 
 ```sh
 bun install --frozen-lockfile
-bun run dev
+bun run local
 ```
 
-Open http://localhost:5173. The development script starts Vite and the API server together under Bun. Start a session, choose your display name and a password of at least eight characters, then share the generated link and password separately. Use another browser profile or a private window to test a second participant.
+Open http://localhost:3001. The launcher builds and starts the standalone app with the private network profile: no default public STUN or external PlantUML renderer. The personal canvas works for a solo walkthrough. For collaboration, create a room with a password of at least eight characters and use its generated invite link.
+
+Run `bun run doctor` for local setup diagnostics. It checks the toolchain, selected profile, origins, ports, and certificate files without printing secrets. For source development with hot reload, `bun run dev` starts Vite at http://localhost:5173 and the Bun API server together.
 
 To run the built app:
 
@@ -37,27 +49,27 @@ bun run build:local
 bun run start
 ```
 
-`build:local` explicitly selects the standalone WebSocket transport, even if your shell or `.env` was configured for Netlify polling. It does not change the hosted build.
+`build:local` remains a compatibility build command. The served `/api/config` now determines transport and network policy, so you can move the built frontend between standalone and Netlify hosting without rebuilding it for a different transport. Bare `bun run start` uses your environment settings; set `COMMON_NETWORK_PROFILE=private` in `.env` for the organization's private profile.
 
-Open http://localhost:3001. The server serves `dist/` and the API on the same port. `bun run test` runs the automated checks. See [API.md](API.md) for the collaboration protocol.
+Open http://localhost:3001. The server serves `dist/` and the API on the same port. See [API.md](API.md) for the collaboration protocol.
 
 ### Invite teammates over LAN or VPN
 
-One laptop runs the Bun server; the other participants only need a browser. Run the built app behind HTTPS with the [included Caddy example](public/self-hosting/Caddyfile). Bind Bun to `127.0.0.1:3001` in `.env`, replace `localhost` in the Caddy site address with the host's reachable LAN/VPN IP or internal DNS name, and run:
+One laptop runs Bun and Caddy; the other participants only need a browser. Install Caddy, choose a stable LAN/VPN address, and start:
 
 ```sh
-caddy run --config public/self-hosting/Caddyfile --adapter caddyfile
+bun run local --https --origin https://192.168.1.50:8443
 ```
 
-The example uses port `8443`, Caddy's local certificate authority, and WebSocket-aware proxying. Every participant must trust that authority through their organization's certificate process, or use an organization-issued TLS certificate instead. See the guide for certificate export and trust steps. Forward the original `Host` header; Caddy does this automatically.
+Use your host's reachable address instead of the example IP. The launcher writes its Caddy configuration under `data/local`, uses port `8443` by default, and exports the public root certificate as `common-local-root.crt`. Every participant must trust that authority through their organization's certificate process, or use an organization-issued TLS certificate instead. It does not automatically install trust. See the guide for the manual [Caddy configuration](public/self-hosting/Caddyfile) and certificate steps.
 
 Everyone, including the host, opens the same address, for example `https://192.168.1.50:8443`, **before creating the room**. Share its generated link and password separately. `localhost` on a teammate's laptop refers to that teammate's own machine; separate Bun servers create separate room stores. Keep the host awake and both processes running. Permit the HTTPS port and browser-to-browser WebRTC connections through the LAN/VPN; a working web page alone does not prove peer connectivity.
 
-Self-hosting removes the Netlify runtime dependency, but the current defaults still use Google Fonts and public Google/Cloudflare STUN servers. Consented PlantUML rendering sends diagram source to the public renderer; Mermaid stays local. This is not a preconfigured offline deployment. The guide explains these external requests and the changes a disconnected installation would need.
+Fonts are bundled, and the private profile uses no default external STUN or PlantUML service. You can explicitly configure organization STUN/TURN or a diagram renderer. The standard profile retains public Google/Cloudflare STUN and the consented public PlantUML renderer; Mermaid stays local. Installation still needs dependencies, and private hosting does not overcome blocked peer connections. The guide explains the network boundaries and optional services.
 
 ## Deploy to Netlify
 
-Import this repository from GitHub into your Netlify team. The committed `netlify.toml` pins Bun 1.4.3, builds the Vite/WASM frontend, publishes `dist`, bundles the API, rate-limited room admission and scheduled cleanup functions, and enables the browser's HTTP polling transport. Functions run on Node.js 22; they do not require a persistent Bun process or a separate WebSocket host.
+Import this repository from GitHub into your Netlify team. The committed `netlify.toml` pins Bun 1.4.3, builds the Vite/WASM frontend, publishes `dist`, and bundles the API, rate-limited room admission and scheduled cleanup functions. The hosted `/api/config` selects HTTP polling. Functions run on Node.js 22; they do not require a persistent Bun process or a separate WebSocket host.
 
 `@netlify/database` and the committed SQL migrations provision the small room database during deployment. Netlify Database requires a credit-based plan; this setup does not change your account plan. If the team's plan does not support it, enable a supported database plan before importing. No canvas objects, images, or screen recordings are stored in the database.
 
@@ -97,18 +109,35 @@ bun run start
 | `PORT` | `3001`; HTTP and WebSocket port |
 | `HOST` | `0.0.0.0`; listen address |
 | `DATA_FILE` | `data/rooms.json` beside `server.mjs`; persistent storage file |
+| `COMMON_LOCAL_ORIGIN` | Optional stable launcher/doctor origin; the launcher's `--origin` overrides it |
+| `COMMON_HTTPS_PORT` | `8443`; default port for the optional local HTTPS launcher |
+| `CADDY_BIN` | Optional installed Caddy executable path |
 | `ALLOWED_ORIGINS` | Optional comma-separated additional origins; same-host browser requests are accepted by default |
+| `COMMON_NETWORK_PROFILE` | `standard`, or `private` to remove default external STUN and PlantUML; the local launcher defaults to `private` |
+| `STUN_URLS` | Explicit comma-separated STUN URLs; `none` disables STUN. Use organization URLs to override the profile's defaults |
+| `PLANTUML_URL` | Explicit renderer endpoint; `none` disables it. Private mode enables no renderer unless one is configured |
+| `ICE_TRANSPORT_POLICY` | `all` by default; `relay` requires a working configured TURN relay |
 | `TURN_URLS` | Optional comma-separated `turn:` / `turns:` relay URLs |
 | `TURN_SECRET` | Preferred shared secret for coturn REST authentication; use with `TURN_URLS` |
 | `TURN_TTL_SECONDS` | Time-limited TURN credential lifetime; default `3600`, bounded to 60–86400 seconds |
 | `TURN_USERNAME` | Alternative static TURN username; use with `TURN_URLS` and `TURN_CREDENTIAL` |
 | `TURN_CREDENTIAL` | Alternative static TURN password; omit if using `TURN_SECRET` |
 
+### Runtime and reliability diagnostics
+
+Open **Canvas options → Connection details** to see the effective profile/build, connected canvas neighbors, watched windows, queued bytes, and configured relay status. **Download connection report** saves counts, connection states, and generated request IDs for correlation, without room IDs, canvas content, credentials, or recordings.
+
+`/api/config` identifies the effective transport, profile, protocol, and build; `/api/health` checks the hosting adapter's health. The public configuration contains STUN settings and a TURN-availability flag, never credentials. Both adapters share validation and session policy. Hosted polling delivers targeted batches, skips unchanged rosters, catches up immediately when more events remain, and retries only idempotent signaling when the server advertises support. Chat is not retried automatically.
+
+Responses include `X-Common-Request-Id`, `X-Common-Build`, `X-Common-Protocol`, and `traceparent` for correlation. Diagnostics are off by default. Set `COMMON_LOG_DIAGNOSTICS=1` for redacted JSON with route category, method, status, duration, build/protocol, and generated IDs. It omits room IDs, URLs/queries, message bodies, canvas content, and credentials.
+
+For an organization OpenTelemetry collector, set `COMMON_OTLP_ENDPOINT` to its full HTTP(S) traces URL, such as `http://127.0.0.1:4318/v1/traces`. `COMMON_OTLP_TOKEN` is an optional server-side Bearer secret. Export waits at most `COMMON_OTLP_TIMEOUT_MS` (default 500 ms; bounded to 25–750 ms); collector failures do not fail a room request. No Cloudflare or observability account is required. Use the guide's short two-browser walkthrough to confirm actual peer video and capture on your devices.
+
 Canvas routing uses the union of three deterministic hash rings. Each browser connects to its predecessor and successor in each ring, yielding at most six canvas neighbors rather than a room-wide mesh. Yjs updates are forwarded across those links, excluding their source; five-second state-vector exchanges repair missed updates. Reliable ordered data channels split large updates into 16 KiB frames with backpressure and bounded queues. A consistent roster gives browsers the same routing choices, and membership changes replace affected neighboring edges.
 
 Video subscriptions are independent of canvas routing. The media layer's `setSubscriptions(ids)` selects the screen owners whose video this browser receives. A watched screen can require an additional direct connection even when its owner is not a canvas neighbor. Pausing remote video leaves the canvas links active. A presenter still uploads a separate stream to each actual viewer, so presenter upload and encoding work grow with the number of viewers.
 
-The default configuration uses direct WebRTC and public STUN servers, with no external media relay included. Restrictive firewalls and NATs can prevent direct connections. Provide a reachable TURN relay where those networks require it; browser WASM cannot make an unreachable browser into a public relay. TURN credentials are returned only after room-token authentication. Prefer `TURN_SECRET` matching your coturn `static-auth-secret` with `use-auth-secret`: the server generates expiring credentials per participant and keeps the shared secret private. With static relay credentials, use a dedicated, restricted account and rotate credentials. The browser refreshes cached ICE settings before connection restarts.
+Direct WebRTC is the default media path; the private profile has no public STUN or media relay dependency. Restrictive firewalls and NATs can still prevent direct connections. Provide a reachable organization TURN relay where those networks require it; browser WASM cannot make an unreachable browser into a public relay. TURN credentials are returned only after room-token authentication and never appear in the public runtime configuration. Prefer `TURN_SECRET` matching your coturn `static-auth-secret` with `use-auth-secret`: the server generates expiring credentials per participant and keeps the shared secret private. With static relay credentials, use a dedicated, restricted account and rotate credentials. The browser refreshes cached ICE settings before connection restarts.
 
 ### Docker
 
@@ -123,23 +152,14 @@ To configure TURN or an origin allowlist, pass the relevant environment variable
 
 Room creation is open to visitors; there is no separate administrator account, identity provider, invitation allowlist, or host recovery flow. The creator's browser holds the host access token in session storage. Room metadata can be looked up by its opaque room ID; participation requires a password-derived session token. Passwords are hashed with scrypt and are not included in room URLs. On Netlify, rooms expire after 24 hours, connected presence leases last two minutes, and an initial admission lease lasts one minute before connecting. These leases track connection activity; they do not reserve seats. An expired presence lease requires reconnecting with a still-valid token. Connecting renews the 24-hour token lifetime, while the room's expiry remains unchanged. Reloading preserves the participant identity and host access; explicitly leaving revokes that token. Scheduled cleanup removes expired room data, with additional cleanup on room creation and connect. The standalone Bun service retains its seven-day room lifetime and refreshes token expiry on a WebSocket connection.
 
-Sparse routing bounds each browser's canvas neighbors, but every browser still receives and stores the full shared document. Local edits are constrained by a 1000-object limit and a 16 MiB materialized-content budget; concurrent peer changes can exceed local budgets, so they are not a global memory guarantee. Yjs history and decoded images add memory overhead. More participants also increase roster processing, presence traffic, chat fan-out, and Netlify database/HTTP polling work. The backend's room serialization and rate/resource limits remain relevant. There is no measured room-size or simultaneous-video capacity guarantee.
+Sparse routing bounds each browser's canvas neighbors, but every browser still receives and stores the full shared document. Local edits are constrained by a 1000-object limit and a 16 MiB materialized-content budget; concurrent peer changes can exceed local budgets, so they are not a global memory guarantee. Yjs history and decoded images add overhead. Hosted delivery omits unchanged rosters and irrelevant signals, but roster changes, presence, chat fan-out, and database/polling work still grow with usage. Backend room serialization and rate/resource limits remain relevant. There is no measured room-size or simultaneous-video capacity guarantee.
 
-Larger canvases need interest regions or document sharding, including awareness data, so devices receive only relevant content. Larger rooms need roster deltas and less room-wide presence/polling work. A large audience watching one presenter may need an optional SFU to receive one upstream video stream and forward it to viewers; an SFU requires a reachable server outside participants' browsers. These are further development steps, not features supplied by the current relay-free deployment.
+Larger canvases need interest regions or document/awareness sharding, so devices receive relevant content. Larger rooms need incremental roster deltas and less room-wide presence work beyond today's omission of unchanged rosters. A large audience may need a separately operated SFU to receive one upstream presenter stream and forward it. Common does not include that server or a turnkey integration. These remain further development steps.
 
 Before a public rollout, assess your deployment's capacity, access requirements, backup policy, TURN capacity, proxy rate limits, and monitoring. Test actual screen capture, network recovery, and multiple real browsers on the networks your team uses.
 
-## Verified in this workspace
+## Development and troubleshooting
 
-The automated suite runs under Bun 1.4.3, including twenty integration checks against real PostgreSQL when `COMMON_TEST_DATABASE_URL` is set. The GitHub workflow supplies a disposable Postgres service. Coverage includes transactional admission, signaling, leases, cleanup, TURN expiry, polling recovery, Yjs convergence, layer edits, agent command validation, session isolation, delayed-operation cancellation, capture limits, and recording lifecycle. DOM integration checks use the real application, board, shared model, and agent interface with injected media services; these do not claim native browser capture or codec verification.
+Run `bun run doctor`, then `bun run local` for a fresh build and a private local server. Use `bun run dev` while changing the source, or `bun run build` when you only need the deployable frontend. The same artifact uses `/api/config` to select its hosting transport; no transport-specific rebuild is needed.
 
-Before the sparse routing and selective video changes, the Netlify adapter passed 12 browser checks across three Chromium profiles, using its production frontend and the actual Function handler against PostgreSQL: passwords, chat, layer ordering, shared move/resize/lock, late joining, reload recovery with the same identity, and two simultaneous real WebRTC streams decoded by peers. Six peer links connected through a local TURN TCP relay. The test confirms no application WebSocket connections, no HTTP canvas writes, empty server canvas snapshots, and no uncaught browser errors. This verifies the adapter locally; it does not claim a deployed Netlify site or production network verification.
-
-The standalone Bun backend also passed the earlier 13-check browser smoke suite and nine-check layering suite, including a 338 KB image transferred in chunks. Screen-capture tests use synthetic canvas capture sources over real WebRTC. The native operating system picker and larger simultaneous audiences still need real-device and network testing.
-
-The scaling tests model topology for 1000 participant IDs and canvas convergence across 100 synthetic peers. These exercise routing and Yjs update propagation in a simulated network; they do not run 100 or 1000 browsers, encode that many streams, or establish device, network, signaling, or production database capacity.
-
-To run the optional browser suite, start the app, install Playwright and Chromium in your test environment, then run `bun run test:browser`. `BASE_URL`, `PLAYWRIGHT_MODULE`, and `CHROMIUM_PATH` can select your running server and installed browser. A restrictive browser policy may require a configured TURN relay.
-
-
-For the Netlify browser suite, build with `VITE_SESSION_TRANSPORT=polling bun run build`, start `bun run dev:netlify-harness` with `COMMON_TEST_DATABASE_URL` pointing to a disposable local Postgres instance, then run `BASE_URL=http://127.0.0.1:4173 bun run test:netlify-browser`. Configure a local TURN relay if your browser policy blocks direct UDP. The harness creates and removes its own isolated database schema.
+Follow the [two-browser walkthrough](public/self-hosting.html#smoke-test) on the devices and network you plan to use. Confirm shared edits, actual window frames, reconnect behavior, and a downloaded recording. For a problem, open **Canvas options → Connection details** and download its report, then use the guide's [troubleshooting steps](public/self-hosting.html#troubleshooting). The report includes counts, states, and generated request IDs for correlation, without room IDs, canvas content, credentials, or recordings.

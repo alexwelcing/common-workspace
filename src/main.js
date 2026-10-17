@@ -9,13 +9,26 @@ import {PeerCanvas} from './peer-canvas.js';
 import {ScreenSubscriptions} from './screen-subscriptions.js';
 import {PollingSessionTransport} from './session-transport.js';
 import {initGeometry, geometryBackend} from './geometry.js';
+import {getRuntimeConfig, loadRuntimeConfig} from './runtime-config.js';
+import {DiagnosticLog, buildDiagnosticReport} from './diagnostics.js';
+
+const diagnostics=new DiagnosticLog();
+async function refreshRuntimeConfiguration(){
+  const config=await loadRuntimeConfig({fetch:diagnosticFetch});
+  diagnostics.record('config',{state:config.available?'config-ready':'config-unavailable'});
+  for(const entity of board?.entities?.values?.()||[])if(entity.type==='diagram'&&entity.language==='plantuml'){
+    const node=board.nodes.get(entity.id);if(node)node._signature=null;board.renderEntity(entity);
+  }
+  return config;
+}
+const runtimeConfigReady=refreshRuntimeConfiguration();
 
 const $=s=>document.querySelector(s);
 const icon=(name,size=18)=>{const node=createElement(icons[name]||icons.Circle,{width:size,height:size,'stroke-width':1.7});return node.outerHTML};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>crypto.randomUUID();
 let shared=null, peerCanvas=null, receivingCanvas=false;
-let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false;
+let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
 let rightPanel='people', tool='select', roomName='Your canvas', sandbox=true, startedAt=Date.now(), activeColor='#305e48';
 const screenSubscriptions=new ScreenSubscriptions();
@@ -27,7 +40,12 @@ function toast(message){const el=document.createElement('div');el.className='toa
 function modal(html,onSubmit){const root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);setTimeout(()=>root.querySelector('input,textarea,button:not(.close-modal)')?.focus(),20)}
 function closeModal(){$('#modal-root').replaceChildren()}
 function formError(form,msg){let e=form.querySelector('.form-error');if(!e){e=document.createElement('p');e.className='form-error';e.setAttribute('role','alert');form.append(e)}e.textContent=msg}
-async function api(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});const data=await r.json();if(!r.ok)throw new Error(data.error||'Something went wrong. Please try again.');return data}
+async function diagnosticFetch(...args){
+  const started=Date.now();
+  try{const response=await fetch(...args);diagnostics.record('request',{durationMs:Date.now()-started,status:response.status,requestId:response.headers.get('x-common-request-id')});return response}
+  catch(error){diagnostics.record('request',{durationMs:Date.now()-started,state:'failed'});throw error}
+}
+async function api(path,body){const r=await diagnosticFetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});const data=await r.json();if(!r.ok)throw new Error(data.error||'Something went wrong. Please try again.');return data}
 function send(message){if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));else if(!sandbox&&message.type!=='cursor'&&message.type!=='signal')toast('Reconnect to edit the shared canvas.')}
 const seed=()=>[
  {id:'welcome',type:'text',x:88,y:70,width:600,height:94,text:'A little room for your next idea.',fontSize:32,color:'#283f32',z:1},
@@ -142,6 +160,7 @@ function createModal(){modal(`<span class="modal-symbol">${icon('Plus',25)}</spa
 function inviteModal(){const url=location.origin+'/room/'+auth.room.id;modal(`<span class="modal-symbol">${icon('UserPlus',25)}</span><h2 id="modal-title">Invite your team</h2><p>Anyone with this link and the session password can join. Windows load when you watch them.</p><label class="link-label">SESSION LINK<div class="copy-field"><input id="invite-link" readonly value="${esc(url)}"><button class="button" id="copy-link">${icon('Copy',16)} Copy</button></div></label><div class="invite-password">${icon('LockKeyhole',17)}<div><strong>Share the password separately.</strong><span>Your password is never included in the link.</span></div></div><button class="primary modal-submit" id="done-invite">Done ${icon('ArrowRight',16)}</button>`);$('#copy-link').onclick=async()=>{try{await navigator.clipboard.writeText(url);$('#copy-link').innerHTML=icon('Check',16)+' Copied';toast('Session link copied')}catch{$('#invite-link').select();toast('Select and copy the session link')}};$('#done-invite').onclick=closeModal}
 async function joinFromPath(id){let saved;try{saved=JSON.parse(sessionStorage.getItem('common.auth.'+id))}catch{}if(saved){await enterRoom(saved);return}let room;try{({room}=await api('/api/rooms/'+encodeURIComponent(id)))}catch(err){toast(err.message);if(!sandbox){location.replace('/');return}history.replaceState(null,'','/');return}modal(`<span class="modal-symbol">${icon('DoorOpen',26)}</span><h2 id="modal-title">${esc(room.name)}</h2><p>Enter your name and the session password.</p><form><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" autocomplete="given-name" required></label><label>Room password<input name="password" type="password" required autocomplete="current-password" placeholder="The password from your host"></label><button class="primary modal-submit">Join session ${icon('ArrowRight',17)}</button></form>`,async e=>{e.preventDefault();const form=e.target,b=form.querySelector('button');b.disabled=true;try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms/'+encodeURIComponent(id)+'/join',vals);result.displayName=vals.displayName;sessionStorage.setItem('common.auth.'+id,JSON.stringify(result));saveRoom(result.room);closeModal();await enterRoom(result)}catch(err){formError(form,err.message);b.disabled=false}})}
 async function enterRoom(result,isNew=false){
+  agentPermissions?.revoke('session-changed');webMCP?.refresh();
   capture?.stop().catch(()=>{});walkthrough?.stop();
   intentionalClose=true;clearTimeout(reconnectTimer);socket?.close();media?.destroy();
   auth=result;sandbox=false;intentionalClose=false;localStream=null;roomSeeded=!isNew;
@@ -173,10 +192,11 @@ function setupMedia(){
       if(entity)shared.deleteLocal(entity.id);
     },
     getIceConfig:async()=>{
-      if(sandbox){const r=await fetch('/api/ice');if(!r.ok)throw new Error('ICE configuration unavailable');return r.json()}
-      const r=await fetch('/api/ice?room='+encodeURIComponent(auth.room.id),{headers:{Authorization:'Bearer '+auth.token}});
+      if(sandbox){const r=await diagnosticFetch('/api/ice');if(!r.ok)throw new Error('ICE configuration unavailable');return r.json()}
+      const r=await diagnosticFetch('/api/ice?room='+encodeURIComponent(auth.room.id),{headers:{Authorization:'Bearer '+auth.token}});
       if(!r.ok)throw new Error('ICE configuration unavailable');return r.json();
-    }
+    },
+    fallbackIceConfig:()=>({iceServers:getRuntimeConfig().rtc.iceServers,iceTransportPolicy:getRuntimeConfig().rtc.iceTransportPolicy})
   });
 }
 function updateCanvasStatus(){
@@ -189,10 +209,12 @@ function updateCanvasStatus(){
   $('#connection-status').innerHTML=icon(connected?'CloudUpload':'CloudOff',15)+' '+text;
 }
 function setConnection(status){
+  diagnostics.record('connection',{state:status,participants:participants.length});
   connected=status==='connected';board.setReadOnly(!sandbox&&!connected);
   $('#connection-status').classList.toggle('disconnected',!connected);updateCanvasStatus();
   scheduleScreenSubscriptions();
   agentTools?.refresh();
+  agentPermissions?.state();webMCP?.refresh();
 }
 function syncPeople(){
   media.syncParticipants(participants,auth.participantId).then(updateCanvasStatus);updatePresence();updateCanvasStatus();
@@ -203,8 +225,10 @@ function syncPeople(){
 }
 async function connect(){
   setConnection('connecting');
+  await runtimeConfigReady;
+  const runtime=getRuntimeConfig().available?getRuntimeConfig():await refreshRuntimeConfiguration();
   try{
-    const response=await fetch('/api/rooms/'+encodeURIComponent(auth.room.id)+'/session',{headers:{Authorization:'Bearer '+auth.token}});
+    const response=await diagnosticFetch('/api/rooms/'+encodeURIComponent(auth.room.id)+'/session',{headers:{Authorization:'Bearer '+auth.token}});
     if(response.status===401||response.status===404){
       sessionStorage.removeItem('common.auth.'+auth.room.id);localStream=null;media?.destroy();updateShareButton();intentionalClose=true;
       toast(response.status===404?'This room has ended.':'Please enter the password to rejoin.');await joinFromPath(auth.room.id);return;
@@ -212,13 +236,14 @@ async function connect(){
     if(!response.ok)throw new Error('unavailable');
   }catch{reconnectTimer=setTimeout(connect,2500);return}
   if(intentionalClose)return;
-  const ws=import.meta.env.VITE_SESSION_TRANSPORT==='polling'
-    ?new PollingSessionTransport({room:auth.room.id,token:auth.token})
+  const ws=(runtime.transport||(import.meta.env.VITE_SESSION_TRANSPORT==='polling'?'polling':'websocket'))==='polling'
+    ?new PollingSessionTransport({room:auth.room.id,token:auth.token,fetchImpl:diagnosticFetch,onDiagnostic:(type,values)=>diagnostics.record(type,values)})
     :new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws?room=${encodeURIComponent(auth.room.id)}&token=${encodeURIComponent(auth.token)}`);socket=ws;
   ws.onmessage=e=>{
     let m;try{m=JSON.parse(e.data)}catch{return}
     switch(m.type){
       case 'init':{
+        diagnostics.record('request',{requestId:m.diagnostics?.requestId});
         auth.room=m.room;sessionStorage.setItem('common.auth.'+auth.room.id,JSON.stringify(auth));
         setConnection('connected');participants=m.participants;chat=m.chat||[];
         if(!isPeerRoom())receiveCanvas(()=>{if(!shared.entities.size&&!shared.tombstones.size)shared.replaceInitial(m.entities);else{const incoming=new Set(m.entities.map(e=>e.id));for(const entity of shared.all())if(!incoming.has(entity.id))shared.deleteLocal(entity.id);for(const entity of m.entities)shared.setLocal(entity)}});
@@ -235,7 +260,7 @@ async function connect(){
       case 'chat':chat.push(m.message);$('#chat-number').hidden=false;$('#chat-number').textContent=chat.length;renderChat();break;
       case 'signal':media.handleSignal(m.from,m.data);break;
       case 'ended':
-        intentionalClose=true;connected=false;capture?.stop().catch(()=>{});walkthrough?.stop();board.setReadOnly(true);localStream=null;updateShareButton();sessionStorage.removeItem('common.auth.'+auth.room.id);media.destroy();peerCanvas?.destroy();$('#connection-status').textContent='Session ended';closeModal();
+        intentionalClose=true;connected=false;agentPermissions?.revoke('session-ended');webMCP?.refresh();capture?.stop().catch(()=>{});walkthrough?.stop();board.setReadOnly(true);localStream=null;updateShareButton();sessionStorage.removeItem('common.auth.'+auth.room.id);media.destroy();peerCanvas?.destroy();$('#connection-status').textContent='Session ended';closeModal();
         toast('This session has ended. Your host closed the room.');
         modal(`<span class="modal-symbol">${icon('Sunset',25)}</span><h2 id="modal-title">Session ended</h2><p>The host has ended this session.</p><button class="primary modal-submit" id="back-home">Back to your canvas ${icon('ArrowRight',16)}</button>`);
         $('#back-home').onclick=()=>location.href='/';break;
@@ -283,7 +308,7 @@ function updateShareButton(){
   $('#share-screen').setAttribute('aria-pressed',String(!!localStream));
   capture?.syncSource();agentTools?.refresh();
 }
-function diagramModal(){modal(`<span class="modal-symbol">${icon('Workflow',25)}</span><h2 id="modal-title">Add a diagram</h2><p>Use Mermaid or PlantUML syntax.</p><form><label>Diagram language<select name="language" id="diagram-language"><option value="mermaid">Mermaid · renders in your browser</option><option value="plantuml">PlantUML · external renderer</option></select></label><label>Diagram source<textarea name="source" rows="8" spellcheck="false" required>flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]</textarea></label><label class="consent-label" id="plant-consent" hidden><input type="checkbox" name="consent">Allow sending this diagram to plantuml.com for rendering. Everyone in this room can see the result.</label><button class="primary modal-submit">Add to canvas ${icon('Plus',17)}</button></form>`,e=>{e.preventDefault();const vals=Object.fromEntries(new FormData(e.target));if(vals.language==='plantuml'&&!vals.consent){formError(e.target,'Allow external rendering to use PlantUML.');return}board.add('diagram',{source:vals.source,language:vals.language,externalConsent:vals.language==='plantuml',title:vals.language==='mermaid'?'Mermaid diagram':'PlantUML diagram',width:500,height:300});closeModal();chooseTool('select')});$('#diagram-language').onchange=e=>{$('#plant-consent').hidden=e.target.value!=='plantuml';const input=$('textarea[name=source]');input.value=e.target.value==='plantuml'?'@startuml\nAlice -> Bob: An idea\nBob --> Alice: Let’s build it\n@enduml':'flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]'}}
+function diagramModal(){modal(`<span class="modal-symbol">${icon('Workflow',25)}</span><h2 id="modal-title">Add a diagram</h2><p>Use Mermaid or PlantUML syntax.</p><form><label>Diagram language<select name="language" id="diagram-language"><option value="mermaid">Mermaid · renders in your browser</option><option value="plantuml" ${getRuntimeConfig().plantUml.enabled?'':'disabled'}>PlantUML · ${getRuntimeConfig().plantUml.enabled?'configured renderer':'disabled here'}</option></select></label><label>Diagram source<textarea name="source" rows="8" spellcheck="false" required>flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]</textarea></label><label class="consent-label" id="plant-consent" hidden><input type="checkbox" name="consent">Allow sending this diagram to ${esc(getRuntimeConfig().plantUml.endpoint?new URL(getRuntimeConfig().plantUml.endpoint).host:'the configured renderer')} for rendering. Everyone in this room can see the result.</label><button class="primary modal-submit">Add to canvas ${icon('Plus',17)}</button></form>`,e=>{e.preventDefault();const vals=Object.fromEntries(new FormData(e.target));if(vals.language==='plantuml'&&(!getRuntimeConfig().plantUml.enabled||!vals.consent)){formError(e.target,'Allow external rendering to use PlantUML.');return}board.add('diagram',{source:vals.source,language:vals.language,externalConsent:vals.language==='plantuml',title:vals.language==='mermaid'?'Mermaid diagram':'PlantUML diagram',width:500,height:300});closeModal();chooseTool('select')});$('#diagram-language').onchange=e=>{$('#plant-consent').hidden=e.target.value!=='plantuml';const input=$('textarea[name=source]');input.value=e.target.value==='plantuml'?'@startuml\nAlice -> Bob: An idea\nBob --> Alice: Let’s build it\n@enduml':'flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]'}}
 // Images sync to every peer, so large photos are resized and re-encoded in the browser first.
 const IMAGE_EDGE=1600, MAX_IMAGE_URL=Math.floor(1.3*1024*1024*4/3);
 function compactImage(file,image,url){
@@ -314,13 +339,29 @@ async function addImage(file){
 $('#image-input').onchange=e=>{addImage(e.target.files[0]);e.target.value=''};let dragDepth=0;const wrap=$('.canvas-wrap');wrap.addEventListener('dragenter',e=>{if(e.dataTransfer.types.includes('Files')){e.preventDefault();dragDepth++;$('#drop-overlay').classList.add('visible')}});wrap.addEventListener('dragleave',()=>{if(--dragDepth<=0)$('#drop-overlay').classList.remove('visible')});wrap.addEventListener('dragover',e=>e.preventDefault());wrap.addEventListener('drop',e=>{e.preventDefault();dragDepth=0;$('#drop-overlay').classList.remove('visible');[...e.dataTransfer.files].slice(0,5).forEach(addImage)});
 function tour(){modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Common ground.</h2><div class="tour-steps"><div>${icon('Link',21)}<span><strong>Create a session</strong>Invite your team with the session link and password.</span></div><div>${icon('MonitorUp',21)}<span><strong>Share a window</strong>Choose a window in your browser’s share picker. Use Watch window to view a teammate’s share.</span></div><div>${icon('Pencil',21)}<span><strong>Build on the canvas</strong>Add notes, images, drawings, and diagrams. Changes appear for everyone in the session.</span></div></div><p class="help-detail">Drag items to arrange them. Double-click text to edit. Use Pan (H) to move around the canvas. Some networks may block direct screen sharing.</p><a class="local-guide-link" href="/self-hosting.html" target="_blank" rel="noopener">Run Common on your own laptop ${icon('ArrowUpRight',15)}</a><button class="primary modal-submit" id="tour-done">Got it ${icon('Check',16)}</button>`);$('#tour-done').onclick=closeModal}
 function showSessions(){modal(`<span class="modal-symbol">${icon('Layers',25)}</span><h2 id="modal-title">Recent sessions</h2><p>Saved on this device.</p><div class="sessions-list">${savedRooms().length?savedRooms().map(r=>`<a href="/room/${encodeURIComponent(r.id)}">${icon('Layers',18)}<span>${esc(r.name)}</span>${icon('ArrowUpRight',17)}</a>`).join(''):'<p>No recent sessions.</p>'}</div><button class="primary modal-submit" id="sessions-create">${icon('Plus',16)} Create a session</button>`);$('#sessions-create').onclick=createModal}
-function roomMenu(){modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});sessionStorage.removeItem('common.auth.'+auth.room.id);media.destroy();location.href='/'});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
+async function showConnectionDetails(){
+  if(!getRuntimeConfig().available){toast('Refreshing connection settings…');await refreshRuntimeConfiguration()}
+  const runtime={...getRuntimeConfig(),frontendBuildId:typeof __COMMON_BUILD_ID__==='string'?__COMMON_BUILD_ID__:'development'};
+  const report=buildDiagnosticReport({runtime,connection:{sandbox,connected,participants:sandbox?1:participants.length},canvas:{objects:shared?.all().length,connectedNeighbors:peerCanvas?.peers.size},media,transport:socket,log:diagnostics});
+  const state=sandbox?'Working on this device':connected?'Connected to your session':'Reconnecting to your session';
+  modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Connection details</h2><p>${state}</p><dl class="connection-details"><div><dt>Installation</dt><dd>${runtime.networkProfile==='private'?'Private network':'Standard'}</dd></div><div><dt>People</dt><dd>${report.session.participants}</dd></div><div><dt>Canvas connections</dt><dd>${report.media.openCanvasNeighbors} ready · ${report.media.canvasNeighbors} planned</dd></div><div><dt>Windows watched</dt><dd>${report.media.watchedWindows}</dd></div><div><dt>Waiting to sync</dt><dd>${Math.ceil(report.media.queuedBytes/1024)} KB</dd></div><div><dt>Video relay</dt><dd>${runtime.rtc.hasTurn?'Configured':'Direct connections only'}</dd></div><div><dt>Build</dt><dd>${esc(runtime.buildId)}</dd></div></dl><p class="help-detail">${runtime.available?'':'Server configuration is unavailable. External rendering stays disabled. '}${runtime.rtc.hasTurn?'If a window won’t connect, download a report to help investigate.':'A relay can help teammates connect across restricted networks. Your organization can run one independently.'}</p><p class="help-detail">The report contains connection measurements. Canvas content, room identifiers, passwords, and screen recordings are excluded.</p><button class="primary modal-submit" id="download-diagnostics">${icon('Download',17)} Download connection report</button>`);
+  $('#download-diagnostics').onclick=()=>{
+    const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+    const link=document.createElement('a');link.href=url;link.download='common-connection-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+}
+async function showMediaExports(){
+  if(!capture){toast('Recording tools are still loading. Try again in a moment.');return}
+  const {openMediaExportDialog}=await import('./media-export-tools.js');
+  openMediaExportDialog({capture,modal,closeModal,onStatus:toast});
+}
+function roomMenu(){modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#connection-details').onclick=showConnectionDetails;$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});sessionStorage.removeItem('common.auth.'+auth.room.id);media.destroy();location.href='/'});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();chooseTool('select');return}if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.target.isContentEditable||$('#modal-root').children.length||document.querySelector('dialog[open]'))return;if(e.ctrlKey||e.metaKey)return;const keys={v:'select',h:'hand',p:'draw',t:'text',n:'sticky',r:'rectangle',a:'arrow'};if(keys[e.key.toLowerCase()])chooseTool(keys[e.key.toLowerCase()]);});
-window.addEventListener('beforeunload',()=>{disposed=true;clearTimeout(subscriptionTimer);subscriptionResizeObserver.disconnect();intentionalClose=true;capture?.destroy();walkthrough?.stop();agentTools?.destroy();media?.destroy();peerCanvas?.destroy();shared?.destroy();socket?.close()});window.addEventListener('popstate',()=>location.reload());
+window.addEventListener('beforeunload',()=>{disposed=true;clearTimeout(subscriptionTimer);subscriptionResizeObserver.disconnect();intentionalClose=true;webMCP?.destroy();agentPermissions?.destroy();capture?.destroy();walkthrough?.stop();agentTools?.destroy();media?.destroy();peerCanvas?.destroy();shared?.destroy();socket?.close()});window.addEventListener('popstate',()=>location.reload());
 // Public, opt-in browser agent interface. It never exposes room credentials.
 // Loaded in its own chunk so it never delays the first paint of the canvas.
 async function loadAgentTools(){
-const [{createAgentAPI},{CanvasCapture},{Walkthrough},{installAgentTools}]=await Promise.all([import('./agent-api.js'),import('./capture.js'),import('./walkthrough.js'),import('./agent-tools.js')]);
+const [{createAgentAPI,createAgentPermissions},{CanvasCapture},{Walkthrough},{installAgentTools},{installWebMCP}]=await Promise.all([import('./agent-api.js'),import('./capture.js'),import('./walkthrough.js'),import('./agent-tools.js'),import('./webmcp.js')]);
 capture=new CanvasCapture({getBoard:()=>board,getSession:()=>shared,getWindowStream:()=>localStream,onChange:()=>agentTools?.refresh(),onStatus:toast});
 capture.exportCanvas=(data,{mimeType,filename,download=false}={})=>{
   if(download){
@@ -331,18 +372,30 @@ capture.exportCanvas=(data,{mimeType,filename,download=false}={})=>{
   return {filename,mimeType};
 };
 walkthrough=new Walkthrough({getBoard:()=>board,onChange:()=>agentTools?.refresh(),onStatus:toast});
+const getAgentContext=()=>({enabled:agentControlEnabled,sandbox,connected,room:sandbox?null:{id:auth?.room.id,name:roomName},participantId:ownParticipantId(),participants:sandbox?[]:participants});
+agentPermissions=createAgentPermissions({
+  getContext:getAgentContext,getSession:()=>shared,
+  onChange:()=>agentTools?.refresh(),
+  onRevoke:reason=>{
+    capture?.stop().catch(()=>{});walkthrough?.stop();
+    if(reason!=='permissions-reduced')agentControlEnabled=false;
+    agentTools?.refresh();
+    window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:agentControlEnabled}}));
+  }
+});
 const agentAPI=createAgentAPI({
   getBoard:()=>board,getModel:()=>shared,
-  getContext:()=>({enabled:agentControlEnabled,sandbox,connected,room:sandbox?null:{id:auth?.room.id,name:roomName},participantId:ownParticipantId(),participants:sandbox?[]:participants}),
+  getContext:getAgentContext,permissions:agentPermissions,
   recording:capture,walkthrough,onStatus:toast
 });
 Object.defineProperty(window,'commonAgent',{value:agentAPI,writable:false,configurable:false});
 document.documentElement.dataset.commonAgent='1';
 agentTools=installAgentTools({
-  api:agentAPI,capture,walkthrough,getEnabled:()=>agentControlEnabled,
+  api:agentAPI,capture,walkthrough,permissions:agentPermissions,getEnabled:()=>agentControlEnabled,
   onEnabledChange:enabled=>{agentControlEnabled=!!enabled;window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:agentControlEnabled}}))},
   onRequestWindowShare:()=>$('#share-screen').click(),onStatus:toast,buttonParent:$('.top-actions')
 });
+webMCP=installWebMCP({api:agentAPI,permissions:agentPermissions,onStatus:toast});
 window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:false}}));
 }
 loadAgentTools().catch(()=>toast('Agent tools could not be loaded. Reload to try again.'));

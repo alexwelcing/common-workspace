@@ -4,6 +4,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import pg from 'pg';
+import { creationCases, joinCases, activityCases, validCreation } from './protocol-cases.mjs';
 
 const databaseUrl = process.env.COMMON_TEST_DATABASE_URL;
 const integration = { skip: !databaseUrl };
@@ -511,4 +512,122 @@ test('only public, member-free responses are cacheable at the CDN', integration,
   assert.equal(admitted.headers.get('netlify-cdn-cache-control'), null);
   const session = await get(`/api/rooms/${host.room.id}/session`, { Authorization: `Bearer ${host.token}` });
   assert.equal(session.headers.get('cache-control'), 'no-store');
+});
+
+async function seedEvents(f, auth, entries) {
+  const client = await f.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [room] } = await client.query('SELECT event_seq FROM common_rooms WHERE id = $1 FOR UPDATE', [auth.room.id]);
+    await client.query(`INSERT INTO common_events (room_id, seq, target_id, payload, created_at)
+      SELECT $1, $2::bigint + ordinal, item->>'target', item->'payload', $4
+      FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS item(item, ordinal)`, [auth.room.id, room.event_seq, JSON.stringify(entries), new Date()]);
+    await client.query('UPDATE common_rooms SET event_seq = event_seq + $2 WHERE id = $1', [auth.room.id, entries.length]);
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
+}
+
+test('recipient batches skip hundreds of invisible events without skipping a visible event', integration, async t => {
+  const f = await fixture(t);
+  const host = await f.create();
+  const guest = await f.join(host.room);
+  await f.connect(host); await f.connect(guest);
+  const baseline = (await f.poll(host)).cursor;
+  const hidden = () => ({ target: guest.participantId, payload: { type: 'signal', from: 'hidden', data: { secret: 'never returned' } } });
+  const visible = index => ({ target: host.participantId, payload: { type: 'signal', from: guest.participantId, data: { index } } });
+  await seedEvents(f, host, [...Array.from({ length: 300 }, hidden), ...Array.from({ length: 70 }, (_, i) => visible(i)),
+    ...Array.from({ length: 400 }, hidden), ...Array.from({ length: 60 }, (_, i) => visible(i + 70)), ...Array.from({ length: 20 }, hidden)]);
+  const seen = []; let cursor = baseline; let batches = 0; let result;
+  do {
+    result = await f.poll(host, cursor); batches++;
+    assert.equal(result.status, 200);
+    assert.ok(result.events.length <= 64);
+    assert.equal(JSON.stringify(result).includes('never returned'), false);
+    for (const event of result.events) { assert.ok(BigInt(event.sequence) > BigInt(cursor)); seen.push(event.message.data.index); }
+    assert.ok(BigInt(result.cursor) > BigInt(cursor));
+    cursor = result.cursor;
+  } while (result.hasMore);
+  assert.equal(batches, 3);
+  assert.deepEqual(seen, Array.from({ length: 130 }, (_, i) => i));
+  assert.equal(cursor, (await f.pool.query('SELECT event_seq FROM common_rooms WHERE id = $1', [host.room.id])).rows[0].event_seq);
+  assert.equal((await f.poll(host, cursor)).events.length, 0);
+});
+
+test('event batches respect a byte budget and a pruning race requests resynchronization', integration, async t => {
+  const f = await fixture(t, { eventTtlMs: 1000 });
+  const host = await f.create(); await f.connect(host);
+  const baseline = host.cursor;
+  await seedEvents(f, host, Array.from({ length: 6 }, (_, index) => ({ target: host.participantId, payload: { type: 'signal', data: { index, text: 'x'.repeat(120000) } } })));
+  const first = await f.poll(host, baseline);
+  assert.equal(first.status, 200); assert.equal(first.events.length, 4); assert.equal(first.hasMore, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(first)) < 512 * 1024);
+  const second = await f.poll(host, first.cursor);
+  assert.equal(second.events.length, 2); assert.equal(second.hasMore, false);
+  const gate = f.pauseQuery(sql => sql.startsWith('SELECT room.event_seq'), 'before');
+  const pending = f.poll(host, baseline);
+  try {
+    await gate.entered;
+    f.advance(2000); await f.handler.sweep(); gate.release();
+    assert.equal((await pending).code, 'RESYNC_REQUIRED');
+  } finally { gate.release(); await pending; }
+});
+
+test('roster versions omit unchanged membership and detect lease expiry before a scheduled sweep', integration, async t => {
+  const f = await fixture(t);
+  const host = await f.create(); const guest = await f.join(host.room);
+  const connected = await f.connect(host); await f.connect(guest);
+  const originalCursor = host.cursor;
+  const poll = async version => {
+    const result = await f.request(`/api/rooms/${host.room.id}/events?after=${host.cursor}&rosterVersion=${version}`, { auth: host });
+    if (result.status === 200) host.cursor = result.cursor;
+    return result;
+  };
+  const changed = await poll(connected.rosterVersion);
+  assert.equal(changed.participants.length, 2);
+  assert.notEqual(changed.rosterVersion, connected.rosterVersion);
+  assert.equal(Object.hasOwn(await poll(changed.rosterVersion), 'participants'), false);
+  assert.equal((await f.poll(host)).participants.length, 2, 'legacy clients still receive complete rosters');
+  f.advance(35000); await poll(changed.rosterVersion);
+  f.advance(86000);
+  const expired = await poll(changed.rosterVersion);
+  assert.equal(expired.status, 200);
+  assert.notEqual(expired.rosterVersion, changed.rosterVersion);
+  assert.deepEqual(expired.participants.map(p => p.id), [host.participantId]);
+  assert.equal(Object.hasOwn(await poll(expired.rosterVersion), 'participants'), false);
+  const historical = await f.request(`/api/rooms/${host.room.id}/events?after=${originalCursor}&rosterVersion=${expired.rosterVersion}`, { auth: host });
+  assert.deepEqual(historical.participants.map(p => p.id), [host.participantId], 'historical presence events must be followed by the current roster');
+});
+
+test('signal request IDs deduplicate concurrent retries and fence changed payloads and replaced connections', integration, async t => {
+  const f = await fixture(t);
+  const host = await f.create(); const guest = await f.join(host.room);
+  await f.connect(host); await f.connect(guest);
+  const signal = { type: 'signal', to: guest.participantId, data: { candidate: 'one candidate' }, requestId: 'same_request_0001' };
+  const replies = await Promise.all(Array.from({ length: 12 }, () => f.send(host, signal)));
+  assert.ok(replies.every(reply => reply.status === 200));
+  assert.equal(replies.filter(reply => reply.duplicate).length, 11);
+  assert.equal((await f.poll(guest)).events.filter(event => event.message.type === 'signal').length, 1);
+  assert.equal((await f.send(host, { ...signal, data: { candidate: 'different' } })).code, 'REQUEST_ID_REUSED');
+  assert.equal((await f.send(host, { ...signal, requestId: 'bad id' })).code, 'INVALID_REQUEST_ID');
+  const old = { ...host }; await f.connect(host);
+  assert.equal((await f.send(old, signal)).code, 'CONNECTION_REPLACED');
+  assert.equal((await f.send(host, signal)).status, 200, 'request IDs are scoped to one authenticated connection');
+});
+
+test('shared portable protocol boundary cases match the hosted adapter', integration, async t => {
+  const f = await fixture(t);
+  for (const sample of creationCases) {
+    const result = await f.post('/api/rooms', sample.input);
+    assert.equal(result.status, sample.status, sample.label);
+    if (sample.code) assert.equal(result.code, sample.code, sample.label);
+  }
+  const host = await f.post('/api/rooms', validCreation);
+  for (const sample of joinCases) {
+    const result = await f.post(`/api/rooms/${host.room.id}/join`, sample.input);
+    assert.equal(result.status, sample.status, sample.label);
+    if (sample.code) assert.equal(result.code, sample.code, sample.label);
+  }
+  await f.connect(host);
+  for (const sample of activityCases) assert.equal((await f.send(host, sample.message)).code, sample.code, sample.label);
 });

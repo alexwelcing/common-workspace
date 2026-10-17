@@ -1,0 +1,977 @@
+{
+  "version": "1",
+  "bridge": "window.commonAgent",
+  "experimentalAdapter": "WebMCP document.modelContext.registerTool",
+  "capabilities": {
+    "inspect": {
+      "title": "Read the canvas",
+      "description": "Read canvas text, images, positions, participants, and exports."
+    },
+    "canvas-write": {
+      "title": "Edit and present",
+      "description": "Add, update, remove, and arrange canvas objects; control views and walkthroughs."
+    },
+    "media-capture": {
+      "title": "Capture canvas and shared windows",
+      "description": "Take snapshots and capture an already approved shared window. Never opens the screen picker."
+    },
+    "recording": {
+      "title": "Manage recordings",
+      "description": "Start, stop, list, and download local clips. Starting also requires media capture."
+    }
+  },
+  "defaultCapabilities": [
+    "inspect",
+    "canvas-write"
+  ],
+  "grantDurationMs": 900000,
+  "maxGrantDurationMs": 3600000,
+  "tools": [
+    {
+      "name": "common_canvas_inspect",
+      "action": "canvas.inspect",
+      "description": "Read the current shared canvas, participants, and view. Embedded image data is omitted unless explicitly requested.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "includeImageData": {
+            "type": "boolean",
+            "default": false
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_canvas_add",
+      "action": "canvas.add",
+      "description": "Add text, a note, a shape, a drawing, an embedded image, or a diagram to the shared canvas.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": -100000,
+                "maximum": 100000
+              },
+              "y": {
+                "type": "number",
+                "minimum": -100000,
+                "maximum": 100000
+              },
+              "width": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 10000
+              },
+              "height": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 10000
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "color": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "fill": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "fontSize": {
+                "type": "number",
+                "minimum": 8,
+                "maximum": 200
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "language": {
+                "type": "string",
+                "enum": [
+                  "mermaid",
+                  "plantuml"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 2097152,
+                "pattern": "^data:image/(png|jpe?g|webp|gif|avif);base64,",
+                "description": "An embedded base64 raster image. Remote URLs and SVG are rejected."
+              },
+              "locked": {
+                "type": "boolean"
+              },
+              "points": {
+                "type": "array",
+                "maxItems": 10000,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "x": {
+                      "type": "number",
+                      "minimum": -100000,
+                      "maximum": 100000
+                    },
+                    "y": {
+                      "type": "number",
+                      "minimum": -100000,
+                      "maximum": 100000
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "sticky",
+                  "rectangle",
+                  "ellipse",
+                  "arrow",
+                  "draw",
+                  "image",
+                  "diagram"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "description": "Only supported canvas fields. Coordinates and sizes have defaults; images require url. Screen objects and ownership fields are managed by the app."
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "entity"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_canvas_update",
+      "action": "canvas.update",
+      "description": "Patch supported fields of one canvas object. Respects screen ownership and position locks.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "patch": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": -100000,
+                "maximum": 100000
+              },
+              "y": {
+                "type": "number",
+                "minimum": -100000,
+                "maximum": 100000
+              },
+              "width": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 10000
+              },
+              "height": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 10000
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "color": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "fill": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "fontSize": {
+                "type": "number",
+                "minimum": 8,
+                "maximum": 200
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "language": {
+                "type": "string",
+                "enum": [
+                  "mermaid",
+                  "plantuml"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 2097152,
+                "pattern": "^data:image/(png|jpe?g|webp|gif|avif);base64,",
+                "description": "An embedded base64 raster image. Remote URLs and SVG are rejected."
+              },
+              "locked": {
+                "type": "boolean"
+              },
+              "points": {
+                "type": "array",
+                "maxItems": 10000,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "x": {
+                      "type": "number",
+                      "minimum": -100000,
+                      "maximum": 100000
+                    },
+                    "y": {
+                      "type": "number",
+                      "minimum": -100000,
+                      "maximum": 100000
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                }
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "id",
+          "patch"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_canvas_remove",
+      "action": "canvas.remove",
+      "description": "Remove one editable object from the shared canvas.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_canvas_layer",
+      "action": "canvas.layer",
+      "description": "Move one editable object forward, backward, to the front, or to the back.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "position": {
+            "type": "string",
+            "enum": [
+              "front",
+              "back",
+              "forward",
+              "backward"
+            ]
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "id",
+          "position"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_canvas_lock",
+      "action": "canvas.lock",
+      "description": "Lock or unlock an editable canvas object position.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "id",
+          "locked"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_view_focus",
+      "action": "view.focus",
+      "description": "Focus this browser on a canvas object or explicit bounds.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "bounds": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": -100000,
+                "maximum": 100000
+              },
+              "y": {
+                "type": "number",
+                "minimum": -100000,
+                "maximum": 100000
+              },
+              "width": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 10000
+              },
+              "height": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 10000
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ]
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "id"
+            ],
+            "not": {
+              "required": [
+                "bounds"
+              ]
+            }
+          },
+          {
+            "required": [
+              "bounds"
+            ],
+            "not": {
+              "required": [
+                "id"
+              ]
+            }
+          }
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_view_fit",
+      "action": "view.fit",
+      "description": "Fit the shared canvas into this browser viewport.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_image_add",
+      "action": "image.add",
+      "description": "Add a generated PNG, JPEG, WebP, GIF, or AVIF supplied as embedded base64 data.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dataUrl": {
+            "type": "string",
+            "maxLength": 2097152,
+            "pattern": "^data:image/(png|jpe?g|webp|gif|avif);base64,",
+            "description": "An embedded base64 raster image. Remote URLs and SVG are rejected."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "x": {
+            "type": "number",
+            "minimum": -100000,
+            "maximum": 100000
+          },
+          "y": {
+            "type": "number",
+            "minimum": -100000,
+            "maximum": 100000
+          },
+          "width": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 10000
+          },
+          "height": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 10000
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "dataUrl"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_walkthrough_load",
+      "action": "walkthrough.load",
+      "description": "Load and start up to fifty inert walkthrough steps. Steps display text and focus objects; they never execute commands.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 5000
+                },
+                "targetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "bounds": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "x": {
+                      "type": "number",
+                      "minimum": -100000,
+                      "maximum": 100000
+                    },
+                    "y": {
+                      "type": "number",
+                      "minimum": -100000,
+                      "maximum": 100000
+                    },
+                    "width": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "maximum": 10000
+                    },
+                    "height": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "maximum": 10000
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "width",
+                    "height"
+                  ]
+                }
+              },
+              "required": [
+                "title"
+              ],
+              "not": {
+                "required": [
+                  "targetId",
+                  "bounds"
+                ]
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "steps"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_walkthrough_next",
+      "action": "walkthrough.next",
+      "description": "Advance to the next walkthrough step.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_walkthrough_previous",
+      "action": "walkthrough.previous",
+      "description": "Return to the previous walkthrough step.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_walkthrough_stop",
+      "action": "walkthrough.stop",
+      "description": "Stop the current walkthrough.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_capture_snapshot",
+      "action": "capture.snapshot",
+      "description": "Capture canvas annotations and visible shared screens as PNG. Optional download. Never opens a native picker.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "download": {
+            "type": "boolean",
+            "default": false
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect",
+        "media-capture"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_recording_start",
+      "action": "recording.start",
+      "description": "Start a bounded local recording of the canvas or an already user-approved shared window. Never opens a native picker.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "canvas",
+              "window"
+            ]
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "media-capture",
+        "recording"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_recording_stop",
+      "action": "recording.stop",
+      "description": "Stop the local recording.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "recording"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_recording_list",
+      "action": "recording.list",
+      "description": "List locally retained recording metadata.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect",
+        "recording"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_recording_download",
+      "action": "recording.download",
+      "description": "Download one locally retained recording.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "recording"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_canvas_export",
+      "action": "canvas.export",
+      "description": "Export canvas objects as SVG or JSON. Live screen streams are excluded. Optional download.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "svg",
+              "json"
+            ],
+            "default": "svg"
+          },
+          "download": {
+            "type": "boolean",
+            "default": false
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    }
+  ]
+}

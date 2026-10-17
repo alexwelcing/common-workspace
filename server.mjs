@@ -5,11 +5,14 @@ import path from 'node:path';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
 import { WebSocketServer, WebSocket } from 'ws';
+import { normalizeRoomCreation, normalizeJoin, normalizeEnvelope, normalizeSignal, normalizeChat, normalizeCursor, protocolCapabilities, SESSION_POLICY } from './lib/session-protocol.mjs';
+import { publicRuntimeConfig, stunServersFromEnv, iceTransportPolicyFromEnv } from './lib/runtime-config.mjs';
+import { startRequestObservation } from './lib/observability.mjs';
 
 const scrypt = promisify(scryptCallback);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const SESSION_TTL = 24 * 60 * 60 * 1000;
-const ROOM_TTL = 7 * 24 * 60 * 60 * 1000;
+const SESSION_TTL = SESSION_POLICY.sessionTtlMs;
+const ROOM_TTL = SESSION_POLICY.standaloneRoomTtlMs;
 const MAX_ENTITIES = 1000;
 const MAX_ROOM_BYTES = 24 * 1024 * 1024;
 const COLORS = ['#7867ef', '#e3a444', '#4aa3b9', '#df7b9d', '#75b790', '#d27b58', '#8b9ed5', '#ba91ce', '#9baf5f', '#68b3aa'];
@@ -22,6 +25,7 @@ const finite = (value, limit = 100000) => typeof value === 'number' && Number.is
 const publicRoom = room => ({ id: room.id, name: room.name, createdAt: room.createdAt, ...(room.collaboration === 'peer' ? { collaboration: 'peer' } : {}) });
 const publicParticipant = participant => ({ id: participant.id, name: participant.name, color: participant.color, isAdmin: participant.isAdmin });
 const httpError = (status, code, message) => Object.assign(new Error(message), { status, code });
+const safeErrorCode = error => typeof error?.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code) ? error.code : 'INTERNAL_ERROR';
 
 function entityFrom(input, sender) {
   if (!isObject(input) || !cleanString(input.id, 1, 100) || !ENTITY_TYPES.has(input.type)) throw httpError(400, 'INVALID_ENTITY', 'Choose a supported board item.');
@@ -75,6 +79,8 @@ function entityFrom(input, sender) {
 }
 
 export async function createApp(options = {}) {
+  const env = options.env ?? process.env;
+  const envValue = key => typeof env === 'function' ? env(key) : env[key];
   const dataFile = options.dataFile ?? process.env.DATA_FILE ?? path.join(ROOT, 'data/rooms.json');
   const staticDir = options.staticDir ?? path.join(ROOT, 'dist');
   const heartbeatMs = options.heartbeatMs ?? 30000;
@@ -119,7 +125,7 @@ export async function createApp(options = {}) {
       await writeFile(`${dataFile}.tmp`, snapshot, { mode: 0o600 });
       await rename(`${dataFile}.tmp`, dataFile);
       storageError = null;
-    }).catch(error => { storageError = error; console.error('Session persistence failed:', error.message); throw error; });
+    }).catch(error => { storageError = error; console.error('Session persistence failed:', safeErrorCode(error)); throw error; });
     return writeQueue;
   }
   function schedulePersist() {
@@ -162,7 +168,7 @@ export async function createApp(options = {}) {
     if (!origin) return true;
     try {
       const url = new URL(origin);
-      const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
+      const allowed = (envValue('ALLOWED_ORIGINS') || '').split(',').filter(Boolean);
       return (['http:', 'https:'].includes(url.protocol) && url.host === req.headers.host) || allowed.includes(url.origin);
     } catch { return false; }
   }
@@ -199,6 +205,10 @@ export async function createApp(options = {}) {
     res.end(JSON.stringify(value));
   }
   const server = http.createServer(async (req, res) => {
+    const observation = startRequestObservation(req, { env });
+    for (const [name, value] of Object.entries(observation.headers)) res.setHeader(name, value);
+    res.once('finish', () => { observation.finish(res.statusCode).catch(() => {}); });
+    res.once('close', () => { if (!res.writableFinished) observation.finish(499).catch(() => {}); });
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -210,34 +220,30 @@ export async function createApp(options = {}) {
         if (storageError) throw httpError(503, 'STORAGE_UNAVAILABLE', 'Session storage is unavailable. Try again later.');
       }
       if (req.method === 'GET' && url.pathname === '/api/health') return json(res, storageError ? 503 : 200, { ok: !storageError });
+      if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, publicRuntimeConfig(env, { transport: 'websocket' }));
       if (req.method === 'GET' && url.pathname === '/api/ice') {
-        const iceServers = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
-        const turnConfigured = process.env.TURN_URLS && (process.env.TURN_SECRET || (process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL));
+        const iceServers = stunServersFromEnv(env);
+        const turnConfigured = envValue('TURN_URLS') && (envValue('TURN_SECRET') || (envValue('TURN_USERNAME') && envValue('TURN_CREDENTIAL')));
         if (turnConfigured && url.searchParams.has('room')) {
           limitHttp(req, 'ice', 120);
           const participant = authorizedParticipant(req, rooms.get(url.searchParams.get('room')));
-          let username = process.env.TURN_USERNAME;
-          let credential = process.env.TURN_CREDENTIAL;
-          if (process.env.TURN_SECRET) {
-            const configuredTtl = Number(process.env.TURN_TTL_SECONDS);
+          let username = envValue('TURN_USERNAME');
+          let credential = envValue('TURN_CREDENTIAL');
+          if (envValue('TURN_SECRET')) {
+            const configuredTtl = Number(envValue('TURN_TTL_SECONDS'));
             const ttl = Number.isFinite(configuredTtl) && configuredTtl > 0 ? Math.min(86400, Math.max(60, Math.floor(configuredTtl))) : 3600;
             username = `${Math.floor(Date.now() / 1000) + ttl}:${participant.id}`;
-            credential = createHmac('sha1', process.env.TURN_SECRET).update(username).digest('base64');
+            credential = createHmac('sha1', envValue('TURN_SECRET')).update(username).digest('base64');
           }
-          iceServers.push({ urls: process.env.TURN_URLS.split(',').map(s => s.trim()).filter(Boolean), username, credential });
+          iceServers.push({ urls: envValue('TURN_URLS').split(',').map(s => s.trim()).filter(Boolean), username, credential });
         }
-        return json(res, 200, { iceServers });
+        return json(res, 200, { iceServers, iceTransportPolicy: iceTransportPolicyFromEnv(env) });
       }
       if (req.method === 'POST' && url.pathname === '/api/rooms') {
         limitHttp(req, 'create', 15);
         if (rooms.size >= 1000) throw httpError(503, 'CAPACITY', 'This server has reached its session capacity.');
-        const input = await jsonBody(req);
-        const name = cleanString(input.name, 1, 60);
-        const displayName = cleanString(input.displayName, 1, 60);
-        if (!name || !displayName) throw httpError(400, 'INVALID_NAME', 'Session and display names must be 1–60 characters.');
-        if (typeof input.password !== 'string' || input.password.length < 8 || input.password.length > 128) throw httpError(400, 'INVALID_PASSWORD', 'Use a password with 8–128 characters.');
-        const collaboration = input.collaboration === undefined ? 'server' : input.collaboration;
-        if (!['server', 'peer'].includes(collaboration)) throw httpError(400, 'INVALID_COLLABORATION', 'Choose peer or server collaboration.');
+        const input = normalizeRoomCreation(await jsonBody(req), { defaultCollaboration: 'server', allowedCollaborations: ['server', 'peer'] });
+        const { name, displayName, collaboration } = input;
         const salt = randomBytes(16).toString('hex');
         const passwordHash = (await scrypt(input.password, salt, 64)).toString('hex');
         const room = { id: randomId(), name, collaboration, createdAt: Date.now(), expiresAt: Date.now() + ROOM_TTL, passwordHash, passwordSalt: salt, participants: new Map(), entities: new Map(), entityBytes: 0, chat: [] };
@@ -258,10 +264,8 @@ export async function createApp(options = {}) {
         if (req.method === 'POST' && match[2] === '/join') {
           limitHttp(req, `join:${room.id}`, 30);
           limitHttp(req, 'join', 60);
-          const input = await jsonBody(req);
-          const displayName = cleanString(input.displayName, 1, 60);
-          if (!displayName) throw httpError(400, 'INVALID_NAME', 'Enter a display name with 1–60 characters.');
-          if (typeof input.password !== 'string' || input.password.length > 128) throw httpError(401, 'WRONG_PASSWORD', 'That password does not match.');
+          const input = normalizeJoin(await jsonBody(req));
+          const { displayName } = input;
           const actual = await scrypt(input.password, room.passwordSalt, 64);
           if (!timingSafeEqual(Buffer.from(room.passwordHash, 'hex'), actual)) throw httpError(401, 'WRONG_PASSWORD', 'That password does not match.');
           // Revalidate after the asynchronous password work; the host may have ended the room.
@@ -291,13 +295,20 @@ export async function createApp(options = {}) {
     } catch (error) {
       if (!res.headersSent) json(res, error.status ?? 500, { error: error.status ? error.message : 'An unexpected server error occurred.', code: error.code ?? 'INTERNAL_ERROR' });
       else res.end();
-      if (!error.status) console.error(error);
+      if (!error.status) console.error('Common request failed:', safeErrorCode(error));
     }
   });
   server.headersTimeout = 15000;
   server.requestTimeout = 15000;
   const wss = new WebSocketServer({ noServer: true, maxPayload: 3 * 1024 * 1024, perMessageDeflate: false });
+  const upgradeObservations = new WeakMap();
+  wss.on('headers', (headers, request) => {
+    const observation = upgradeObservations.get(request);
+    if (observation) for (const [name, value] of Object.entries(observation.headers)) headers.push(`${name}: ${value}`);
+  });
   server.on('upgrade', (req, socket, head) => {
+    const observation = startRequestObservation(req, { env });
+    upgradeObservations.set(req, observation);
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname !== '/ws' || !sameOrigin(req)) throw httpError(403, 'FORBIDDEN', 'Forbidden');
@@ -307,6 +318,7 @@ export async function createApp(options = {}) {
       if (!room || !participant || participant.expiresAt <= Date.now() || room.expiresAt <= Date.now()) throw httpError(401, 'UNAUTHORIZED', 'Session expired');
       participant.reservedUntil = Date.now() + reservationMs;
       wss.handleUpgrade(req, socket, head, ws => {
+        observation.finish(101).catch(() => {});
         const oldSocket = participant.socket;
         participant.socket = ws;
         participant.expiresAt = Date.now() + sessionTtl;
@@ -314,7 +326,10 @@ export async function createApp(options = {}) {
         ws.isAlive = true;
         sockets.add(ws);
         if (oldSocket && oldSocket !== ws) oldSocket.close(4001, 'Connected in another tab');
-        send(ws, { type: 'init', room: publicRoom(room), self: publicParticipant(participant), participants: participants(room), entities: room.collaboration === 'peer' ? [] : [...room.entities.values()], chat: room.chat });
+        // Bun's ws adapter does not currently forward custom upgrade headers.
+        // Keep the same safe correlation fields available in its init envelope.
+        const diagnostics = { requestId: observation.headers['X-Common-Request-Id'], buildId: observation.headers['X-Common-Build'], protocolVersion: 1, traceparent: observation.headers.traceparent };
+        send(ws, { type: 'init', capabilities: protocolCapabilities('websocket'), diagnostics, room: publicRoom(room), self: publicParticipant(participant), participants: participants(room), entities: room.collaboration === 'peer' ? [] : [...room.entities.values()], chat: room.chat });
         broadcast(room, { type: 'participants', participants: participants(room) });
         ws.on('pong', () => { ws.isAlive = true; });
         ws.on('error', () => {});
@@ -330,16 +345,17 @@ export async function createApp(options = {}) {
             if (isBinary) throw httpError(400, 'INVALID_MESSAGE', 'Send JSON messages.');
             let message;
             try { message = JSON.parse(buffer.toString()); } catch { throw httpError(400, 'INVALID_JSON', 'Invalid message.'); }
-            if (!isObject(message)) throw httpError(400, 'INVALID_MESSAGE', 'Invalid message.');
+            normalizeEnvelope(message, { receivedBytes: buffer.length });
             if (message.type === 'ping') return send(ws, { type: 'pong' });
             if (message.type === 'cursor') {
-              if (!finite(message.x) || !finite(message.y)) throw httpError(400, 'INVALID_CURSOR', 'Invalid cursor position.');
+              normalizeCursor(message);
               return broadcast(room, { type: 'cursor', participantId: participant.id, x: message.x, y: message.y }, participant.id);
             }
             if (message.type === 'signal') {
-              const target = [...room.participants.values()].find(p => p.id === message.to && p.id !== participant.id);
-              if (!target?.socket || !isObject(message.data) || buffer.length > 128 * 1024) throw httpError(400, 'INVALID_SIGNAL', 'Signal recipient is unavailable.');
-              return send(target.socket, { type: 'signal', from: participant.id, data: message.data });
+              const signal = normalizeSignal(message, { senderId: participant.id, receivedBytes: buffer.length });
+              const target = [...room.participants.values()].find(p => p.id === signal.to);
+              if (target?.socket?.readyState !== WebSocket.OPEN) throw httpError(400, 'INVALID_SIGNAL', 'Signal recipient is unavailable.');
+              return send(target.socket, { type: 'signal', from: participant.id, data: signal.data });
             }
             if (message.type === 'upsert') {
               if (room.collaboration === 'peer') throw httpError(409, 'PEER_CANVAS', 'Canvas changes belong on the peer data channel.');
@@ -370,11 +386,10 @@ export async function createApp(options = {}) {
               return;
             }
             if (message.type === 'chat') {
-              const text = cleanString(message.text, 1, 2000);
-              if (!text) throw httpError(400, 'INVALID_CHAT', 'Messages must be 1–2000 characters.');
+              const text = normalizeChat(message.text);
               const entry = { id: randomId(10), participantId: participant.id, name: participant.name, text, createdAt: Date.now() };
               room.chat.push(entry);
-              if (room.chat.length > 100) room.chat.shift();
+              if (room.chat.length > SESSION_POLICY.maxChatMessages) room.chat.shift();
               broadcast(room, { type: 'chat', message: entry });
               schedulePersist();
               return;
@@ -403,7 +418,9 @@ export async function createApp(options = {}) {
         schedulePersist();
       });
     } catch (error) {
-      socket.write(`HTTP/1.1 ${error.status ?? 400} Error\r\nConnection: close\r\n\r\n`);
+      observation.finish(error.status ?? 400).catch(() => {});
+      const correlationHeaders = Object.entries(observation.headers).map(([name, value]) => `${name}: ${value}\r\n`).join('');
+      socket.write(`HTTP/1.1 ${error.status ?? 400} Error\r\n${correlationHeaders}Connection: close\r\n\r\n`);
       socket.destroy();
     }
   });

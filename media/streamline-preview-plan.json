@@ -1,0 +1,8 @@
+{
+  "input": { "type": "webcam" },
+  "pipeline": [
+    { "op": "overlay", "params": { "image": "annotation", "position": "full" } },
+    { "op": "encode", "params": { "codec": "h264", "preset": "veryfast", "bitrate": "2000k", "resolution": "1280x720", "fps": 12, "gop": 24 } }
+  ],
+  "output": { "mode": "websocket", "format": "fmp4" }
+}

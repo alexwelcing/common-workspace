@@ -24,12 +24,168 @@ const SCHEMAS = {
   'capture.snapshot': ['download'], 'recording.start': ['source'], 'recording.stop': [],
   'recording.list': [], 'recording.download': ['id'], 'canvas.export': ['format', 'download'],
 };
+export const AGENT_CAPABILITIES = Object.freeze({
+  inspect: Object.freeze({ title: 'Read the canvas', description: 'Read canvas text, images, positions, participants, and exports.' }),
+  'canvas-write': Object.freeze({ title: 'Edit and present', description: 'Add, update, remove, and arrange canvas objects; control views and walkthroughs.' }),
+  'media-capture': Object.freeze({ title: 'Capture canvas and shared windows', description: 'Take snapshots and capture an already approved shared window. Never opens the screen picker.' }),
+  recording: Object.freeze({ title: 'Manage recordings', description: 'Start, stop, list, and download local clips. Starting also requires media capture.' }),
+});
+const ACTION_CAPABILITIES = Object.fromEntries(Object.keys(SCHEMAS).map(action => [action,
+  action === 'recording.stop' ? ['recording'] : action === 'recording.start' ? ['inspect', 'media-capture', 'recording']
+    : action.startsWith('recording.') ? ['inspect', 'recording'] : action === 'capture.snapshot' ? ['inspect', 'media-capture']
+      : ['canvas.inspect', 'canvas.export'].includes(action) ? ['inspect'] : ['inspect', 'canvas-write'],
+]));
+const DEFAULT_GRANTS = ['inspect', 'canvas-write'];
+const GRANT_TTL_MS = 15 * 60_000;
+const MAX_GRANT_TTL_MS = 60 * 60_000;
 const EDIT_ACTIONS = new Set(['canvas.add', 'canvas.update', 'canvas.remove', 'canvas.layer', 'canvas.lock', 'image.add']);
-const CONTEXT_ERRORS = new Set(['SESSION_CHANGED', 'AGENT_DISABLED', 'DISCONNECTED']);
+const CONTEXT_ERRORS = new Set(['SESSION_CHANGED', 'AGENT_DISABLED', 'DISCONNECTED', 'GRANT_EXPIRED', 'GRANT_REVOKED', 'PERMISSION_DENIED', 'ABORTED']);
 const sessionScope = ctx => JSON.stringify([!!ctx.sandbox, ctx.room?.id ?? null, ctx.participantId ?? null]);
-const fail = (code, message) => { const error = new Error(message); error.code = code; throw error; };
-const envelope = error => ({ ok: false, error: { code: error?.code || 'FAILED', message: error?.code ? error.message : 'The command could not be completed.' } });
+const SAFE_ERROR = Symbol('controlled-agent-error');
+const fail = (code, message) => { const error = new Error(message); error.code = code; error[SAFE_ERROR] = true; throw error; };
+const envelope = error => ({ ok: false, error: error?.[SAFE_ERROR]
+  ? { code: error.code, message: error.message, ...(error.action ? { action: error.action, category: error.category } : {}) }
+  : { code: 'FAILED', message: 'The command could not be completed.' } });
 const clone = value => value === undefined ? null : structuredClone(value);
+
+const SERVICE_MESSAGES = {
+  CAPTURE_CLOSED: 'Capture tools have closed. Reload this canvas before capturing again.',
+  CAPTURE_UNAVAILABLE: 'Open the canvas and wait for it to finish loading before capturing.',
+  CAPTURE_UNSUPPORTED: 'Canvas capture is unavailable in this browser. Try a current desktop browser with canvas capture support.',
+  CAPTURE_CANCELLED: 'Capture was cancelled because access, the canvas session, or the shared source changed. Check Agent tools permissions and try again.',
+  CAPTURE_PERMISSION_DENIED: 'The browser blocked capture. Check browser and system screen-recording permissions, then share the window again.',
+  CAPTURE_INVALID: 'Capture options are invalid. Use the documented capture command and choose a supported source.',
+  RECORDING_BUSY: 'A recording is already running or starting. Stop it before starting another.',
+  RECORDING_INVALID: 'Choose canvas or window as the recording source. Share a window first when recording a window.',
+  RECORDING_UNSUPPORTED: 'This browser cannot record the selected source. Try a current desktop browser with MediaRecorder support.',
+  RECORDING_LIMIT: 'Local recording storage is full. Download and discard a saved clip before starting another.',
+  WINDOW_NOT_SHARED: 'Share a window using the Share a window button, then retry recording.start with source window.',
+  RECORDING_FAILED: 'The browser could not start or finish the recording. Check that the shared source is still live and try again.',
+  RECORDING_EMPTY: 'No video data was recorded. Keep the source visible and record for a little longer before stopping.',
+  RECORDING_NOT_FOUND: 'That clip is no longer in this tab. Use recording.list and choose an available recording id.',
+  WALKTHROUGH_INVALID: 'Use 1–50 walkthrough steps with a title and valid canvas targets or bounds.',
+};
+
+function controlledServiceError(error, action) {
+  const category = action === 'canvas.export' ? 'export' : action.split('.')[0];
+  let code = Object.hasOwn(SERVICE_MESSAGES, error?.code) ? error.code : null;
+  if (!code) {
+    if (['NotAllowedError', 'SecurityError'].includes(error?.name)) code = 'CAPTURE_PERMISSION_DENIED';
+    else if (error?.name === 'NotSupportedError') code = category === 'recording' ? 'RECORDING_UNSUPPORTED' : 'CAPTURE_UNSUPPORTED';
+    else if (error?.name === 'AbortError') code = 'CAPTURE_CANCELLED';
+  }
+  const safe = new Error(code ? SERVICE_MESSAGES[code] : `${action} could not complete in the ${category} service. Reload and try again. If it continues, report this action and category.`);
+  safe.code = code || 'SERVICE_FAILED'; safe.action = action; safe.category = category; safe[SAFE_ERROR] = true;
+  return safe;
+}
+
+/** Keep this controller in the trusted UI closure, never on window.commonAgent. */
+export function createAgentPermissions({ getContext = () => ({}), getSession = () => null,
+  onChange = () => {}, onRevoke = () => {}, now = () => Date.now(),
+  setTimeout: schedule = globalThis.setTimeout, clearTimeout: unschedule = globalThis.clearTimeout,
+  setInterval: monitor = globalThis.setInterval, clearInterval: unmonitor = globalThis.clearInterval,
+} = {}) {
+  let grant = null; let revision = 0; let reason = 'not-granted'; let expiryTimer; let contextTimer; let destroyed = false; let refreshing = false;
+  const listeners = new Set();
+  const snapshot = () => ({ active: !!grant && !destroyed, capabilities: grant ? [...grant.capabilities] : [], expiresAt: grant?.expiresAt ?? null,
+    remainingMs: grant ? Math.max(0, grant.expiresAt - now()) : 0, revision, reason,
+    scope: grant ? clone(grant.scope) : null });
+  const clearTimers = () => { unschedule?.(expiryTimer); unmonitor?.(contextTimer); expiryTimer = contextTimer = null; };
+  const notify = () => { const state = snapshot(); try { onChange(state); } catch {} for (const listener of listeners) { try { listener(clone(state)); } catch {} } };
+  function revoke(nextReason = 'revoked') {
+    const existed = !!grant; grant = null; clearTimers(); reason = nextReason;
+    if (existed) { revision++; notify(); try { onRevoke(nextReason, snapshot()); } catch {} }
+    return snapshot();
+  }
+  function refresh() {
+    if (destroyed || refreshing || !grant) return snapshot();
+    refreshing = true;
+    try {
+      const ctx = getContext() || {};
+      if (now() >= grant.expiresAt) return revoke('expired');
+      if (!ctx.enabled) return revoke('disabled');
+      if (!ctx.sandbox && !ctx.connected) return revoke('disconnected');
+      if (sessionScope(ctx) !== grant.identity || getSession() !== grant.session) return revoke('session-changed');
+      return snapshot();
+    } finally { refreshing = false; }
+  }
+  function allow({ capabilities = DEFAULT_GRANTS, ttlMs = GRANT_TTL_MS } = {}) {
+    if (destroyed) throw new Error('Agent permissions have been closed.');
+    if (!Array.isArray(capabilities) || !capabilities.length || capabilities.some(capability => !Object.hasOwn(AGENT_CAPABILITIES, capability))) throw new Error('Choose at least one supported agent permission.');
+    if (!Number.isFinite(ttlMs) || ttlMs < 1000 || ttlMs > MAX_GRANT_TTL_MS) throw new Error('Choose a permission duration between one second and one hour.');
+    const ctx = getContext() || {};
+    if (!ctx.enabled || (!ctx.sandbox && !ctx.connected)) throw new Error('Enable Agent tools in a connected canvas before granting access.');
+    const selected = new Set(capabilities);
+    if ([...selected].some(capability => capability !== 'inspect')) selected.add('inspect');
+    const removed = grant && [...grant.capabilities].some(capability => !selected.has(capability));
+    clearTimers(); revision++; reason = 'granted';
+    grant = { capabilities: Object.keys(AGENT_CAPABILITIES).filter(capability => selected.has(capability)), expiresAt: now() + ttlMs,
+      identity: sessionScope(ctx), session: getSession(), scope: { sandbox: !!ctx.sandbox, roomId: ctx.room?.id ?? null, participantId: ctx.participantId ?? null } };
+    expiryTimer = schedule?.(() => refresh(), ttlMs + 1); expiryTimer?.unref?.();
+    contextTimer = monitor?.(() => refresh(), 500); contextTimer?.unref?.();
+    notify();
+    if (removed) { try { onRevoke('permissions-reduced', snapshot()); } catch {} }
+    return snapshot();
+  }
+  return Object.freeze({ grant: allow, revoke, state: refresh, refresh,
+    subscribe(listener) { if (typeof listener !== 'function') throw new TypeError('Permission listener must be a function.'); listeners.add(listener); return () => listeners.delete(listener); },
+    destroy() { if (destroyed) return; revoke('destroyed'); destroyed = true; listeners.clear(); clearTimers(); },
+  });
+}
+
+/** The browser adapter and downloadable manifest consume this same registry. */
+export function getAgentToolDefinitions() {
+  const id = { type: 'string', minLength: 1, maxLength: 100 };
+  const coordinate = { type: 'number', minimum: -100000, maximum: 100000 };
+  const dimension = { type: 'number', exclusiveMinimum: 0, maximum: 10000 };
+  const box = { type: 'object', additionalProperties: false, properties: { x: coordinate, y: coordinate, width: dimension, height: dimension }, required: ['x', 'y', 'width', 'height'] };
+  const raster = { type: 'string', maxLength: IMAGE_LIMIT, pattern: '^data:image/(png|jpe?g|webp|gif|avif);base64,', description: 'An embedded base64 raster image. Remote URLs and SVG are rejected.' };
+  const content = {
+    x: coordinate, y: coordinate, width: dimension, height: dimension, text: { type: 'string', maxLength: 20000 },
+    color: { type: 'string', maxLength: 100 }, fill: { type: 'string', maxLength: 100 }, fontSize: { type: 'number', minimum: 8, maximum: 200 },
+    title: { type: 'string', maxLength: 200 }, language: { type: 'string', enum: ['mermaid', 'plantuml'] }, source: { type: 'string', maxLength: 20000 },
+    url: raster, locked: { type: 'boolean' }, points: { type: 'array', maxItems: 10000, items: { type: 'object', additionalProperties: false, properties: { x: coordinate, y: coordinate }, required: ['x', 'y'] } },
+  };
+  const properties = {
+    ...content, id, requestId: { ...id, description: 'Optional idempotency key within this permission grant and canvas session.' },
+    includeImageData: { type: 'boolean', default: false },
+    entity: { type: 'object', additionalProperties: false, properties: { ...content, id, type: { type: 'string', enum: [...TYPES] } }, required: ['type'], description: 'Only supported canvas fields. Coordinates and sizes have defaults; images require url. Screen objects and ownership fields are managed by the app.' },
+    patch: { type: 'object', minProperties: 1, additionalProperties: false, properties: content },
+    position: { type: 'string', enum: ['front', 'back', 'forward', 'backward'] }, bounds: box, dataUrl: raster,
+    steps: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'object', additionalProperties: false, properties: { title: { type: 'string', minLength: 1, maxLength: 200 }, text: { type: 'string', maxLength: 5000 }, targetId: id, bounds: box }, required: ['title'], not: { required: ['targetId', 'bounds'] } } },
+    download: { type: 'boolean', default: false }, format: { type: 'string', enum: ['svg', 'json'], default: 'svg' },
+  };
+  const required = { 'canvas.add': ['entity'], 'canvas.update': ['id', 'patch'], 'canvas.remove': ['id'], 'canvas.layer': ['id', 'position'], 'canvas.lock': ['id', 'locked'], 'image.add': ['dataUrl'], 'walkthrough.load': ['steps'], 'recording.start': ['source'], 'recording.download': ['id'] };
+  const descriptions = {
+    'canvas.inspect': 'Read the current shared canvas, participants, and view. Embedded image data is omitted unless explicitly requested.',
+    'canvas.add': 'Add text, a note, a shape, a drawing, an embedded image, or a diagram to the shared canvas.',
+    'canvas.update': 'Patch supported fields of one canvas object. Respects screen ownership and position locks.',
+    'canvas.remove': 'Remove one editable object from the shared canvas.', 'canvas.layer': 'Move one editable object forward, backward, to the front, or to the back.',
+    'canvas.lock': 'Lock or unlock an editable canvas object position.', 'view.focus': 'Focus this browser on a canvas object or explicit bounds.',
+    'view.fit': 'Fit the shared canvas into this browser viewport.', 'image.add': 'Add a generated PNG, JPEG, WebP, GIF, or AVIF supplied as embedded base64 data.',
+    'walkthrough.load': 'Load and start up to fifty inert walkthrough steps. Steps display text and focus objects; they never execute commands.',
+    'walkthrough.next': 'Advance to the next walkthrough step.', 'walkthrough.previous': 'Return to the previous walkthrough step.', 'walkthrough.stop': 'Stop the current walkthrough.',
+    'capture.snapshot': 'Capture canvas annotations and visible shared screens as PNG. Optional download. Never opens a native picker.',
+    'recording.start': 'Start a bounded local recording of the canvas or an already user-approved shared window. Never opens a native picker.',
+    'recording.stop': 'Stop the local recording.', 'recording.list': 'List locally retained recording metadata.', 'recording.download': 'Download one locally retained recording.',
+    'canvas.export': 'Export canvas objects as SVG or JSON. Live screen streams are excluded. Optional download.',
+  };
+  return Object.keys(SCHEMAS).map(action => {
+    const args = Object.fromEntries([...SCHEMAS[action], 'requestId'].map(key => [key,
+      action === 'recording.start' && key === 'source' ? { type: 'string', enum: ['canvas', 'window'] } : properties[key],
+    ]));
+    const inputSchema = { type: 'object', additionalProperties: false, properties: args, ...(required[action] ? { required: required[action] } : {}) };
+    if (action === 'view.focus') inputSchema.oneOf = [{ required: ['id'], not: { required: ['bounds'] } }, { required: ['bounds'], not: { required: ['id'] } }];
+    return clone({ name: `common_${action.replaceAll('.', '_')}`, action, description: descriptions[action], inputSchema,
+      capabilities: ACTION_CAPABILITIES[action], annotations: { readOnlyHint: ['canvas.inspect', 'recording.list'].includes(action), untrustedContentHint: true, consequentialHint: false } });
+  });
+}
+
+export function getAgentManifest() {
+  return { version: VERSION, bridge: 'window.commonAgent', experimentalAdapter: 'WebMCP document.modelContext.registerTool',
+    capabilities: clone(AGENT_CAPABILITIES), defaultCapabilities: [...DEFAULT_GRANTS], grantDurationMs: GRANT_TTL_MS, maxGrantDurationMs: MAX_GRANT_TTL_MS,
+    tools: getAgentToolDefinitions() };
+}
 
 function object(value, label = 'Object') {
   if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) fail('INVALID_COMMAND', `${label} must be a plain JSON object.`);
@@ -158,14 +314,31 @@ function normalize(input) {
 }
 
 /** Browser-local, opt-in automation. Credentials and transport internals are never exposed. */
-export function createAgentAPI({ getBoard, getModel, getContext, recording, walkthrough, onStatus = () => {} }) {
-  const cache = new Map(); let cacheScope; let cacheModel;
-  const context = () => getContext?.() || {};
+export function createAgentAPI({ getBoard, getModel, getContext, recording, walkthrough, permissions, onStatus = () => {} }) {
+  const cache = new Map(); let cacheScope; let cacheModel; let cacheGrantRevision; let legacyEnabled = false;
+  const rawContext = () => getContext?.() || {};
+  const grants = permissions || createAgentPermissions({ getContext: rawContext, getSession: getModel });
+  const context = () => {
+    const ctx = rawContext();
+    // Compatibility for existing trusted embedders. New UI integrations pass a
+    // private permissions controller and select explicit, time-limited scopes.
+    if (!permissions) {
+      if (ctx.enabled && !legacyEnabled && (ctx.sandbox || ctx.connected)) { legacyEnabled = true; grants.grant({ capabilities: Object.keys(AGENT_CAPABILITIES) }); }
+      if (!ctx.enabled) legacyEnabled = false;
+    }
+    return ctx;
+  };
   const active = ctx => !!ctx.enabled && (!!ctx.sandbox || !!ctx.connected);
   function access(command) {
     const ctx = context();
     if (!ctx.enabled) fail('AGENT_DISABLED', 'Enable Agent tools in this browser before using canvas commands.');
     if (!ctx.sandbox && !ctx.connected) fail('DISCONNECTED', 'Reconnect to the session before using canvas commands.');
+    const permission = grants.state();
+    if (!permission.active) {
+      const code = permission.reason === 'expired' ? 'GRANT_EXPIRED' : permission.reason === 'session-changed' ? 'SESSION_CHANGED' : 'GRANT_REVOKED';
+      fail(code, 'Agent access has ended. Ask the user to grant access again in Agent tools.');
+    }
+    if (ACTION_CAPABILITIES[command.action].some(capability => !permission.capabilities.includes(capability))) fail('PERMISSION_DENIED', `This command requires: ${ACTION_CAPABILITIES[command.action].join(', ')}. Ask the user to update Agent tools permissions.`);
     if (!getModel?.() || !getBoard?.()) fail('NOT_READY', 'The canvas is not ready.');
     if (EDIT_ACTIONS.has(command.action) && getBoard().readOnly) fail('READ_ONLY', 'The canvas is currently read-only.');
     return ctx;
@@ -188,8 +361,8 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
   function state({ includeImageData = false } = {}) {
     try {
       boolean(includeImageData, 'Include image data');
-      const ctx = context(); const board = getBoard?.(); const permitted = active(ctx);
-      const output = { version: VERSION, enabled: !!ctx.enabled, sandbox: !!ctx.sandbox, connected: !!ctx.connected, ready: permitted && !!board && !!getModel?.(), readOnly: !!board?.readOnly };
+      const ctx = context(); const board = getBoard?.(); const permission = grants.state(); const permitted = active(ctx) && permission.active && permission.capabilities.includes('inspect');
+      const output = { version: VERSION, enabled: !!ctx.enabled, sandbox: !!ctx.sandbox, connected: !!ctx.connected, ready: permitted && !!board && !!getModel?.(), readOnly: !!board?.readOnly, grants: permission };
       if (permitted) {
         output.room = ctx.room ? { id: ctx.room.id, name: ctx.room.name } : null;
         output.participantId = ctx.participantId ?? null;
@@ -197,19 +370,24 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
         output.view = board?.getView?.() || null;
         output.entities = getModel?.() ? entities(includeImageData) : [];
         output.walkthrough = walkthrough?.state?.() || null;
-        output.recording = recording?.status?.() || null;
+        if (permission.capabilities.includes('recording')) output.recording = recording?.status?.() || null;
       }
       return clone(output);
     } catch (error) { return envelope(error); }
   }
   function describe() {
-    return { version: VERSION, enabled: !!context().enabled, actions: clone(SCHEMAS), limits: { batch: MAX_BATCH, requestCache: 100, imageDataUrlCharacters: IMAGE_LIMIT, walkthroughSteps: 50 },
+    return { version: VERSION, enabled: !!context().enabled, actions: clone(SCHEMAS), capabilities: clone(AGENT_CAPABILITIES), actionCapabilities: clone(ACTION_CAPABILITIES), grants: grants.state(), tools: getAgentToolDefinitions(), limits: { batch: MAX_BATCH, requestCache: 100, imageDataUrlCharacters: IMAGE_LIMIT, walkthroughSteps: 50, grantDurationMs: GRANT_TTL_MS, maxGrantDurationMs: MAX_GRANT_TTL_MS },
       command: '{action, requestId?, ...arguments}', examples: [{ action: 'canvas.add', entity: { type: 'text', text: 'Product walkthrough', x: 40, y: 40 } }, { action: 'view.focus', id: 'object-id' }],
       notes: ['Enable Agent tools in the local browser first.', 'Use requestId for idempotent retries in the same session.', 'Batch validates all command shapes first and runs sequentially; execution failures do not roll back earlier commands. Session changes, disabled Agent tools, or disconnection abort the remaining commands.', 'Window recording uses an existing user-approved screen share. Image generation happens in the agent; image.add imports its raster output.', 'Position locks prevent geometry edits. Screen objects are created by browser screen sharing.'] };
   }
-  async function service(target, method, ...args) {
-    if (typeof target?.[method] !== 'function') fail('UNSUPPORTED', `The ${method} service is not available in this browser.`);
-    return (await target[method](...args)) ?? null;
+  async function service(action, target, method, ...args) {
+    if (typeof target?.[method] !== 'function') {
+      const error = controlledServiceError(null, action); error.code = 'SERVICE_UNAVAILABLE';
+      error.message = `${action} is unavailable in this browser. Reload or use a browser that supports this feature.`;
+      throw error;
+    }
+    try { return (await target[method](...args)) ?? null; }
+    catch (error) { throw controlledServiceError(error, action); }
   }
   function focus(target) {
     const board = getBoard(); const width = board.el?.clientWidth || 1000; const height = board.el?.clientHeight || 700;
@@ -250,25 +428,26 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
       return focus(entity || command.bounds);
     }
     if (action === 'view.fit') { board.fit(); return board.getView(); }
-    if (action.startsWith('walkthrough.')) return service(walkthrough, action.split('.')[1], ...(action === 'walkthrough.load' ? [command.steps] : []));
-    if (action === 'capture.snapshot') return service(recording, 'snapshot', { download: command.download ?? false, isAllowed });
+    if (action.startsWith('walkthrough.')) return service(action, walkthrough, action.split('.')[1], ...(action === 'walkthrough.load' ? [command.steps] : []));
+    if (action === 'capture.snapshot') return service(action, recording, 'snapshot', { download: command.download ?? false, isAllowed });
     if (action.startsWith('recording.')) {
       const method = action.split('.')[1];
-      return service(recording, method, ...(method === 'start' ? [{ source: command.source, isAllowed }] : method === 'download' ? [command.id] : []));
+      return service(action, recording, method, ...(method === 'start' ? [{ source: command.source, isAllowed }] : method === 'download' ? [command.id] : []));
     }
     if (action === 'canvas.export') {
       const format = command.format || 'svg'; const mimeType = format === 'svg' ? 'image/svg+xml' : 'application/json'; const filename = `common-canvas.${format}`;
       const data = format === 'svg' ? board.exportSvg() : JSON.stringify({ version: 1, entities: model.all().filter(entity => entity.type !== 'screen') }, null, 2);
-      if (command.download) await service(recording, 'exportCanvas', data, { format, mimeType, filename, download: true });
+      if (command.download) await service(action, recording, 'exportCanvas', data, { format, mimeType, filename, download: true });
       return { format, mimeType, filename, data };
     }
     fail('UNKNOWN_ACTION', 'Unsupported action.');
   }
-  async function execute(input) {
+  async function execute(input, { signal } = {}) {
     try {
-      const command = normalize(input); const ctx = access(command); const initialModel = getModel();
+      if (signal?.aborted) fail('ABORTED', 'The agent command was cancelled.');
+      const command = normalize(input); const ctx = access(command); const initialModel = getModel(); const initialGrantRevision = grants.state().revision;
       const scope = sessionScope(ctx);
-      if (scope !== cacheScope || cacheModel !== initialModel) { cache.clear(); cacheScope = scope; cacheModel = initialModel; }
+      if (scope !== cacheScope || cacheModel !== initialModel || cacheGrantRevision !== initialGrantRevision) { cache.clear(); cacheScope = scope; cacheModel = initialModel; cacheGrantRevision = initialGrantRevision; }
       const fingerprint = JSON.stringify(Object.fromEntries(Object.entries(command).filter(([key]) => key !== 'requestId')));
       const previous = command.requestId ? cache.get(command.requestId) : null;
       if (previous) {
@@ -284,8 +463,10 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
       // Defer service work until the cache entry exists, so concurrent identical
       // retries share even an asynchronous recording/snapshot operation.
       const currentContext = () => {
+        if (signal?.aborted) fail('ABORTED', 'The agent command was cancelled.');
         const current = access(command);
         if (getModel() !== initialModel || scope !== sessionScope(current)) fail('SESSION_CHANGED', 'The session changed before this command completed.');
+        if (grants.state().revision !== initialGrantRevision) fail('GRANT_REVOKED', 'Agent permissions changed before this command completed.');
         return current;
       };
       // Capture may await image/diagram rendering before it creates a recorder.
@@ -299,15 +480,17 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
       return clone(result);
     } catch (error) { return envelope(error); }
   }
-  async function batch(commands) {
+  async function batch(commands, { signal } = {}) {
     try {
       if (!Array.isArray(commands) || !commands.length || commands.length > MAX_BATCH) fail('INVALID_COMMAND', 'Batch must contain 1–50 commands.');
       const normalized = jsonCopy(commands).map(normalize);
       if (JSON.stringify(normalized).length > MAX_COMMAND_BYTES) fail('INVALID_COMMAND', 'Batch exceeds the 3 MiB limit.');
-      const initialScope = sessionScope(access(normalized[0])); const initialModel = getModel();
+      const initialScope = sessionScope(access(normalized[0])); const initialModel = getModel(); const initialGrantRevision = grants.state().revision;
       const checkContext = command => {
+        if (signal?.aborted) fail('ABORTED', 'The agent batch was cancelled.');
         const current = access(command);
         if (getModel() !== initialModel || sessionScope(current) !== initialScope) fail('SESSION_CHANGED', 'The session changed before this batch completed.');
+        if (grants.state().revision !== initialGrantRevision) fail('GRANT_REVOKED', 'Agent permissions changed before this batch completed.');
       };
       // Validate entity patches against current types before starting a batch.
       // Commands targeting objects created earlier in the batch are validated
@@ -319,7 +502,7 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
       const results = [];
       for (const command of normalized) {
         checkContext(command);
-        const result = await execute(command);
+        const result = await execute(command, { signal });
         // A batch belongs to the browser session where it began. Never let an
         // awaited snapshot/recording move later confidential edits to a new room.
         checkContext(command);

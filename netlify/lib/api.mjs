@@ -1,13 +1,16 @@
 import { createHash, createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { normalizeRoomCreation, normalizeJoin, normalizeSignal, normalizeChat, normalizeCursor, normalizeEnvelope, protocolCapabilities } from '../../lib/session-protocol.mjs';
+import { stunServersFromEnv, iceTransportPolicyFromEnv } from '../../lib/runtime-config.mjs';
 
 const scrypt = promisify(scryptCallback);
 const COLORS = ['#7867ef', '#e3a444', '#4aa3b9', '#df7b9d', '#75b790', '#d27b58', '#8b9ed5', '#ba91ce', '#9baf5f', '#68b3aa'];
 const MAX_BODY = 128 * 1024;
+const EVENT_BATCH_SIZE = 64;
+const EVENT_BATCH_BYTES = 512 * 1024;
 const randomId = (length = 12) => randomBytes(length).toString('base64url');
 const hash = value => createHash('sha256').update(value).digest('hex');
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const name = value => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 60 ? value.trim() : null;
 const timestamp = value => new Date(value).getTime();
 const error = (status, code, message) => Object.assign(new Error(message), { status, code });
 const roomMissing = () => error(404, 'ROOM_NOT_FOUND', 'This session has ended or the link is invalid.');
@@ -135,23 +138,49 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     throw resync();
   }
 
-  async function active(client, room, time, except) {
+  async function roster(client, room, time, except) {
     const { rows } = await client.query(`SELECT * FROM common_members
       WHERE room_id = $1 AND expires_at > $2 AND lease_until > $2 AND connection_id IS NOT NULL
       ORDER BY joined_at, id`, [room.id, new Date(time)]);
-    return rows.filter(member => member.id !== except).map(publicMember);
+    let deadline = timestamp(room.expires_at);
+    for (const member of rows) deadline = Math.min(deadline, timestamp(member.lease_until), timestamp(member.expires_at));
+    return { participants: rows.filter(member => member.id !== except).map(publicMember), checkAt: new Date(deadline) };
   }
+  async function active(client, room, time, except) { return (await roster(client, room, time, except)).participants; }
 
-  async function append(client, room, message, time, { target = null, except = null } = {}) {
+  async function append(client, room, message, time, { target = null, except = null, sender = null, connection = null, requestId = null, requestHash = null } = {}) {
     // BIGINT stays a decimal string on the wire; no precision loss in JS clients.
     const { rows } = await client.query('UPDATE common_rooms SET event_seq = event_seq + 1 WHERE id = $1 RETURNING event_seq', [room.id]);
     room.event_seq = String(rows[0].event_seq);
-    await client.query(`INSERT INTO common_events (room_id, seq, target_id, except_id, payload, created_at)
-      VALUES ($1, $2, $3, $4, $5::jsonb, $6)`, [room.id, room.event_seq, target, except, JSON.stringify(message), new Date(time)]);
+    await client.query(`INSERT INTO common_events (room_id, seq, target_id, except_id, payload, created_at, sender_id, connection_id, request_id, request_hash)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)`, [room.id, room.event_seq, target, except, JSON.stringify(message), new Date(time), sender, connection, requestId, requestHash]);
   }
 
   async function presence(client, room, time, except) {
-    await append(client, room, { type: 'participants', participants: await active(client, room, time, except) }, time);
+    const snapshot = await roster(client, room, time, except);
+    const { rows: [updated] } = await client.query(`UPDATE common_rooms SET roster_version = roster_version + 1,
+      roster_check_at = $2 WHERE id = $1 RETURNING roster_version`, [room.id, snapshot.checkAt]);
+    room.roster_version = String(updated.roster_version);
+    room.roster_check_at = snapshot.checkAt;
+    await append(client, room, { type: 'participants', participants: snapshot.participants, rosterVersion: room.roster_version }, time);
+  }
+
+  async function refreshRosterDeadline(client, room, time) {
+    // Lease renewals only touch their member. At the earliest cached expiry,
+    // recheck under the room lock once, including preview deploys without sweeps.
+    if (room.roster_check_at && timestamp(room.roster_check_at) > time) return room;
+    await client.query('BEGIN');
+    try {
+      room = await roomRow(client, room.id, time, true);
+      if (!room.ended_at && (!room.roster_check_at || timestamp(room.roster_check_at) <= time)) {
+        await prune(client, room, time);
+        const snapshot = await roster(client, room, time);
+        await client.query('UPDATE common_rooms SET roster_check_at = $2 WHERE id = $1', [room.id, snapshot.checkAt]);
+        room.roster_check_at = snapshot.checkAt;
+      }
+      await client.query('COMMIT');
+      return room;
+    } catch (failure) { await client.query('ROLLBACK'); throw failure; }
   }
 
   async function prune(client, room, time) {
@@ -192,7 +221,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     }
 
     if (url.pathname === '/api/ice' && method === 'GET') {
-      const iceServers = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
+      const iceServers = stunServersFromEnv(env);
       const urls = env('TURN_URLS');
       const secret = env('TURN_SECRET');
       let username = env('TURN_USERNAME');
@@ -215,17 +244,13 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
       }
       // Only the STUN-only answer for requests without a room is shareable.
       const shared = !url.searchParams.has('room') && { ...edgeCached(3600), 'Netlify-Vary': 'query=room' };
-      return json({ iceServers, ...(expiresAt ? { expiresAt } : {}) }, 200, shared || {});
+      return json({ iceServers, iceTransportPolicy: iceTransportPolicyFromEnv(env), ...(expiresAt ? { expiresAt } : {}) }, 200, shared || {});
     }
 
     if (url.pathname === '/api/rooms' && method === 'POST') {
       await limit(context, 'create', 15, time);
-      const input = await body(request);
-      const roomName = name(input.name);
-      const displayName = name(input.displayName);
-      if (!roomName || !displayName) throw error(400, 'INVALID_NAME', 'Session and display names must be 1–60 characters.');
-      if (typeof input.password !== 'string' || input.password.length < 8 || input.password.length > 128) throw error(400, 'INVALID_PASSWORD', 'Use a password with 8–128 characters.');
-      if (input.collaboration !== undefined && input.collaboration !== 'peer') throw error(400, 'INVALID_COLLABORATION', 'Hosted sessions use browser-to-browser collaboration.');
+      const input = normalizeRoomCreation(await body(request));
+      const { name: roomName, displayName } = input;
       const salt = randomBytes(16).toString('hex');
       const passwordHash = (await scrypt(input.password, salt, 64)).toString('hex');
       const result = await transaction(async client => {
@@ -249,10 +274,8 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     if (action === 'join' && method === 'POST') {
       await limit(context, 'join', 60, time);
       await limit(context, `join:${id}`, 30, time);
-      const input = await body(request);
-      const displayName = name(input.displayName);
-      if (!displayName) throw error(400, 'INVALID_NAME', 'Enter a display name with 1–60 characters.');
-      if (typeof input.password !== 'string' || input.password.length > 128) throw error(401, 'WRONG_PASSWORD', 'That password does not match.');
+      const input = normalizeJoin(await body(request));
+      const { displayName } = input;
       // Hash before locking, then revalidate the room under its lock.
       const lookup = await pool.query('SELECT password_salt, password_hash FROM common_rooms WHERE id = $1 AND ended_at IS NULL AND expires_at > $2', [id, new Date(time)]);
       if (!lookup.rows[0]) throw roomMissing();
@@ -287,7 +310,8 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         [member.id, connectionId, new Date(time + leaseMs), new Date(time + sessionTtlMs), new Date(time)]);
         await presence(client, room, time);
         const people = await active(client, room, time);
-        return { init: { type: 'init', room: publicRoom(room), self: publicMember(member), participants: people, entities: [], chat: room.chat }, cursor: String(room.event_seq), connectionId };
+        return { init: { type: 'init', room: publicRoom(room), self: publicMember(member), participants: people, entities: [], chat: room.chat }, cursor: String(room.event_seq), connectionId,
+          rosterVersion: String(room.roster_version), capabilities: { ...protocolCapabilities('poll'), targetedEvents: true, signalIdempotency: true } };
       }));
     }
 
@@ -295,7 +319,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
       const after = url.searchParams.get('after') ?? '0';
       if (!/^\d{1,19}$/.test(after) || BigInt(after) > 9223372036854775807n) throw error(400, 'INVALID_CURSOR', 'Invalid event cursor.');
       return json(await connection(async client => {
-        const room = await roomRow(client, id, time, true, false);
+        let room = await roomRow(client, id, time, true, false);
         const member = await memberRow(client, room, request, time);
         checkConnection(member, request, time);
         if (room.ended_at) return { events: [{ sequence: String(room.event_seq), message: { type: 'ended' } }], cursor: String(room.event_seq), participants: [] };
@@ -317,21 +341,47 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
             RETURNING member.id`, [member.id, new Date(refreshedAt + leaseMs), request.headers.get('x-common-connection'), new Date(refreshedAt)]);
           if (!renewed.rowCount) await failedRenewal(client, room, request);
         }
-        // Advance across all rows, including messages intended for another peer.
-        const { rows } = await client.query(`SELECT seq, target_id, except_id, payload, created_at < $3 AS expired
-          FROM common_events WHERE room_id = $1 AND seq > $2 ORDER BY seq LIMIT 500`, [room.id, after, new Date(time - eventTtlMs)]);
-        // Sequences are contiguous until pruned, so a gap or an expired row means
-        // this cursor fell behind retained history, even before the sweep runs.
-        if (rows.length ? BigInt(rows[0].seq) !== BigInt(after) + 1n || rows.some(event => event.expired) : BigInt(after) < BigInt(room.event_seq)) throw resync();
-        const cursor = rows.length ? String(rows[rows.length - 1].seq) : String(room.event_seq);
-        const events = rows.filter(event => (!event.target_id || event.target_id === member.id) && event.except_id !== member.id)
-          .map(event => ({ sequence: String(event.seq), message: event.payload }));
-        return { events, cursor, participants: await active(client, room, time) };
+        room = await refreshRosterDeadline(client, room, now());
+        // Bounds, retention checks and both recipient ranges share one MVCC
+        // snapshot. Concurrent pruning cannot create a silent gap between reads.
+        const { rows: [batch] } = await client.query(`SELECT room.event_seq, room.event_floor, room.ended_at, room.roster_version,
+          (SELECT MIN(seq) FROM common_events WHERE room_id = room.id AND seq > $2) AS first_seq,
+          EXISTS(SELECT 1 FROM common_events WHERE room_id = room.id AND seq > $2
+            AND seq <= room.event_seq AND created_at < $4) AS expired,
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('seq', event.seq::text, 'payload', event.payload) ORDER BY event.seq) FROM (
+            (SELECT seq, payload FROM common_events WHERE room_id = room.id AND seq > $2 AND seq <= room.event_seq
+              AND target_id IS NULL AND except_id IS DISTINCT FROM $3 ORDER BY seq LIMIT $5)
+            UNION ALL
+            (SELECT seq, payload FROM common_events WHERE room_id = room.id AND seq > $2 AND seq <= room.event_seq
+              AND target_id = $3 AND except_id IS DISTINCT FROM $3 ORDER BY seq LIMIT $5)
+          ) event), '[]'::jsonb) AS events
+          FROM common_rooms room WHERE room.id = $1`, [room.id, after, member.id, new Date(time - eventTtlMs), EVENT_BATCH_SIZE + 1]);
+        if (!batch) throw roomMissing();
+        if (batch.ended_at) return { events: [{ sequence: String(batch.event_seq), message: { type: 'ended' } }], cursor: String(batch.event_seq), participants: [], rosterVersion: String(room.roster_version) };
+        if (BigInt(after) < BigInt(batch.event_floor) || BigInt(after) > BigInt(batch.event_seq) || batch.expired ||
+          (BigInt(after) < BigInt(batch.event_seq) && (batch.first_seq === null || BigInt(batch.first_seq) !== BigInt(after) + 1n))) throw resync();
+        const candidates = batch.events.sort((a, b) => BigInt(a.seq) < BigInt(b.seq) ? -1 : 1);
+        const events = [];
+        let bytes = 0;
+        for (const event of candidates) {
+          const size = Buffer.byteLength(JSON.stringify(event.payload));
+          if (events.length >= EVENT_BATCH_SIZE || (events.length && bytes + size > EVENT_BATCH_BYTES)) break;
+          events.push({ sequence: event.seq, message: event.payload }); bytes += size;
+        }
+        const hasMore = events.length < candidates.length;
+        const cursor = hasMore ? events.at(-1).sequence : String(batch.event_seq);
+        const version = String(batch.roster_version);
+        // A catch-up page can contain older presence snapshots. Restore the
+        // current roster after delivering those snapshots even if its version was
+        // already supplied on a previous partial page.
+        const historicalRoster = events.some(event => event.message.type === 'participants' && String(event.message.rosterVersion) !== version);
+        const unchanged = url.searchParams.get('rosterVersion') === version && !historicalRoster;
+        return { events, cursor, hasMore, rosterVersion: version, ...(!unchanged ? { participants: await active(client, room, now()) } : {}) };
       }));
     }
 
     if (method === 'POST' && (action === 'messages' || action === 'leave')) {
-      const input = await body(request);
+      const input = action === 'leave' ? await body(request) : normalizeEnvelope(await body(request), { maxBytes: MAX_BODY });
       return json(await transaction(async client => {
         const room = await roomRow(client, id, time);
         const member = await memberRow(client, room, request, time);
@@ -359,16 +409,28 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         [member.id, reset ? new Date(time) : member.rate_start, count, total, new Date(refreshedAt + leaseMs), request.headers.get('x-common-connection'), new Date(refreshedAt)]);
         if (!renewed.rowCount) await failedRenewal(client, room, request);
         if (input.type === 'signal') {
-          if (typeof input.to !== 'string' || input.to === member.id || !object(input.data)) throw error(400, 'INVALID_SIGNAL', 'Invalid connection signal.');
+          normalizeSignal(input, { senderId: member.id });
+          let requestHash = null;
+          if (input.requestId !== undefined) {
+            if (typeof input.requestId !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(input.requestId)) throw error(400, 'INVALID_REQUEST_ID', 'Invalid signal request ID.');
+            requestHash = hash(JSON.stringify({ to: input.to, data: input.data }));
+            const { rows: [previous] } = await client.query(`SELECT request_hash FROM common_events WHERE room_id = $1
+              AND sender_id = $2 AND connection_id = $3 AND request_id = $4`, [room.id, member.id, member.connection_id, input.requestId]);
+            if (previous) {
+              if (previous.request_hash !== requestHash) throw error(409, 'REQUEST_ID_REUSED', 'Signal request ID was already used for different content.');
+              return { ok: true, duplicate: true };
+            }
+          }
           const target = await client.query('SELECT id FROM common_members WHERE room_id = $1 AND id = $2 AND connection_id IS NOT NULL AND lease_until > $3 AND expires_at > $3', [room.id, input.to, new Date(time)]);
           if (!target.rows.length) throw error(400, 'INVALID_SIGNAL', 'Signal recipient is unavailable.');
-          await append(client, room, { type: 'signal', from: member.id, data: input.data }, time, { target: input.to });
+          await append(client, room, { type: 'signal', from: member.id, data: input.data }, time, { target: input.to,
+            sender: member.id, connection: member.connection_id, requestId: input.requestId ?? null, requestHash });
         } else if (input.type === 'cursor') {
-          if (![input.x, input.y].every(value => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 100000)) throw error(400, 'INVALID_CURSOR', 'Invalid cursor position.');
+          normalizeCursor(input);
           await append(client, room, { type: 'cursor', participantId: member.id, x: input.x, y: input.y }, time, { except: member.id });
         } else if (input.type === 'chat') {
-          if (typeof input.text !== 'string' || !input.text.trim() || input.text.trim().length > 2000) throw error(400, 'INVALID_CHAT', 'Messages must be 1–2000 characters.');
-          const entry = { id: randomId(10), participantId: member.id, name: member.name, text: input.text.trim(), createdAt: time };
+          const text = normalizeChat(input.text);
+          const entry = { id: randomId(10), participantId: member.id, name: member.name, text, createdAt: time };
           const chat = [...room.chat, entry].slice(-100);
           await client.query('UPDATE common_rooms SET chat = $2::jsonb WHERE id = $1', [room.id, JSON.stringify(chat)]);
           await append(client, room, { type: 'chat', message: entry }, time);

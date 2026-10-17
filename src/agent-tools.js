@@ -1,4 +1,5 @@
 import './agent-tools.css';
+import { AGENT_CAPABILITIES } from './agent-api.js';
 
 const MAX_IMAGE_BYTES = Math.floor(1.3 * 1024 * 1024);
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif']);
@@ -81,6 +82,7 @@ export function installAgentTools({
   api,
   capture,
   walkthrough,
+  permissions,
   getEnabled = () => false,
   onEnabledChange = () => {},
   onRequestWindowShare = () => {},
@@ -92,6 +94,7 @@ export function installAgentTools({
   let captureBusy = false;
   let recordingFingerprint = '';
   let opener = null;
+  let permissionFingerprint = '';
 
   const trigger = button('Agent tools', 'button agent-tools-trigger');
   trigger.setAttribute('aria-label', 'Agent tools');
@@ -122,7 +125,7 @@ export function installAgentTools({
   enable.id = 'agent-enable';
   enable.setAttribute('aria-label', 'Enable agent control');
   const consentCopy = element('span');
-  consentCopy.append(element('strong', '', 'Enable agent control'), element('small', '', 'Allow canvas edits in this tab. You can turn this off at any time.'));
+  consentCopy.append(element('strong', '', 'Enable agent control'), element('small', '', 'Choose what your agent can do and when access ends.'));
   consent.append(enable, consentCopy);
   const permissionStatus = element('p', 'agent-permission-status');
   permissionStatus.setAttribute('aria-live', 'polite');
@@ -131,6 +134,31 @@ export function installAgentTools({
   instructions.target = '_blank';
   instructions.rel = 'noopener';
   scroll.append(intro, consent, permissionStatus, instructions);
+
+  const grantsSection = element('fieldset', 'agent-grants');
+  grantsSection.append(element('legend', '', 'Agent permissions'));
+  const grantInputs = new Map();
+  for (const [capability, detail] of Object.entries(AGENT_CAPABILITIES)) {
+    const row = element('label', 'agent-grant-row'); const input = element('input');
+    input.type = 'checkbox'; input.id = `agent-grant-${capability}`;
+    input.checked = ['inspect', 'canvas-write'].includes(capability);
+    input.setAttribute('aria-label', detail.title);
+    const text = element('span'); text.append(element('strong', '', detail.title), element('small', '', detail.description));
+    row.append(input, text); grantsSection.append(row); grantInputs.set(capability, input);
+    input.addEventListener('change', () => {
+      if (capability !== 'inspect' && input.checked) grantInputs.get('inspect').checked = true;
+      if (capability === 'inspect' && !input.checked) for (const [key, control] of grantInputs) if (key !== 'inspect') control.checked = false;
+    });
+  }
+  const durationLabel = element('label', 'agent-field-label', 'Access duration'); durationLabel.htmlFor = 'agent-grant-duration';
+  const duration = element('select', 'agent-source-select'); duration.id = 'agent-grant-duration';
+  for (const minutes of [15, 30, 60]) { const option = element('option', '', `${minutes} minutes`); option.value = String(minutes * 60_000); duration.append(option); }
+  const grantActions = element('div', 'agent-actions');
+  const applyGrant = button('Apply permissions', 'agent-button agent-primary'); applyGrant.id = 'agent-grant-apply';
+  const revokeGrant = button('Revoke access'); revokeGrant.id = 'agent-grant-revoke';
+  grantActions.append(applyGrant, revokeGrant);
+  grantsSection.append(durationLabel, duration, grantActions, element('p', 'agent-small', 'Reading is included with other permissions. Access ends when this canvas session changes.'));
+  grantsSection.hidden = !permissions; scroll.append(grantsSection);
 
   const commandSection = element('section', 'agent-section');
   commandSection.setAttribute('aria-labelledby', 'agent-command-heading');
@@ -306,7 +334,7 @@ export function installAgentTools({
 
   function refreshRecordings() {
     const items = capture?.list?.() || [];
-    const fingerprint = JSON.stringify(items);
+    const fingerprint = JSON.stringify([items, permissions?.state?.().revision]);
     if (fingerprint === recordingFingerprint) return;
     recordingFingerprint = fingerprint;
     recordings.replaceChildren();
@@ -340,13 +368,22 @@ export function installAgentTools({
 
   function refresh() {
     if (destroyed) return;
-    const enabled = Boolean(getEnabled());
+    const grant = permissions?.state?.();
+    const enabled = Boolean(getEnabled()) && (!permissions || !!grant?.active);
+    const has = capability => enabled && (!permissions || grant.capabilities.includes(capability));
     enable.checked = enabled;
-    permissionStatus.textContent = enabled ? 'Agent control is on for this tab.' : 'Agent control is off. Inspect shows connection status until you enable control.';
+    permissionStatus.textContent = enabled ? `Agent access ends at ${new Date(grant?.expiresAt || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+      : grant?.reason === 'expired' ? 'Agent access expired. Choose permissions to allow access again.' : 'Agent control is off. Inspect shows connection status until you grant access.';
+    const nextPermissionFingerprint = JSON.stringify([grant?.revision, grant?.active]);
+    if (nextPermissionFingerprint !== permissionFingerprint) {
+      permissionFingerprint = nextPermissionFingerprint;
+      if (grant?.active) for (const [capability, input] of grantInputs) input.checked = grant.capabilities.includes(capability);
+    }
+    revokeGrant.disabled = !grant?.active;
     permissionStatus.classList.toggle('is-enabled', enabled);
     trigger.classList.toggle('is-enabled', enabled);
     run.disabled = !enabled || commandBusy;
-    imageFile.disabled = !enabled || commandBusy;
+    imageFile.disabled = !has('canvas-write') || commandBusy;
     inspect.disabled = commandBusy;
     run.textContent = commandBusy ? 'Running…' : 'Run command';
     const state = capture?.status?.() || { state: 'idle', elapsedMs: 0 };
@@ -387,10 +424,20 @@ export function installAgentTools({
   closeButton.addEventListener('click', close);
   liveText.addEventListener('click', open);
   enable.addEventListener('change', () => {
-    try { onEnabledChange(enable.checked); }
+    try {
+      onEnabledChange(enable.checked);
+      if (enable.checked) permissions?.grant({ capabilities: [...grantInputs].filter(([, input]) => input.checked).map(([capability]) => capability), ttlMs: Number(duration.value) });
+      else permissions?.revoke('disabled');
+    }
     catch (error) { showError(error); }
     refresh();
   });
+  applyGrant.addEventListener('click', () => {
+    try { onEnabledChange(true); permissions?.grant({ capabilities: [...grantInputs].filter(([, input]) => input.checked).map(([capability]) => capability), ttlMs: Number(duration.value) }); }
+    catch (error) { showError(error); }
+    refresh();
+  });
+  revokeGrant.addEventListener('click', () => { permissions?.revoke('revoked'); onEnabledChange(false); refresh(); });
   loadExample.addEventListener('click', () => {
     command.value = JSON.stringify(EXAMPLES[examples.value], null, 2);
     command.focus();
@@ -441,6 +488,8 @@ export function installAgentTools({
       Promise.resolve(pending).catch(showError);
     } catch (error) { showError(error); }
   });
+  // These direct buttons are human controls. Agent-triggered capture continues
+  // through the scoped API, while people can record without granting an agent.
   start.addEventListener('click', () => captureAction(() => capture.start({ source: source.value })));
   stop.addEventListener('click', () => captureAction(() => capture.stop()));
   liveStop.addEventListener('click', () => captureAction(() => capture.stop()));
@@ -456,8 +505,9 @@ export function installAgentTools({
   };
   document.addEventListener('keydown', keyHandler);
   const timer = setInterval(() => {
-    if (capture?.status?.().state === 'recording') refresh();
+    if (capture?.status?.().state === 'recording' || permissions?.state?.().active) refresh();
   }, 1000);
+  const unsubscribePermissions = permissions?.subscribe?.(() => refresh());
   refresh();
   return {
     open,
@@ -467,6 +517,7 @@ export function installAgentTools({
       if (destroyed) return;
       destroyed = true;
       clearInterval(timer);
+      unsubscribePermissions?.();
       document.removeEventListener('keydown', keyHandler);
       trigger.remove();
       panel.remove();

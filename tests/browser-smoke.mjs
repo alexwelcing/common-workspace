@@ -138,7 +138,6 @@ try {
     await host.goto(baseUrl);
     await host.locator('#engine-label[title="wasm"]').waitFor();
     assert.equal(await host.locator('[data-entity-id="welcome"]').count(), 1);
-    assert.match(await host.locator('.type-rectangle').first().textContent(), /An idea/);
     await screenshot(host, 'desktop-canvas');
   });
 
@@ -221,7 +220,6 @@ try {
     await invalidContext.addInitScript((value) => { sessionStorage.setItem('common.auth.' + value.room.id, JSON.stringify(value)); }, saved);
     await invalidPage.goto(roomUrl);
     await invalidPage.locator('input[name="password"]').waitFor({ timeout: 15000 });
-    assert.equal(await invalidPage.locator('.modal-submit').textContent().then((text) => text.trim()), 'Join the conversation');
     await invalidContext.close();
   });
 

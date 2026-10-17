@@ -53,7 +53,7 @@ export async function renderMermaid(source) {
  * The UI MUST obtain explicit consent before assigning it to an image or fetch.
  * Calling this encoder alone does not make a network request.
  */
-export function plantUmlUrl(source) {
+export function plantUmlUrl(source, endpoint = 'https://www.plantuml.com/plantuml') {
   const text = checkedSource(source);
   if (/!(?:include[a-z_]*|import)\b/i.test(text) ||
       /%(?:load_json|load_yaml|load_csv|file_exists|getenv)\s*\(/i.test(text)) {
@@ -72,5 +72,7 @@ export function plantUmlUrl(source) {
     encoded += alphabet[((b & 15) << 2) | (c >> 6)];
     encoded += alphabet[c & 63];
   }
-  return `https://www.plantuml.com/plantuml/svg/${encoded}`;
+  const base = new URL(endpoint);
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) throw new Error('Invalid PlantUML renderer address.');
+  return `${base.href.replace(/\/+$/, '')}/svg/${encoded}`;
 }

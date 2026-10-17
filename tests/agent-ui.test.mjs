@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { Board } from '../src/board.js';
-import { createAgentAPI } from '../src/agent-api.js';
+import { createAgentAPI, createAgentPermissions } from '../src/agent-api.js';
 import { installAgentTools } from '../src/agent-tools.js';
 import { SharedCanvas } from '../src/shared-canvas.js';
 import { Walkthrough } from '../src/walkthrough.js';
@@ -36,7 +36,7 @@ function dom(t) {
   return { window, cleanup };
 }
 
-function setup(t) {
+function setup(t, { scopedPermissions = false, now } = {}) {
   const { window, cleanup } = dom(t);
   document.body.innerHTML = '<header></header><main id="canvas"></main>';
   const el = document.querySelector('#canvas');
@@ -64,19 +64,24 @@ function setup(t) {
   };
   let tools;
   const walkthrough = new Walkthrough({ getBoard: () => board, onChange: () => tools?.refresh() });
-  const api = createAgentAPI({ getBoard: () => board, getModel: () => model, getContext: () => context, recording: capture, walkthrough });
+  const permissions = scopedPermissions ? createAgentPermissions({ getContext: () => context, getSession: () => model, ...(now ? { now } : {}),
+    onChange: () => tools?.refresh(), onRevoke: reason => {
+      void capture.stop(); walkthrough.stop(); if (reason !== 'permissions-reduced') context.enabled = false; tools?.refresh();
+    },
+  }) : undefined;
+  const api = createAgentAPI({ getBoard: () => board, getModel: () => model, getContext: () => context, recording: capture, walkthrough, permissions });
   const statuses = [];
   tools = installAgentTools({
-    api, capture, walkthrough, getEnabled: () => context.enabled,
+    api, capture, walkthrough, permissions, getEnabled: () => context.enabled,
     onEnabledChange: enabled => { context.enabled = enabled; },
     onRequestWindowShare: () => { calls.push(['share-window']); windowShared = true; tools.refresh(); },
     onStatus: message => statuses.push(message), buttonParent: document.querySelector('header'),
   });
-  cleanup.push(() => { tools.destroy(); board.destroy(); model.destroy(); });
+  cleanup.push(() => { permissions?.destroy(); tools.destroy(); board.destroy(); model.destroy(); });
   const query = selector => document.querySelector(selector);
   function enable(value = true) { query('#agent-enable').checked = value; query('#agent-enable').dispatchEvent(new window.Event('change', { bubbles: true })); }
   async function run(command) { query('#agent-command').value = typeof command === 'string' ? command : JSON.stringify(command); query('#agent-run').click(); await settle(); return query('#agent-result').textContent; }
-  return { window, query, board, model, api, context, tools, capture, walkthrough, calls, statuses, enable, run };
+  return { window, query, board, model, api, context, tools, capture, walkthrough, permissions, calls, statuses, enable, run };
 }
 
 test('agent panel requires visible opt-in before JSON commands create shared objects and rendered canvas nodes', async (t) => {
@@ -214,6 +219,37 @@ test('manual recording controls remain available with agent control disabled and
   assert.equal(env.context.enabled, false);
 });
 
+test('scoped grant controls keep manual capture separate and expiry stops agent capture and walkthroughs', async (t) => {
+  let time = 100000;
+  const env = setup(t, { scopedPermissions: true, now: () => time });
+  assert.equal(env.query('#agent-record-start').disabled, false);
+  env.query('#agent-record-start').click(); await settle();
+  assert.equal(env.capture.status().state, 'recording', 'a human can record before granting an agent access');
+  env.query('#agent-record-stop').click(); await settle();
+  env.enable();
+  assert.deepEqual(env.api.state().grants.capabilities, ['inspect', 'canvas-write']);
+  assert.equal(env.api.state().recording, undefined);
+  assert.equal((await env.api.execute({ action: 'recording.start', source: 'canvas' })).error.code, 'PERMISSION_DENIED');
+  env.query('[aria-label="Download Product demo"]').click(); await settle();
+  assert.deepEqual(env.calls.at(-1), ['download', 'recording-1'], 'human downloads do not require an agent recording grant');
+  for (const capability of ['media-capture', 'recording']) {
+    env.query(`#agent-grant-${capability}`).checked = true;
+    env.query(`#agent-grant-${capability}`).dispatchEvent(new env.window.Event('change', { bubbles: true }));
+  }
+  env.query('#agent-grant-duration').value = '900000'; env.query('#agent-grant-apply').click();
+  assert.equal(env.api.state().grants.expiresAt, 1000000);
+  assert.equal((await env.api.execute({ action: 'recording.start', source: 'canvas' })).ok, true);
+  assert.equal((await env.api.execute({ action: 'walkthrough.load', steps: [{ title: 'A scoped walkthrough' }] })).ok, true);
+  assert.equal(env.capture.status().state, 'recording'); assert.equal(env.walkthrough.state().active, true);
+  time = 1000001; env.permissions.refresh(); await settle();
+  assert.equal(env.capture.status().state, 'idle'); assert.equal(env.walkthrough.state().active, false);
+  assert.equal(env.context.enabled, false); assert.equal(env.query('#agent-enable').checked, false);
+  assert.equal(env.api.state().entities, undefined); assert.equal(env.api.state().grants.active, false);
+  assert.match(env.query('.agent-permission-status').textContent, /expired/);
+  assert.equal(env.query('#agent-run').disabled, true);
+  assert.equal(env.query('#agent-record-start').disabled, false, 'manual capture remains available after agent access expires');
+});
+
 test('the full application boots with opt-in agent control and shares a personal window only after an explicit click', async (t) => {
   const { window, cleanup } = dom(t);
   document.body.innerHTML = '<div id="app"></div><div id="modal-root"></div><div id="toasts"></div>';
@@ -265,6 +301,16 @@ test('the full application boots with opt-in agent control and shares a personal
   const state = window.commonAgent.state();
   assert.equal(state.enabled, true); assert.equal(state.sandbox, true);
   assert.ok(state.entities.some(entity => entity.id === 'welcome'));
+  assert.deepEqual(state.grants.capabilities, ['inspect', 'canvas-write']);
+  assert.equal(state.recording, undefined, 'the default grant does not expose recording metadata');
+  assert.equal((await window.commonAgent.execute({ action: 'recording.list' })).error.code, 'PERMISSION_DENIED');
+  assert.equal((await window.commonAgent.execute({ action: 'capture.snapshot' })).error.code, 'PERMISSION_DENIED');
+  for (const capability of ['media-capture', 'recording']) {
+    const input = document.querySelector(`#agent-grant-${capability}`); input.checked = true;
+    input.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  document.querySelector('#agent-grant-apply').click();
+  assert.ok(window.commonAgent.state().grants.capabilities.includes('recording'));
   document.querySelector('#agent-command').value = JSON.stringify({ action: 'canvas.add', entity: { id: 'boot-check', type: 'text', text: 'Real application integration' } });
   document.querySelector('#agent-run').click(); await settle();
   assert.equal(JSON.parse(document.querySelector('#agent-result').textContent).ok, true);

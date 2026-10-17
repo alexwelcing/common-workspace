@@ -1,4 +1,5 @@
 const MiB = 1024 * 1024;
+const captureError = (message, code) => Object.assign(new Error(message), { code });
 const SAFE_RASTER = /^data:image\/(?:png|jpe?g|webp|gif|avif);base64,/i;
 const MIME_TYPES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -16,6 +17,10 @@ export class CanvasCapture {
     maxDurationMs = 5 * 60 * 1000, maxRecordingBytes = 100 * MiB, maxTotalBytes = 150 * MiB, maxRecords = 3, fps = 12,
   } = {}) {
     Object.assign(this, { getBoard, getWindowStream, onChange, onStatus, document, MediaRecorder, Image, XMLSerializer, URL, Blob, now, setInterval, clearInterval, setTimeout, clearTimeout });
+    // Browser timer methods require Window as their receiver. Calling an
+    // unbound method through a capture instance raises Illegal invocation.
+    this.setInterval = setInterval.bind(globalThis); this.clearInterval = clearInterval.bind(globalThis);
+    this.setTimeout = setTimeout.bind(globalThis); this.clearTimeout = clearTimeout.bind(globalThis);
     this.getSession = getSession || (() => this.getBoard());
     this.limits = { maxDurationMs: Math.max(1, Math.min(300000, maxDurationMs)), maxRecordingBytes: Math.max(1, Math.min(100 * MiB, maxRecordingBytes)), maxTotalBytes: Math.max(1, Math.min(150 * MiB, maxTotalBytes)), maxRecords: Math.max(1, Math.min(3, Math.floor(maxRecords))) };
     this.fps = Math.min(15, Math.max(1, fps));
@@ -28,27 +33,34 @@ export class CanvasCapture {
       elapsedMs: item ? Math.max(0, this.now() - item.startedAt) : 0, bytes: item?.bytes || 0, windowShared: !!liveVideo(this.getWindowStream()), recordings: this.records.size, retainedBytes: this._retainedBytes(), limits: { ...this.limits } };
   }
   _changed() { this.onChange(this.status()); }
-  _assertAlive() { if (this.destroyed) throw new Error('Capture has been closed.'); }
+  _assertAlive() { if (this.destroyed) throw captureError('Capture has been closed.', 'CAPTURE_CLOSED'); }
   _retainedBytes() { return [...this.records.values()].reduce((sum, item) => sum + item.blob.size, 0); }
   list() { return [...this.records.values()].map(item => ({ ...item.metadata })); }
+  /** Read an immutable saved Blob for an explicitly requested local export. */
+  getRecordingBlob(id) {
+    this._assertAlive();
+    const item = this.records.get(id);
+    if (!item) throw captureError('Recording not found.', 'RECORDING_NOT_FOUND');
+    return item.blob;
+  }
   _board() {
     const board = this.getBoard();
-    if (!board?.el || typeof board.listEntities !== 'function') throw new Error('Open the canvas before capturing it.');
+    if (!board?.el || typeof board.listEntities !== 'function') throw captureError('Open the canvas before capturing it.', 'CAPTURE_UNAVAILABLE');
     return board;
   }
   _canvas(board) {
     const canvas = this.document?.createElement('canvas');
-    if (!canvas?.getContext) throw new Error('Canvas capture is unavailable in this browser.');
+    if (!canvas?.getContext) throw captureError('Canvas capture is unavailable in this browser.', 'CAPTURE_UNSUPPORTED');
     const width = Math.max(1, finite(board.el.clientWidth, 1280)), height = Math.max(1, finite(board.el.clientHeight, 720));
     const scale = Math.min(1, 1920 / Math.max(width, height));
     canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
-    if (!canvas.getContext('2d')) throw new Error('Canvas capture is unavailable in this browser.');
+    if (!canvas.getContext('2d')) throw captureError('Canvas capture is unavailable in this browser.', 'CAPTURE_UNSUPPORTED');
     return canvas;
   }
 
   _assertSnapshot(board, session, isAllowed) {
     this._assertAlive();
-    if (this.getBoard() !== board || this.getSession() !== session || !isAllowed()) throw new Error('Snapshot was canceled because access or the session changed.');
+    if (this.getBoard() !== board || this.getSession() !== session || !isAllowed()) throw captureError('Snapshot was canceled because access or the session changed.', 'CAPTURE_CANCELLED');
   }
   async _prepareInitial(board, check) {
     if (typeof board.whenReadyForCapture === 'function') { await board.whenReadyForCapture(); check(); }
@@ -56,7 +68,7 @@ export class CanvasCapture {
   }
   async snapshot({ download = false, isAllowed = () => true } = {}) {
     this._assertAlive();
-    if (typeof isAllowed !== 'function') throw new Error('Snapshot access must be checked with a function.');
+    if (typeof isAllowed !== 'function') throw captureError('Snapshot access must be checked with a function.', 'CAPTURE_INVALID');
     const board = this._board(), session = this.getSession(), canvas = this._canvas(board);
     const check = () => this._assertSnapshot(board, session, isAllowed);
     check(); await this._prepareInitial(board, check);
@@ -71,7 +83,7 @@ export class CanvasCapture {
     this._assertAlive();
     if (pending.cancelled || this.pending !== pending || pending.generation !== this.generation || !pending.isAllowed()
       || this.getBoard() !== pending.board || this.getSession() !== pending.session || (pending.source === 'window' && this.getWindowStream() !== pending.stream)) {
-      throw new Error('Recording start was canceled because access, the session, or its source changed.');
+      throw captureError('Recording start was canceled because access, the session, or its source changed.', 'CAPTURE_CANCELLED');
     }
   }
   _cancelPending() {
@@ -82,11 +94,11 @@ export class CanvasCapture {
   }
   async start({ source = 'canvas', isAllowed = () => true } = {}) {
     this._assertAlive();
-    if (this.current || this.starting) throw new Error('A recording is already running.');
-    if (!['canvas', 'window'].includes(source)) throw new Error('Choose canvas or window as the recording source.');
-    if (typeof isAllowed !== 'function') throw new Error('Recording access must be checked with a function.');
-    if (!this.MediaRecorder) throw new Error('Video recording is unavailable in this browser.');
-    if (this.records.size >= this.limits.maxRecords || this._retainedBytes() >= this.limits.maxTotalBytes) throw new Error('Download and discard a saved recording before starting another.');
+    if (this.current || this.starting) throw captureError('A recording is already running.', 'RECORDING_BUSY');
+    if (!['canvas', 'window'].includes(source)) throw captureError('Choose canvas or window as the recording source.', 'RECORDING_INVALID');
+    if (typeof isAllowed !== 'function') throw captureError('Recording access must be checked with a function.', 'CAPTURE_INVALID');
+    if (!this.MediaRecorder) throw captureError('Video recording is unavailable in this browser.', 'RECORDING_UNSUPPORTED');
+    if (this.records.size >= this.limits.maxRecords || this._retainedBytes() >= this.limits.maxTotalBytes) throw captureError('Download and discard a saved recording before starting another.', 'RECORDING_LIMIT');
     const pending = { generation: ++this.generation, source, board: this.getBoard(), session: this.getSession(), stream: source === 'window' ? this.getWindowStream() : null, isAllowed, cancelled: false };
     pending.cancelledPromise = new Promise(resolve => { pending.cancel = resolve; });
     this.pending = pending; this.starting = true;
@@ -95,14 +107,14 @@ export class CanvasCapture {
       this._changed(); this._assertStart(pending);
       if (source === 'window') {
         stream = pending.stream;
-        if (!liveVideo(stream)) throw new Error('Share a window using the screen-share button before recording it.');
+        if (!liveVideo(stream)) throw captureError('Share a window using the screen-share button before recording it.', 'WINDOW_NOT_SHARED');
       } else {
         const board = this._board(); canvas = this._canvas(board);
-        if (typeof canvas.captureStream !== 'function') throw new Error('Canvas recording is unavailable in this browser.');
+        if (typeof canvas.captureStream !== 'function') throw captureError('Canvas recording is unavailable in this browser.', 'RECORDING_UNSUPPORTED');
         await Promise.race([this._prepareInitial(board, () => this._assertStart(pending)), pending.cancelledPromise]);
         this._assertStart(pending); this._drawFrame(canvas, board);
         stream = canvas.captureStream(this.fps); ownedTracks = stream.getTracks();
-        if (!liveVideo(stream)) throw new Error('The canvas recording stream could not be started.');
+        if (!liveVideo(stream)) throw captureError('The canvas recording stream could not be started.', 'RECORDING_FAILED');
       }
       this._assertStart(pending);
       const mimeType = MIME_TYPES.find(type => this.MediaRecorder.isTypeSupported?.(type));
@@ -123,7 +135,7 @@ export class CanvasCapture {
         if (!item.stopping && this.now() - item.startedAt >= this.limits.maxDurationMs) { item.reason = 'duration-limit'; this._requestStop(item); }
       };
       recorder.onstop = () => this._finish(item);
-      recorder.onerror = event => { item.error = new Error(event.error?.message || 'The browser could not finish this recording.'); this._requestStop(item); };
+      recorder.onerror = event => { item.error = captureError(event.error?.message || 'The browser could not finish this recording.', 'RECORDING_FAILED'); this._requestStop(item); };
       this._assertStart(pending);
       this.current = item;
       recorder.start(500);
@@ -194,7 +206,7 @@ export class CanvasCapture {
     this._cleanup(item);
     if (this.current === item) this.current = null;
     if (item.error) { this.onStatus(item.error.message); item.reject(item.error); }
-    else if (!blob.size) { const error = new Error('The recording contained no video data. Try recording for a little longer.'); this.onStatus(error.message); item.reject(error); }
+    else if (!blob.size) { const error = captureError('The recording contained no video data. Try recording for a little longer.', 'RECORDING_EMPTY'); this.onStatus(error.message); item.reject(error); }
     else {
       if (!this.destroyed) this.records.set(item.id, { blob, metadata });
       item.resolve({ ...metadata });
@@ -208,7 +220,7 @@ export class CanvasCapture {
   }
   download(id) {
     this._assertAlive(); const item = this.records.get(id);
-    if (!item) throw new Error('Recording not found.');
+    if (!item) throw captureError('Recording not found.', 'RECORDING_NOT_FOUND');
     const url = this.URL.createObjectURL(item.blob); this.urls.add(url);
     this._downloadUrl(url, item.metadata.filename);
     // Allow the browser time to start the local download before releasing its URL.

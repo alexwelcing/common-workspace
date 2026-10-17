@@ -1,7 +1,8 @@
 FROM oven/bun:1.4.3 AS build
 WORKDIR /app
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca bun install --frozen-lockfile; else bun install --frozen-lockfile; fi
 COPY . .
 RUN bun run build
 
@@ -12,9 +13,12 @@ ENV HOST=0.0.0.0
 ENV PORT=3001
 ENV DATA_FILE=/data/rooms.json
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production && mkdir -p /data && chown bun:bun /data
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca bun install --frozen-lockfile --production; else bun install --frozen-lockfile --production; fi \
+    && mkdir -p /data && chown bun:bun /data
 COPY --from=build --chown=bun:bun /app/dist ./dist
 COPY --chown=bun:bun server.mjs ./server.mjs
+COPY --chown=bun:bun lib ./lib
 USER bun
 VOLUME ["/data"]
 EXPOSE 3001

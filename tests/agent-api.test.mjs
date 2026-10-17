@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentAPI } from '../src/agent-api.js';
+import { AGENT_CAPABILITIES, createAgentAPI, createAgentPermissions, getAgentManifest } from '../src/agent-api.js';
 import { SharedCanvas } from '../src/shared-canvas.js';
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 const shape = (id, patch = {}) => ({ id, type: 'rectangle', x: 10, y: 20, width: 220, height: 130, ...patch });
-function setup(overrides = {}) {
+function setup(overrides = {}, options = {}) {
   const context = { enabled: true, sandbox: false, connected: true, room: { id: 'room-one', name: 'Demo', secret: 'hidden' }, participantId: 'owner', participants: [{ id: 'owner', name: 'Owner', token: 'secret-token' }], ...overrides };
   let model = new SharedCanvas();
   const board = { readOnly: false, zoom: 1, pan: { x: 0, y: 0 }, el: { clientWidth: 1000, clientHeight: 700 }, canEdit: () => true, selectedId: null,
@@ -16,8 +16,11 @@ function setup(overrides = {}) {
   recording.status = () => ({ state: 'idle' });
   const walkthrough = Object.fromEntries(['load', 'next', 'previous', 'stop'].map(method => [method, (...args) => { calls.push([method, ...args]); return { method }; }]));
   walkthrough.state = () => ({ active: false });
-  const api = createAgentAPI({ getBoard: () => board, getModel: () => model, getContext: () => context, recording, walkthrough });
-  return { api, context, board, get model() { return model; }, replaceModel(next = new SharedCanvas()) { model.destroy(); model = next; }, recording, walkthrough, calls, destroy() { model.destroy(); } };
+  const permissions = createAgentPermissions({ getContext: () => context, getSession: () => model, ...options });
+  const grant = (settings = {}) => permissions.grant({ capabilities: options.capabilities || Object.keys(AGENT_CAPABILITIES), ...settings });
+  if (context.enabled && (context.sandbox || context.connected)) grant();
+  const api = createAgentAPI({ getBoard: () => board, getModel: () => model, getContext: () => context, recording, walkthrough, permissions });
+  return { api, context, board, permissions, grant, get model() { return model; }, replaceModel(next = new SharedCanvas()) { model.destroy(); model = next; }, recording, walkthrough, calls, destroy() { permissions.destroy(); model.destroy(); } };
 }
 
 test('agent commands write the shared model and arrive in another peer with field-level concurrency intact', async () => {
@@ -46,6 +49,7 @@ test('opt-in and live connection gate content reads and writes; disabled state e
   assert.equal((await env.api.execute({ action: 'canvas.inspect' })).error.code, 'DISCONNECTED');
   assert.equal(env.api.state().entities, undefined);
   env.context.sandbox = true;
+  env.grant();
   assert.equal((await env.api.execute({ action: 'canvas.inspect' })).ok, true);
   env.destroy();
 });
@@ -60,6 +64,7 @@ test('read-only state, per-object edit policy, and screen ownership are enforced
   assert.equal((await env.api.execute({ action: 'canvas.update', id: 'screen', patch: { title: 'Hijacked' } })).error.code, 'FORBIDDEN');
   assert.equal((await env.api.execute({ action: 'canvas.lock', id: 'screen', locked: true })).error.code, 'FORBIDDEN');
   env.context.participantId = 'guest';
+  env.grant();
   assert.equal((await env.api.execute({ action: 'canvas.update', id: 'screen', patch: { title: 'My screen' } })).ok, true);
   assert.equal(env.model.get('screen').title, 'My screen');
   assert.equal(env.model.get('feature').x, 10); env.destroy();
@@ -126,6 +131,7 @@ test('request cache follows room identity and is bounded to 100 completed reques
   const command = { action: 'canvas.add', requestId: 'stable', entity: shape('feature') };
   assert.equal((await env.api.execute(command)).ok, true);
   env.context.room = { id: 'room-two', name: 'Different session' }; env.replaceModel();
+  env.grant();
   assert.equal((await env.api.execute(command)).ok, true); assert.equal(env.model.all().length, 1);
   let count = 0; env.recording.list = () => ({ count: ++count });
   for (let i = 0; i < 101; i++) await env.api.execute({ action: 'recording.list', requestId: `list-${i}` });
@@ -277,4 +283,94 @@ test('invalid JSON inputs and service failures return structured errors instead 
   env.recording.stop = () => { throw new Error('secret-provider-credential'); };
   const error = await env.api.execute({ action: 'recording.stop' }); assert.equal(error.ok, false); assert.equal(error.error.message.includes('secret-provider-credential'), false);
   assert.equal(env.model.all().length, 0); env.destroy();
+});
+
+test('explicit capability grants separate reading, editing, screen capture and recording', async () => {
+  const env = setup({}, { capabilities: ['inspect'] }); env.model.setLocal(shape('feature', { text: 'Read me' }));
+  assert.equal((await env.api.execute({ action: 'canvas.inspect' })).ok, true);
+  for (const command of [{ action: 'canvas.update', id: 'feature', patch: { text: 'Blocked' } }, { action: 'capture.snapshot' }, { action: 'recording.start', source: 'canvas' }, { action: 'recording.list' }]) {
+    assert.equal((await env.api.execute(command)).error.code, 'PERMISSION_DENIED');
+  }
+  assert.equal(env.api.state().recording, undefined);
+  env.permissions.grant();
+  assert.deepEqual(env.permissions.state().capabilities, ['inspect', 'canvas-write']);
+  assert.equal((await env.api.execute({ action: 'canvas.update', id: 'feature', patch: { text: 'Allowed' } })).ok, true);
+  assert.equal((await env.api.execute({ action: 'capture.snapshot' })).error.code, 'PERMISSION_DENIED');
+  env.permissions.grant({ capabilities: ['media-capture'] });
+  assert.deepEqual(env.permissions.state().capabilities, ['inspect', 'media-capture']);
+  assert.equal((await env.api.execute({ action: 'capture.snapshot' })).ok, true);
+  assert.equal((await env.api.execute({ action: 'recording.start', source: 'canvas' })).error.code, 'PERMISSION_DENIED');
+  env.permissions.grant({ capabilities: ['recording'] });
+  assert.equal((await env.api.execute({ action: 'recording.list' })).ok, true);
+  assert.equal((await env.api.execute({ action: 'recording.start', source: 'canvas' })).error.code, 'PERMISSION_DENIED');
+  env.destroy();
+});
+
+test('grant expiry revokes content access and notifies the trusted UI exactly once', async () => {
+  let time = 100000; const revoked = [];
+  const env = setup({}, { now: () => time, onRevoke: reason => revoked.push(reason) });
+  env.permissions.grant({ capabilities: ['inspect'], ttlMs: 1000 });
+  env.model.setLocal(shape('private', { text: 'Secret after deadline' }));
+  assert.equal(env.api.state().grants.expiresAt, 101000);
+  time = 101001;
+  assert.equal((await env.api.execute({ action: 'canvas.inspect' })).error.code, 'GRANT_EXPIRED');
+  assert.equal(env.api.state().entities, undefined); assert.equal(env.api.describe().grants.active, false);
+  env.permissions.refresh(); assert.deepEqual(revoked.filter(reason => reason === 'expired'), ['expired']);
+  env.destroy();
+});
+
+test('grants are revoked on scope changes and require a new trusted grant before the new room is readable', async () => {
+  for (const change of [env => { env.context.room.id = 'other'; }, env => { env.context.participantId = 'other'; }, env => env.replaceModel()]) {
+    const env = setup(); change(env);
+    assert.equal(env.permissions.refresh().reason, 'session-changed');
+    assert.equal((await env.api.execute({ action: 'canvas.inspect' })).error.code, 'SESSION_CHANGED');
+    assert.equal(env.api.state().entities, undefined);
+    env.grant(); assert.equal((await env.api.execute({ action: 'canvas.inspect' })).ok, true);
+    env.destroy();
+  }
+});
+
+test('revocation and replacement grants invalidate pending capture and cached writes', async () => {
+  const env = setup(); let release; let signalStarted; let captured = false;
+  const started = new Promise(resolve => { signalStarted = resolve; });
+  env.recording.snapshot = async ({ isAllowed }) => {
+    signalStarted(); await new Promise(resolve => { release = resolve; });
+    if (!isAllowed()) throw new Error('Denied after revocation');
+    captured = true; return { dataUrl: PNG };
+  };
+  const pending = env.api.execute({ action: 'capture.snapshot' }); await started;
+  env.permissions.revoke(); env.grant(); release();
+  assert.equal((await pending).ok, false); assert.equal(captured, false);
+  const command = { action: 'canvas.add', requestId: 'same-write', entity: shape('one') };
+  assert.equal((await env.api.execute(command)).ok, true);
+  env.permissions.grant({ capabilities: ['inspect'] });
+  assert.equal((await env.api.execute(command)).error.code, 'PERMISSION_DENIED');
+  assert.equal(env.model.all().length, 1); env.destroy();
+});
+
+test('the trusted permissions controller validates grants and no public command can grant itself authority', async () => {
+  const env = setup();
+  assert.throws(() => env.permissions.grant({ capabilities: ['admin'] }), /supported/);
+  for (const ttlMs of [0, Infinity, 3600001]) assert.throws(() => env.permissions.grant({ ttlMs }), /duration/);
+  assert.equal(env.api.grant, undefined); assert.equal(env.api.revoke, undefined);
+  assert.equal((await env.api.execute({ action: 'permissions.grant', capabilities: ['recording'] })).error.code, 'UNKNOWN_ACTION');
+  const manifest = getAgentManifest(); assert.equal(manifest.defaultCapabilities.includes('recording'), false);
+  assert.equal(manifest.maxGrantDurationMs, 3600000);
+  assert.equal(manifest.tools.length, Object.keys(env.api.describe().actions).length);
+  assert.equal(manifest.tools.find(tool => tool.action === 'recording.start').capabilities.includes('media-capture'), true);
+  assert.equal(manifest.tools.every(tool => tool.inputSchema.additionalProperties === false), true);
+  env.destroy();
+});
+
+test('an AbortSignal stops deferred capture and remaining batch edits without changing the command JSON schema', async () => {
+  const env = setup(); const cancellation = new AbortController(); let release; let signalStarted; let captured = false;
+  const started = new Promise(resolve => { signalStarted = resolve; });
+  env.recording.snapshot = async ({ isAllowed }) => {
+    signalStarted(); await new Promise(resolve => { release = resolve; });
+    if (!isAllowed()) throw new Error('Cancelled'); captured = true; return { dataUrl: PNG };
+  };
+  const pending = env.api.batch([{ action: 'capture.snapshot' }, { action: 'canvas.add', entity: shape('cancelled-write') }], { signal: cancellation.signal });
+  await started; cancellation.abort(); release();
+  assert.equal((await pending).error.code, 'ABORTED'); assert.equal(captured, false); assert.equal(env.model.all().length, 0);
+  env.destroy();
 });
