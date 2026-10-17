@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.1.0-embed.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build.
+This builds the package and writes `artifacts/common-workspace-0.1.0-embed.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
 
 ## Choose how Common appears
 
