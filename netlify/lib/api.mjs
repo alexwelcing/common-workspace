@@ -3,7 +3,6 @@ import { promisify } from 'node:util';
 
 const scrypt = promisify(scryptCallback);
 const COLORS = ['#7867ef', '#e3a444', '#4aa3b9', '#df7b9d', '#75b790', '#d27b58', '#8b9ed5', '#ba91ce', '#9baf5f', '#68b3aa'];
-const MAX_PARTICIPANTS = 10;
 const MAX_BODY = 128 * 1024;
 const randomId = (length = 12) => randomBytes(length).toString('base64url');
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -14,7 +13,6 @@ const error = (status, code, message) => Object.assign(new Error(message), { sta
 const roomMissing = () => error(404, 'ROOM_NOT_FOUND', 'This session has ended or the link is invalid.');
 const sessionExpired = () => error(401, 'SESSION_EXPIRED', 'Please enter the room password again.');
 const resync = () => error(409, 'RESYNC_REQUIRED', 'Reconnect to refresh the session.');
-const full = () => error(409, 'ROOM_FULL', 'This session already has ten people.');
 const publicRoom = room => ({ id: room.id, name: room.name, createdAt: timestamp(room.created_at), collaboration: 'peer', transport: 'poll' });
 const publicMember = member => ({ id: member.id, name: member.name, color: member.color, isAdmin: member.is_admin });
 const defaultEnv = key => globalThis.Netlify?.env?.get(key) ?? process.env[key];
@@ -66,7 +64,7 @@ function verifyOrigin(request) {
 }
 
 /**
- * Room writes lock the room row before touching seats or event order. Polling
+ * Room writes lock the room row before changing presence or event order. Polling
  * only reads, so it skips the lock; cleanup runs in sweep() on a schedule.
  */
 export function createApiHandler({ pool, env = defaultEnv, now = Date.now, leaseMs = 120000, leaseRefreshMs = 30000, reservationMs = 60000, eventTtlMs = 600000, roomTtlMs = 86400000, sessionTtlMs = 86400000, rateLimits = true } = {}) {
@@ -129,6 +127,14 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     if (timestamp(member.lease_until) <= time) throw error(409, 'RESYNC_REQUIRED', 'Reconnect to refresh your place in the session.');
   }
 
+  async function failedRenewal(client, room, request) {
+    // A connect, leave or sweep may have committed since the poll read this member.
+    // Re-read only on a failed fence so ordinary polls retain their small query cost.
+    const time = now();
+    checkConnection(await memberRow(client, room, request, time), request, time);
+    throw resync();
+  }
+
   async function active(client, room, time, except) {
     const { rows } = await client.query(`SELECT * FROM common_members
       WHERE room_id = $1 AND expires_at > $2 AND lease_until > $2 AND connection_id IS NOT NULL
@@ -160,11 +166,6 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
       WHERE room_id = $1 AND connection_id IS NOT NULL AND (lease_until <= $2 OR expires_at <= $2)
       RETURNING id`, [room.id, new Date(time)]);
     if (expired.rowCount) await presence(client, room, time);
-  }
-
-  async function seatCount(client, room, time) {
-    const { rows } = await client.query('SELECT COUNT(*)::integer AS count FROM common_members WHERE room_id = $1 AND expires_at > $2 AND lease_until > $2', [room.id, new Date(time)]);
-    return rows[0].count;
   }
 
   async function addMember(client, room, displayName, isAdmin, time) {
@@ -261,7 +262,6 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
       return json(await transaction(async client => {
         const room = await roomRow(client, id, time);
         await prune(client, room, time);
-        if (await seatCount(client, room, time) >= MAX_PARTICIPANTS) throw full();
         return addMember(client, room, displayName, false, time);
       }));
     }
@@ -279,12 +279,10 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         const room = await roomRow(client, id, time);
         const member = await memberRow(client, room, request, time);
         await prune(client, room, time);
-        const reserved = timestamp(member.lease_until) > time;
-        if (!reserved && await seatCount(client, room, time) >= MAX_PARTICIPANTS) throw full();
         // Existing peers must discard an older RTC connection for this participant.
         if (member.connection_id) await presence(client, room, time, member.id);
         const connectionId = randomId(18);
-        await client.query(`UPDATE common_members SET connection_id = $2, lease_until = $3, expires_at = $4,
+        await client.query(`UPDATE common_members SET connection_id = $2, lease_until = GREATEST(lease_until, $3), expires_at = GREATEST(expires_at, $4),
           rate_start = $5, rate_count = 0, rate_bytes = 0 WHERE id = $1`,
         [member.id, connectionId, new Date(time + leaseMs), new Date(time + sessionTtlMs), new Date(time)]);
         await presence(client, room, time);
@@ -304,7 +302,20 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         if (BigInt(after) < BigInt(room.event_floor) || BigInt(after) > BigInt(room.event_seq)) throw resync();
         // Most polls skip this write; the lease only needs refreshing every leaseRefreshMs.
         if (timestamp(member.lease_until) - time < leaseMs - leaseRefreshMs) {
-          await client.query('UPDATE common_members SET lease_until = $2 WHERE id = $1', [member.id, new Date(time + leaseMs)]);
+          const refreshedAt = now();
+          // Fence both the connection and its lease: a delayed poll must not revive
+          // a swept connection, renew a replacement tab, or shorten newer activity.
+          // Materialize the locked tuple before checking database time: a plain
+          // UPDATE can evaluate its predicate before waiting for an unchanged row.
+          const renewed = await client.query(`WITH locked_member AS MATERIALIZED (
+              SELECT id, connection_id, lease_until, expires_at FROM common_members WHERE id = $1 FOR UPDATE
+            )
+            UPDATE common_members AS member SET lease_until = GREATEST(member.lease_until, $2)
+            FROM locked_member AS locked
+            WHERE member.id = locked.id AND locked.connection_id = $3 AND locked.lease_until > $4 AND locked.expires_at > $4
+              AND locked.lease_until > clock_timestamp() AND locked.expires_at > clock_timestamp()
+            RETURNING member.id`, [member.id, new Date(refreshedAt + leaseMs), request.headers.get('x-common-connection'), new Date(refreshedAt)]);
+          if (!renewed.rowCount) await failedRenewal(client, room, request);
         }
         // Advance across all rows, including messages intended for another peer.
         const { rows } = await client.query(`SELECT seq, target_id, except_id, payload, created_at < $3 AS expired
@@ -335,8 +346,18 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         const count = reset ? 1 : member.rate_count + 1;
         const total = reset ? bytes : member.rate_bytes + bytes;
         if (count > 200 || total > 1024 * 1024) throw error(429, 'RATE_LIMITED', 'Slow down and try again.');
-        await client.query('UPDATE common_members SET rate_start = $2, rate_count = $3, rate_bytes = $4, lease_until = $5 WHERE id = $1',
-          [member.id, reset ? new Date(time) : member.rate_start, count, total, new Date(time + leaseMs)]);
+        const refreshedAt = now();
+        const renewed = await client.query(`WITH locked_member AS MATERIALIZED (
+            SELECT id, connection_id, lease_until, expires_at FROM common_members WHERE id = $1 FOR UPDATE
+          )
+          UPDATE common_members AS member SET rate_start = $2, rate_count = $3, rate_bytes = $4,
+            lease_until = GREATEST(member.lease_until, $5)
+          FROM locked_member AS locked
+          WHERE member.id = locked.id AND locked.connection_id = $6 AND locked.lease_until > $7 AND locked.expires_at > $7
+            AND locked.lease_until > clock_timestamp() AND locked.expires_at > clock_timestamp()
+          RETURNING member.id`,
+        [member.id, reset ? new Date(time) : member.rate_start, count, total, new Date(refreshedAt + leaseMs), request.headers.get('x-common-connection'), new Date(refreshedAt)]);
+        if (!renewed.rowCount) await failedRenewal(client, room, request);
         if (input.type === 'signal') {
           if (typeof input.to !== 'string' || input.to === member.id || !object(input.data)) throw error(400, 'INVALID_SIGNAL', 'Invalid connection signal.');
           const target = await client.query('SELECT id FROM common_members WHERE room_id = $1 AND id = $2 AND connection_id IS NOT NULL AND lease_until > $3 AND expires_at > $3', [room.id, input.to, new Date(time)]);

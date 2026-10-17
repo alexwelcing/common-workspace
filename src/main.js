@@ -6,6 +6,7 @@ import {Board} from './board.js';
 import {ScreenSharing} from './media.js';
 import {SharedCanvas} from './shared-canvas.js';
 import {PeerCanvas} from './peer-canvas.js';
+import {ScreenSubscriptions} from './screen-subscriptions.js';
 import {PollingSessionTransport} from './session-transport.js';
 import {initGeometry, geometryBackend} from './geometry.js';
 
@@ -17,6 +18,8 @@ let shared=null, peerCanvas=null, receivingCanvas=false;
 let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
 let rightPanel='people', tool='select', roomName='A little room for big ideas', sandbox=true, startedAt=Date.now(), activeColor='#305e48';
+const screenSubscriptions=new ScreenSubscriptions();
+let subscriptionTimer, disposed=false;
 const savedRooms=()=>{try{return JSON.parse(localStorage.getItem('common.rooms')||'[]')}catch{return []}};
 const ownParticipantId=()=>sandbox?'local':auth?.participantId;
 const saveRoom=r=>{localStorage.setItem('common.rooms',JSON.stringify([r,...savedRooms().filter(x=>x.id!==r.id)].slice(0,8)));renderRecent()};
@@ -75,12 +78,28 @@ board=new Board({
   onLayerAction:(id,action)=>shared?.reorder(id,action),
   onLockChange:(id,locked)=>shared?.patch(id,{locked}),
   onCursor:({x,y})=>{if(!sandbox&&connected)send({type:'cursor',x,y})},
-  onSelect:entity=>{const bar=$('#selection-tools');bar.hidden=!entity;if(entity)$('#selection-name').textContent=entity.type==='sticky'?'Sticky note':entity.type[0].toUpperCase()+entity.type.slice(1);agentTools?.refresh()},
+  onSelect:entity=>{const bar=$('#selection-tools');bar.hidden=!entity;if(entity)$('#selection-name').textContent=entity.type==='sticky'?'Sticky note':entity.type[0].toUpperCase()+entity.type.slice(1);agentTools?.refresh();scheduleScreenSubscriptions()},
+  onWatchScreen:id=>{screenSubscriptions.toggle(id);syncScreenSubscriptions()},
   onStatus:toast,onToolChange:next=>chooseTool(next),
-  onViewChange:view=>{$('#zoom-label').textContent=Math.round(view.zoom*100)+'%'}
+  onViewChange:view=>{$('#zoom-label').textContent=Math.round(view.zoom*100)+'%';scheduleScreenSubscriptions()}
 });
+const subscriptionResizeObserver=new ResizeObserver(scheduleScreenSubscriptions);
+subscriptionResizeObserver.observe($('#board-viewport'));
 function isPeerRoom(){return !sandbox&&auth?.room?.collaboration==='peer'}
-function refreshCanvas(){if(shared){board.setEntities(shared.all());board.setLayerOrder(shared.getOrder())}}
+function refreshCanvas(){if(shared){board.setEntities(shared.all());board.setLayerOrder(shared.getOrder());scheduleScreenSubscriptions()}}
+function scheduleScreenSubscriptions(){clearTimeout(subscriptionTimer);if(!disposed)subscriptionTimer=setTimeout(syncScreenSubscriptions,150)}
+function syncScreenSubscriptions(){
+  clearTimeout(subscriptionTimer);
+  if(disposed||!board||!media||!shared)return;
+  const el=$('#board-viewport');
+  const active=new Set(participants.map(person=>person.id));
+  const screens=shared.all().filter(entity=>entity.type==='screen'&&(sandbox||active.has(entity.participantId)));
+  const ids=screenSubscriptions.plan(screens,{participantId:ownParticipantId(),selectedId:board.selectedId,view:board.getView(),width:el.clientWidth,height:el.clientHeight,hidden:document.hidden||(!sandbox&&!connected)});
+  board.setScreenSubscriptions(ids,ownParticipantId());
+  media.setSubscriptions(ids);
+}
+document.addEventListener('visibilitychange',syncScreenSubscriptions);
+window.addEventListener('resize',scheduleScreenSubscriptions);
 function stopDeletedLocalScreen(){
   if(localStream&&!shared?.all().some(e=>e.type==='screen'&&e.participantId===ownParticipantId())){
     media?.stop();localStream=null;updateShareButton();
@@ -91,10 +110,12 @@ function makeCanvasModel(){
   shared=new SharedCanvas({
     onChange:entity=>{
       board.upsert(entity);board.setLayerOrder(shared.getOrder());
+      if(entity.type==='screen')scheduleScreenSubscriptions();
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'upsert',entity});
     },
     onDelete:id=>{
       board.remove(id);board.setLayerOrder(shared.getOrder());stopDeletedLocalScreen();
+      scheduleScreenSubscriptions();
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'delete',id});
     },
     onUpdate:(update,origin)=>{if(isPeerRoom())peerCanvas?.broadcast(update,origin)},
@@ -120,23 +141,24 @@ $('#new-session').onclick=()=>createModal();$('#invite').onclick=()=>sandbox?cre
 $('#room-menu').onclick=roomMenu;
 document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{rightPanel=b.dataset.panel;document.querySelectorAll('[data-panel]').forEach(e=>e.classList.toggle('active',e===b));renderPanel()});
 function renderPanel(){rightPanel==='people'?renderPeople():renderChat()}
-function renderPeople(){if(rightPanel!=='people')return;const list=sandbox?[{id:'local',name:'You',color:'#365f4a',isAdmin:true}]:participants;$('#panel-content').innerHTML=`<div class="panel-heading"><span>IN THIS SPACE</span><span>${list.length} / 10</span></div><div class="people-list">${list.map(p=>`<div class="person"><span class="avatar" style="--avatar-color:${esc(p.color)}">${esc(p.name.slice(0,1).toUpperCase())}</span><div><strong>${esc(p.name)} ${p.id===auth?.participantId||sandbox?'<span class="you-tag">(you)</span>':''}</strong><small>${p.isAdmin?'Host':'Team member'}</small></div><span class="person-online" title="Online"></span></div>`).join('')}</div><button class="invite-dashed" id="panel-invite">${icon('Plus',15)} Bring someone in</button><div class="room-note"><div class="note-symbol">${icon('Sprout',23)}</div><strong>Ideas grow here.</strong><p>Share a window. Draw a connection. See something differently.</p><div class="note-rule"></div><span>Up to 10 curious minds.<br>One shared canvas.</span></div><div class="panel-bottom-tip">${icon('Lightbulb',15)} <span>Double-click a note or text<br>to make it your own.</span></div>`;$('#panel-invite').onclick=()=>sandbox?createModal():inviteModal()}
+function renderPeople(){if(rightPanel!=='people')return;const list=sandbox?[{id:'local',name:'You',color:'#365f4a',isAdmin:true}]:participants;$('#panel-content').innerHTML=`<div class="panel-heading"><span>IN THIS SPACE</span><span>${list.length}</span></div><div class="people-list">${list.map(p=>`<div class="person"><span class="avatar" style="--avatar-color:${esc(p.color)}">${esc(p.name.slice(0,1).toUpperCase())}</span><div><strong>${esc(p.name)} ${p.id===auth?.participantId||sandbox?'<span class="you-tag">(you)</span>':''}</strong><small>${p.isAdmin?'Host':'Team member'}</small></div><span class="person-online" title="Online"></span></div>`).join('')}</div><button class="invite-dashed" id="panel-invite">${icon('Plus',15)} Bring someone in</button><div class="room-note"><div class="note-symbol">${icon('Sprout',23)}</div><strong>Ideas grow here.</strong><p>Share a window. Draw a connection. See something differently.</p><div class="note-rule"></div><span>Your people.<br>One shared canvas.</span></div><div class="panel-bottom-tip">${icon('Lightbulb',15)} <span>Double-click a note or text<br>to make it your own.</span></div>`;$('#panel-invite').onclick=()=>sandbox?createModal():inviteModal()}
 function renderChat(){if(rightPanel!=='chat')return;$('#panel-content').innerHTML=`<div class="chat-messages" id="chat-messages">${chat.length?chat.map(m=>`<div class="chat-message"><div><strong>${esc(m.name)}</strong><time>${new Date(m.createdAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time></div><p>${esc(m.text)}</p></div>`).join(''):`<div class="chat-empty">${icon('MessagesSquare',30)}<strong>A conversation starts here.</strong><p>${sandbox?'Create a session to chat with your team.':'A quick question, a useful link, a little context.'}</p></div>`}</div><form id="chat-form"><label class="sr-only" for="chat-text">Message your team</label><input id="chat-text" maxlength="2000" placeholder="A thought to share…" autocomplete="off" ${sandbox?'disabled':''}><button aria-label="Send message" ${sandbox?'disabled':''}>${icon('ArrowUp',17)}</button></form>`;$('#chat-form').onsubmit=e=>{e.preventDefault();const input=$('#chat-text');if(input.value.trim()){if(!connected){toast('Reconnect to send your message.');return}send({type:'chat',text:input.value.trim()});input.value=''}};const m=$('#chat-messages');m.scrollTop=m.scrollHeight}
 function updatePresence(){const count=sandbox?1:participants.length;$('#member-count').textContent=count===1?'Just you for now':`${count} minds in the room`;$('#people-number').textContent=count;const avatar=$('#header-presence .avatar');avatar.textContent=auth?.isAdmin?'Y':auth?.displayName?.slice(0,1)||'Y';renderPanel()}
 function renderRecent(){$('.recent-count').textContent=savedRooms().length;$('#recent-rooms').innerHTML=savedRooms().length?savedRooms().slice(0,4).map(r=>`<a class="recent-room" href="/room/${encodeURIComponent(r.id)}"><span class="room-dot"></span><span>${esc(r.name)}</span>${icon('ArrowUpRight',12)}</a>`).join(''):'<p class="no-recent">Your next session starts here.</p>'}
-function createModal(){modal(`<span class="modal-symbol">${icon('Sparkles',25)}</span><div class="eyebrow">MAKE A LITTLE SPACE</div><h2 id="modal-title">Good ideas need good company.</h2><p>Start a private session and bring up to nine teammates along.</p><form id="create-form"><label>Session name<input name="name" placeholder="e.g. Friday’s next big idea" maxlength="60" required value="Team thinking space"></label><label>Your name<input name="displayName" placeholder="What should we call you?" maxlength="60" required autocomplete="given-name"></label><label>Room password<span class="field-help">Share this with your team separately.</span><input name="password" type="password" minlength="8" maxlength="128" placeholder="At least 8 characters" required autocomplete="new-password"></label><button class="primary modal-submit">Create session ${icon('ArrowRight',17)}</button><small class="form-footnote">${icon('LockKeyhole',12)} A link gets them here. A password lets them in.</small></form>`,async e=>{e.preventDefault();const form=e.target;const b=form.querySelector('button');b.disabled=true;b.textContent='Making space…';try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms',{...vals,collaboration:'peer'});result.displayName=vals.displayName;sessionStorage.setItem('common.auth.'+result.room.id,JSON.stringify(result));saveRoom(result.room);closeModal();await enterRoom(result,true);inviteModal()}catch(err){formError(form,err.message);b.disabled=false;b.innerHTML='Create session '+icon('ArrowRight',17)}})}
-function inviteModal(){const url=location.origin+'/room/'+auth.room.id;modal(`<span class="modal-symbol">${icon('UserPlus',25)}</span><div class="eyebrow">MAKE ROOM FOR YOUR PEOPLE</div><h2 id="modal-title">Better with a few more minds.</h2><p>Anyone with this link and your room password can join.<br>The room holds up to 10 people, including you.</p><label class="link-label">SESSION LINK<div class="copy-field"><input id="invite-link" readonly value="${esc(url)}"><button class="button" id="copy-link">${icon('Copy',16)} Copy</button></div></label><div class="invite-password">${icon('LockKeyhole',17)}<div><strong>Share the password separately.</strong><span>Your password is never included in the link.</span></div></div><button class="primary modal-submit" id="done-invite">Back to our space ${icon('ArrowRight',16)}</button>`);$('#copy-link').onclick=async()=>{try{await navigator.clipboard.writeText(url);$('#copy-link').innerHTML=icon('Check',16)+' Copied';toast('Session link copied')}catch{$('#invite-link').select();toast('Select and copy the session link')}};$('#done-invite').onclick=closeModal}
+function createModal(){modal(`<span class="modal-symbol">${icon('Sparkles',25)}</span><div class="eyebrow">MAKE A LITTLE SPACE</div><h2 id="modal-title">Good ideas need good company.</h2><p>Start a private session and invite your teammates.</p><form id="create-form"><label>Session name<input name="name" placeholder="e.g. Friday’s next big idea" maxlength="60" required value="Team thinking space"></label><label>Your name<input name="displayName" placeholder="What should we call you?" maxlength="60" required autocomplete="given-name"></label><label>Room password<span class="field-help">Share this with your team separately.</span><input name="password" type="password" minlength="8" maxlength="128" placeholder="At least 8 characters" required autocomplete="new-password"></label><button class="primary modal-submit">Create session ${icon('ArrowRight',17)}</button><small class="form-footnote">${icon('LockKeyhole',12)} A link gets them here. A password lets them in.</small></form>`,async e=>{e.preventDefault();const form=e.target;const b=form.querySelector('button');b.disabled=true;b.textContent='Making space…';try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms',{...vals,collaboration:'peer'});result.displayName=vals.displayName;sessionStorage.setItem('common.auth.'+result.room.id,JSON.stringify(result));saveRoom(result.room);closeModal();await enterRoom(result,true);inviteModal()}catch(err){formError(form,err.message);b.disabled=false;b.innerHTML='Create session '+icon('ArrowRight',17)}})}
+function inviteModal(){const url=location.origin+'/room/'+auth.room.id;modal(`<span class="modal-symbol">${icon('UserPlus',25)}</span><div class="eyebrow">MAKE ROOM FOR YOUR PEOPLE</div><h2 id="modal-title">Better with a few more minds.</h2><p>Anyone with this link and your room password can join.<br>There is no fixed participant limit. Windows load as you watch them.</p><label class="link-label">SESSION LINK<div class="copy-field"><input id="invite-link" readonly value="${esc(url)}"><button class="button" id="copy-link">${icon('Copy',16)} Copy</button></div></label><div class="invite-password">${icon('LockKeyhole',17)}<div><strong>Share the password separately.</strong><span>Your password is never included in the link.</span></div></div><button class="primary modal-submit" id="done-invite">Back to our space ${icon('ArrowRight',16)}</button>`);$('#copy-link').onclick=async()=>{try{await navigator.clipboard.writeText(url);$('#copy-link').innerHTML=icon('Check',16)+' Copied';toast('Session link copied')}catch{$('#invite-link').select();toast('Select and copy the session link')}};$('#done-invite').onclick=closeModal}
 async function joinFromPath(id){let saved;try{saved=JSON.parse(sessionStorage.getItem('common.auth.'+id))}catch{}if(saved){await enterRoom(saved);return}let room;try{({room}=await api('/api/rooms/'+encodeURIComponent(id)))}catch(err){toast(err.message);if(!sandbox){location.replace('/');return}history.replaceState(null,'','/');return}modal(`<span class="modal-symbol">${icon('DoorOpen',26)}</span><div class="eyebrow">THERE’S A PLACE FOR YOU</div><h2 id="modal-title">${esc(room.name)}</h2><p>Your team is just a password away.</p><form><label>Your name<input name="displayName" placeholder="What should we call you?" maxlength="60" autocomplete="given-name" required></label><label>Room password<input name="password" type="password" required autocomplete="current-password" placeholder="The password from your host"></label><button class="primary modal-submit">Join the conversation ${icon('ArrowRight',17)}</button></form>`,async e=>{e.preventDefault();const form=e.target,b=form.querySelector('button');b.disabled=true;try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms/'+encodeURIComponent(id)+'/join',vals);result.displayName=vals.displayName;sessionStorage.setItem('common.auth.'+id,JSON.stringify(result));saveRoom(result.room);closeModal();await enterRoom(result)}catch(err){formError(form,err.message);b.disabled=false}})}
 async function enterRoom(result,isNew=false){
   capture?.stop().catch(()=>{});walkthrough?.stop();
   intentionalClose=true;clearTimeout(reconnectTimer);socket?.close();media?.destroy();
   auth=result;sandbox=false;intentionalClose=false;localStream=null;roomSeeded=!isNew;
+  participants=[];screenSubscriptions.reset();board.setScreenSubscriptions([],result.participantId);
   makeCanvasModel();roomName=result.room.name;startedAt=Date.now();
   history.pushState(null,'','/room/'+result.room.id);
   $('#room-title').textContent=roomName;$('#breadcrumb-room').textContent=roomName;
   $('#session-kind').textContent='A LIVE SPACE TO THINK TOGETHER';$('#privacy-status').textContent='Password protected';
   $('#room-subtitle').textContent='Different windows. Shared perspective. Everyone’s invited to create.';
-  $('#footer-access').textContent=isPeerRoom()?'Shared directly between browsers · Up to 10 people':'Password-protected room · Up to 10 people';
+  $('#footer-access').textContent=isPeerRoom()?'Shared directly between browsers':'Password-protected room';
   document.title=roomName+' — Common';$('#sandbox-nav').classList.remove('active');$('#sessions-nav').classList.add('active');
   if(isPeerRoom())peerCanvas=new PeerCanvas({model:shared,send:(id,bytes)=>media?.sendData(id,bytes)||false,onStatus:toast});
   setupMedia();
@@ -166,18 +188,21 @@ function setupMedia(){
 function updateCanvasStatus(){
   if(sandbox)return;
   const count=peerCanvas?.peers.size||0;
-  // Once every peer is linked over WebRTC, the room server only relays presence and chat.
-  socket?.setIdle?.(isPeerRoom()&&count>=participants.length-1);
+  // Canvas gossip needs only the sparse overlay, independent of video viewers.
+  const ready=Boolean(media)&&[...media.desiredCanvasPeers].every(id=>peerCanvas?.peers.has(id));
+  socket?.setIdle?.(isPeerRoom()&&ready);
   const text=!connected?'Reconnecting…':isPeerRoom()?(participants.length<=1?'Live · Connected':count?`Live · Connected · ${count} ${count===1?'peer':'peers'}`:'Live · Connected · finding peers…'):'Live · Connected';
   $('#connection-status').innerHTML=icon(connected?'CloudUpload':'CloudOff',15)+' '+text;
 }
 function setConnection(status){
   connected=status==='connected';board.setReadOnly(!sandbox&&!connected);
   $('#connection-status').classList.toggle('disconnected',!connected);updateCanvasStatus();
+  scheduleScreenSubscriptions();
   agentTools?.refresh();
 }
 function syncPeople(){
-  media.syncParticipants(participants,auth.participantId);updatePresence();updateCanvasStatus();
+  media.syncParticipants(participants,auth.participantId).then(updateCanvasStatus);updatePresence();updateCanvasStatus();
+  scheduleScreenSubscriptions();
   const active=new Set(participants.map(p=>p.id));
   document.querySelectorAll('.remote-cursor').forEach(el=>{if(!active.has(el.dataset.person))el.remove()});
   if(isPeerRoom())for(const entity of shared.all())if(entity.type==='screen'&&!active.has(entity.participantId))shared.deleteLocal(entity.id);
@@ -295,7 +320,7 @@ function tour(){modal(`<span class="modal-symbol">${icon('Sprout',27)}</span><di
 function showSessions(){modal(`<span class="modal-symbol">${icon('Layers',25)}</span><h2 id="modal-title">A space worth coming back to.</h2><p>Your recent sessions on this device.</p><div class="sessions-list">${savedRooms().length?savedRooms().map(r=>`<a href="/room/${encodeURIComponent(r.id)}">${icon('Layers',18)}<span>${esc(r.name)}</span>${icon('ArrowUpRight',17)}</a>`).join(''):'<p>No sessions yet. Start a little something.</p>'}</div><button class="primary modal-submit" id="sessions-create">${icon('Plus',16)} Create a session</button>`);$('#sessions-create').onclick=createModal}
 function roomMenu(){modal(`<h2 id="modal-title">Your space, your way.</h2><div class="menu-actions"><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});sessionStorage.removeItem('common.auth.'+auth.room.id);media.destroy();location.href='/'});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">Call it a good session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep thinking</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();chooseTool('select');return}if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.target.isContentEditable||$('#modal-root').children.length||document.querySelector('dialog[open]'))return;if(e.ctrlKey||e.metaKey)return;const keys={v:'select',h:'hand',p:'draw',t:'text',n:'sticky',r:'rectangle',a:'arrow'};if(keys[e.key.toLowerCase()])chooseTool(keys[e.key.toLowerCase()]);});
-window.addEventListener('beforeunload',()=>{intentionalClose=true;capture?.destroy();walkthrough?.stop();agentTools?.destroy();media?.destroy();peerCanvas?.destroy();shared?.destroy();socket?.close()});window.addEventListener('popstate',()=>location.reload());
+window.addEventListener('beforeunload',()=>{disposed=true;clearTimeout(subscriptionTimer);subscriptionResizeObserver.disconnect();intentionalClose=true;capture?.destroy();walkthrough?.stop();agentTools?.destroy();media?.destroy();peerCanvas?.destroy();shared?.destroy();socket?.close()});window.addEventListener('popstate',()=>location.reload());
 // Public, opt-in browser agent interface. It never exposes room credentials.
 // Loaded in its own chunk so it never delays the first paint of the canvas.
 async function loadAgentTools(){

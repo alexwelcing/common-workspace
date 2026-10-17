@@ -42,7 +42,13 @@
 .board-screen-placeholder[hidden] { display: none; }
 .board-screen-placeholder strong { font-size: 13px; font-weight: 500; color: #66715f; margin-top: 4px; }
 .board-screen-placeholder span { font-size: 11px; color: #92998b; }
+.board-screen-watch { margin-top: 4px; padding: 8px 15px; min-height: 34px; border: 1px solid #cbdcc3; border-radius: 6px; background: #e7f0e1; color: #4d6c40; font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; }
+.board-screen-watch:hover { border-color: #b2c9a6; background: #deebd6; color: #35562a; }
+.board-screen-watch:focus-visible, .board-screen-pause:focus-visible { outline: 2px solid #6d8a61; outline-offset: 2px; }
 .board-screen-footer { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 11px; color: #89917f; font-size: 9px; border-radius: 0 0 11px 11px; }
+.board-screen-footer-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-screen-pause { flex-shrink: 0; margin-left: auto; padding: 3px 6px; min-height: 22px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #819474; font: inherit; font-size: 9px; cursor: pointer; }
+.board-screen-pause:hover { background: #eef4e8; border-color: #dce7d3; color: #4e6d42; }
 .board-window-dot { width: 5px; height: 5px; background: #a3b493; border-radius: 50%; }
 .board-screen-footer-end { margin-left: auto; color: #a2a99b; font-size: 8px; }
 .board-diagram-body { height: calc(100% - 44px); box-sizing: border-box; padding: 17px 20px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #fff; border-radius: 0 0 11px 11px; }

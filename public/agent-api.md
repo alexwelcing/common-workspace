@@ -126,6 +126,8 @@ Supported raster types are PNG, JPEG, WebP, GIF, and AVIF. The file picker accep
 
 A solo walkthrough can use the personal canvas without creating a room. Create or join a room when other participants should see the product and annotations. The user first chooses the product window through **Share a window** and the native browser picker. The agent can navigate that product with its normal authorized browser tools and annotate the corresponding live screen object in Common. Sharing a window does not itself authorize actions in that product.
 
+Receiving a remote window is a local subscription. Use **Watch window** or **Pause view** on its canvas tile; their accessible names append the screen title. The frontend defaults to watching up to four remote windows on desktop and two on small devices, and pauses incoming video when the tab is hidden. The local user's approved screen remains separate from remote subscriptions. There is no agent API action for subscriptions, so use the normal browser controls. Before a canvas snapshot or recording, ensure each required remote window is watched and its video has decoded. A paused or unwatched window cannot supply live frames.
+
 Inspect for the live screen ID, then define presentation steps:
 
 ```json
@@ -159,4 +161,12 @@ Recordings contain video only, with browser-supported WebM or MP4 output. Each r
 - Agent control applies only to this tab. A user can turn it off; do not re-enable it to defeat that choice.
 - Canvas edits affect the shared room. Inspect before destructive or broad changes, and preserve content outside the requested task.
 - Rooms and peer canvas content are ephemeral. Download exports and recordings that need to outlive the session.
-- Media uses WebRTC. The relay-free deployment may fail across restrictive networks; ten simultaneous screen shares have not been load-tested.
+- Media uses WebRTC. The deployment has no external media relay; restrictive networks can still require TURN.
+
+## Room size and scaling
+
+There is no fixed participant admission cap or promised room-size capacity. Canvas updates use a sparse network formed by three deterministic hash rings, with at most six canvas neighbors per browser. Yjs updates are forwarded between neighbors, and five-second state-vector exchanges repair missed updates. Video subscriptions create separate direct connections as needed; a popular presenter still uploads and encodes a stream for each actual viewer. Watching fewer windows reduces a viewer's receive work but does not remove that presenter's upload limit.
+
+Each device still receives the full canvas. Local edits are checked against 1000 objects and a 16 MiB materialized-content budget; concurrent edits can exceed those local budgets, and Yjs history/decoded images add memory overhead. Room-wide rosters, presence, Netlify Postgres signaling, and HTTP polling can become bottlenecks. Synthetic 100-peer convergence and 1000-ID topology tests exercise routing and document propagation rather than real-browser, media, or database capacity.
+
+Larger canvases need interest regions or document/awareness sharding. Larger rooms need roster deltas and less room-wide presence work. Large video audiences may need an optional SFU that forwards a presenter's single upstream stream, which requires a reachable server outside participants' browsers. Those are further development steps; browser WASM does not provide a public relay through restrictive NATs or firewalls.

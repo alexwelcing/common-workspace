@@ -18,7 +18,36 @@ async function fixture(t, options = {}) {
   const admin = new pg.Pool({ connectionString: databaseUrl, max: 1 });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pg.Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 16 });
+  const gates = [];
+  const pauseQuery = (matches, phase = 'after') => {
+    let enter, release;
+    const entered = new Promise(resolve => { enter = resolve; });
+    const resumed = new Promise(resolve => { release = resolve; });
+    const gate = { matches, phase, enter, release, entered, resumed, used: false };
+    gates.push(gate);
+    return gate;
+  };
+  const pause = async (sql, params, phase) => {
+    const gate = gates.find(gate => !gate.used && gate.phase === phase && gate.matches(sql, params));
+    if (gate) { gate.used = true; gate.enter(); await gate.resumed; }
+  };
+  const handlerPool = {
+    query: (...args) => pool.query(...args),
+    async connect() {
+      const client = await pool.connect();
+      return {
+        release: () => client.release(),
+        async query(sql, params) {
+          await pause(sql, params, 'before');
+          const result = await client.query(sql, params);
+          await pause(sql, params, 'after');
+          return result;
+        },
+      };
+    },
+  };
   t.after(async () => {
+    for (const gate of gates) gate.release();
     await pool.end();
     await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await admin.end();
@@ -28,7 +57,7 @@ async function fixture(t, options = {}) {
     await pool.query(await readFile(path.join(directory, filename), 'utf8'));
   }
   let clock = Date.now();
-  const handler = createApiHandler({ pool, env: () => undefined, now: () => clock, rateLimits: false, ...options });
+  const handler = createApiHandler({ pool: handlerPool, env: () => undefined, now: () => clock, rateLimits: false, ...options });
   const request = async (route, { method = 'GET', body, auth, headers = {}, raw } = {}) => {
     const response = await handler(new Request(`${origin}${route}`, {
       method,
@@ -56,7 +85,7 @@ async function fixture(t, options = {}) {
   const poll = (auth, after = auth.cursor) => request(`/api/rooms/${auth.room.id}/events?after=${encodeURIComponent(after)}`, { auth });
   const send = (auth, message) => post(`/api/rooms/${auth.room.id}/messages`, message, auth);
   const leave = auth => post(`/api/rooms/${auth.room.id}/leave`, {}, auth);
-  return { pool, handler, request, post, create, join, connect, poll, send, leave, advance: milliseconds => { clock += milliseconds; } };
+  return { pool, handler, request, post, create, join, connect, poll, send, leave, pauseQuery, advance: milliseconds => { clock += milliseconds; } };
 }
 
 test('Netlify admission protects passwords, bearer sessions, and same-origin writes', integration, async t => {
@@ -86,34 +115,205 @@ test('Netlify admission protects passwords, bearer sessions, and same-origin wri
   assert.equal(JSON.stringify(connected.init).includes(host.token), false);
 });
 
-test('Netlify transactions reserve exactly ten places under concurrent joins', integration, async t => {
+test('Netlify admits and connects more than ten participants without weakening token revocation', integration, async t => {
   const f = await fixture(t);
   const host = await f.create();
   await f.connect(host);
   const guests = await Promise.all(Array.from({ length: 14 }, (_, i) => f.join(host.room, `Guest ${i}`)));
-  assert.equal(guests.filter(result => result.status === 200).length, 9);
-  assert.equal(guests.filter(result => result.code === 'ROOM_FULL').length, 5);
-  const guest = guests.find(result => result.status === 200);
-  await f.connect(guest);
+  assert.ok(guests.every(result => result.status === 200));
+  const connected = await Promise.all(guests.map(auth => f.connect(auth)));
+  assert.ok(connected.every(result => result.status === 200));
+  assert.equal((await f.poll(host)).participants.length, 15);
+  const guest = guests[0];
   assert.equal((await f.leave(guest)).status, 200);
   assert.equal((await f.join(host.room, 'Replacement')).status, 200);
   assert.equal((await f.connect(guest)).status, 401);
 });
 
-test('expired leases release capacity and reconnects atomically reclaim a free place', integration, async t => {
+test('expired connections require reconnect and can return alongside more than ten new peers', integration, async t => {
   const f = await fixture(t, { leaseMs: 90000, reservationMs: 90000 });
   const old = await f.create();
   await f.connect(old);
   f.advance(90001);
-  const replacements = await Promise.all(Array.from({ length: 10 }, (_, i) => f.join(old.room, `Replacement ${i}`)));
-  assert.equal(replacements.filter(result => result.status === 200).length, 10);
-  assert.equal((await f.connect(old)).code, 'ROOM_FULL');
-  const current = replacements[0];
-  await f.connect(current);
-  await f.leave(current);
+  assert.equal((await f.poll(old)).code, 'RESYNC_REQUIRED');
+  const replacements = await Promise.all(Array.from({ length: 12 }, (_, i) => f.join(old.room, `New peer ${i}`)));
+  assert.ok(replacements.every(result => result.status === 200));
+  const originalConnection = old.connectionId;
   const reconnected = await f.connect(old);
   assert.equal(reconnected.status, 200);
-  assert.ok(reconnected.connectionId);
+  assert.notEqual(reconnected.connectionId, originalConnection);
+  assert.equal(reconnected.init.self.id, old.participantId);
+  assert.ok((await Promise.all(replacements.map(auth => f.connect(auth)))).every(result => result.status === 200));
+  assert.equal((await f.poll(old)).participants.length, 13);
+});
+
+const memberRead = sql => sql.startsWith('SELECT * FROM common_members WHERE room_id = $1 AND token_hash = $2');
+const pollRenewal = sql => sql.includes('SET lease_until =');
+const messageRenewal = sql => sql.includes('SET rate_start =');
+const leaseState = async (f, auth) => (await f.pool.query('SELECT connection_id, lease_until FROM common_members WHERE id = $1', [auth.participantId])).rows[0];
+async function waitForDatabaseState(check) {
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail('Database did not reach the expected lock or expiry state.');
+}
+
+for (const operation of ['poll', 'message']) {
+  test(`${operation} renewal checks expiry after an unchanged member-row lock wait`, integration, async t => {
+    const f = await fixture(t, { now: Date.now });
+    const host = await f.create();
+    await f.connect(host);
+    await f.pool.query("UPDATE common_members SET lease_until = clock_timestamp() + interval '1200 milliseconds' WHERE id = $1", [host.participantId]);
+    const original = await leaseState(f, host);
+    const blocker = await f.pool.connect();
+    let pending;
+    try {
+      await blocker.query('BEGIN');
+      const { rows: [{ pid }] } = await blocker.query('SELECT pg_backend_pid() AS pid');
+      await blocker.query('SELECT id FROM common_members WHERE id = $1 FOR UPDATE', [host.participantId]);
+      pending = operation === 'poll' ? f.poll(host) : f.send(host, { type: 'chat', text: 'Must expire before acceptance' });
+      // Observe a real PostgreSQL row-lock wait, then let DB time cross the lease
+      // deadline without modifying the blocked tuple. A plain UPDATE can evaluate
+      // its volatile predicate before waiting and wrongly revive this connection.
+      await waitForDatabaseState(async () => (await f.pool.query('SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))', [pid])).rowCount > 0);
+      await waitForDatabaseState(async () => (await f.pool.query('SELECT lease_until <= clock_timestamp() AS expired FROM common_members WHERE id = $1', [host.participantId])).rows[0].expired);
+      await blocker.query('ROLLBACK');
+      assert.equal((await pending).code, 'RESYNC_REQUIRED');
+      assert.equal((await leaseState(f, host)).lease_until.getTime(), original.lease_until.getTime());
+      if (operation === 'message') assert.deepEqual((await f.pool.query('SELECT chat FROM common_rooms WHERE id = $1', [host.room.id])).rows[0].chat, []);
+    } finally {
+      await blocker.query('ROLLBACK');
+      blocker.release();
+      if (pending) await pending;
+    }
+  });
+}
+
+test('poll renewal checks replacement after waiting for the member-row lock', integration, async t => {
+  const f = await fixture(t, { now: Date.now });
+  const host = await f.create();
+  await f.connect(host);
+  await f.pool.query("UPDATE common_members SET lease_until = clock_timestamp() + interval '60 seconds' WHERE id = $1", [host.participantId]);
+  const blocker = await f.pool.connect();
+  let pending;
+  try {
+    await blocker.query('BEGIN');
+    const { rows: [{ pid }] } = await blocker.query('SELECT pg_backend_pid() AS pid');
+    await blocker.query('SELECT id FROM common_members WHERE id = $1 FOR UPDATE', [host.participantId]);
+    pending = f.poll(host);
+    await waitForDatabaseState(async () => (await f.pool.query('SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))', [pid])).rowCount > 0);
+    await blocker.query("UPDATE common_members SET connection_id = 'replacement-under-lock', lease_until = clock_timestamp() + interval '120 seconds' WHERE id = $1", [host.participantId]);
+    const replacement = await blocker.query('SELECT lease_until FROM common_members WHERE id = $1', [host.participantId]);
+    await blocker.query('COMMIT');
+    assert.equal((await pending).code, 'CONNECTION_REPLACED');
+    const current = await leaseState(f, host);
+    assert.equal(current.connection_id, 'replacement-under-lock');
+    assert.equal(current.lease_until.getTime(), replacement.rows[0].lease_until.getTime());
+  } finally {
+    await blocker.query('ROLLBACK');
+    blocker.release();
+    if (pending) await pending;
+  }
+});
+
+test('a poll delayed across lease expiry cannot revive a connection swept by new admissions', integration, async t => {
+  const f = await fixture(t);
+  const host = await f.create();
+  await f.connect(host);
+  const original = await leaseState(f, host);
+  f.advance(119000);
+  const gate = f.pauseQuery(memberRead);
+  const pending = f.poll(host);
+  try {
+    await gate.entered;
+    f.advance(2000);
+    const newcomers = await Promise.all(Array.from({ length: 12 }, (_, i) => f.join(host.room, `Newcomer ${i}`)));
+    assert.ok(newcomers.every(result => result.status === 200));
+    assert.equal((await leaseState(f, host)).connection_id, null);
+    gate.release();
+    assert.equal((await pending).code, 'CONNECTION_REPLACED');
+    assert.equal((await leaseState(f, host)).lease_until.getTime(), original.lease_until.getTime());
+    assert.equal((await f.connect(host)).status, 200);
+    assert.notEqual(host.connectionId, original.connection_id);
+  } finally { gate.release(); await pending; }
+});
+
+test('an expired connection cannot be renewed by an in-flight poll before the sweep runs', integration, async t => {
+  const f = await fixture(t);
+  const host = await f.create();
+  await f.connect(host);
+  const original = await leaseState(f, host);
+  f.advance(119000);
+  const gate = f.pauseQuery(memberRead);
+  const pending = f.poll(host);
+  try {
+    await gate.entered;
+    f.advance(2000);
+    gate.release();
+    assert.equal((await pending).code, 'RESYNC_REQUIRED');
+    assert.equal((await leaseState(f, host)).lease_until.getTime(), original.lease_until.getTime());
+  } finally { gate.release(); await pending; }
+});
+
+test('a replaced connection cannot renew the current tab from a stale poll snapshot', integration, async t => {
+  const f = await fixture(t);
+  const host = await f.create();
+  await f.connect(host);
+  const oldConnection = host.connectionId;
+  f.advance(35000);
+  const gate = f.pauseQuery(memberRead);
+  const pending = f.poll(host);
+  try {
+    await gate.entered;
+    f.advance(20000);
+    assert.equal((await f.connect(host)).status, 200);
+    assert.notEqual(host.connectionId, oldConnection);
+    const replacement = await leaseState(f, host);
+    gate.release();
+    assert.equal((await pending).code, 'CONNECTION_REPLACED');
+    const current = await leaseState(f, host);
+    assert.equal(current.connection_id, replacement.connection_id);
+    assert.equal(current.lease_until.getTime(), replacement.lease_until.getTime());
+    assert.equal((await f.poll(host)).status, 200);
+  } finally { gate.release(); await pending; }
+});
+
+test('a delayed poll update preserves a newer lease from accepted activity', integration, async t => {
+  const f = await fixture(t);
+  const host = await f.create();
+  await f.connect(host);
+  f.advance(35000);
+  const gate = f.pauseQuery(pollRenewal, 'before');
+  const pending = f.poll(host);
+  try {
+    await gate.entered;
+    f.advance(20000);
+    assert.equal((await f.send(host, { type: 'chat', text: 'Fresh activity' })).status, 200);
+    const latest = await leaseState(f, host);
+    gate.release();
+    assert.equal((await pending).status, 200);
+    assert.equal((await leaseState(f, host)).lease_until.getTime(), latest.lease_until.getTime());
+  } finally { gate.release(); await pending; }
+});
+
+test('a delayed message update preserves a newer lease from concurrent polling', integration, async t => {
+  const f = await fixture(t);
+  const host = await f.create();
+  await f.connect(host);
+  f.advance(35000);
+  const gate = f.pauseQuery(messageRenewal, 'before');
+  const pending = f.send(host, { type: 'chat', text: 'Delayed activity' });
+  try {
+    await gate.entered;
+    f.advance(20000);
+    assert.equal((await f.poll(host)).status, 200);
+    const latest = await leaseState(f, host);
+    gate.release();
+    assert.equal((await pending).status, 200);
+    assert.equal((await leaseState(f, host)).lease_until.getTime(), latest.lease_until.getTime());
+  } finally { gate.release(); await pending; }
 });
 
 test('targeted signaling cannot cross room or participant boundaries', integration, async t => {

@@ -139,20 +139,22 @@ test('rooms require passwords, reject cross-origin writes, and keep credentials 
   assert.equal(await upgradeStatus(f.base, auth.room, guest.token, { Origin: 'https://attacker.example' }), 403);
 });
 
-test('concurrent joins reserve exactly ten spots and explicit leave frees one', async t => {
+test('more than ten participants can join and connect while explicit leave revokes access', async t => {
   const f = await fixture(t);
   const host = await f.create();
   const hostClient = await f.connect(host);
   const results = await Promise.all(Array.from({ length: 12 }, (_, i) => f.join(host.room, `Person ${i}`)));
-  assert.equal(results.filter(r => r.status === 200).length, 9);
-  assert.equal(results.filter(r => r.code === 'ROOM_FULL').length, 3);
-  const guest = results.find(r => r.status === 200);
-  const client = await f.connect(guest);
+  assert.ok(results.every(r => r.status === 200));
+  const clients = await Promise.all(results.map(auth => f.connect(auth)));
+  assert.equal((await hostClient.next('participants', message => message.participants.length === 13)).participants.length, 13);
+  const guest = results[0];
+  const client = clients[0];
   client.send({ type: 'leave' });
   await once(client.ws, 'close');
   assert.equal((await f.join(host.room, 'Replacement')).status, 200);
   assert.equal(await upgradeStatus(f.base, host.room, guest.token), 401);
-  assert.equal((await hostClient.next('participants', message => message.participants.length === 1)).participants[0].id, host.participantId);
+  const remaining = await hostClient.next('participants', message => message.participants.length === 12 && !message.participants.some(participant => participant.id === guest.participantId));
+  assert.equal(remaining.participants.some(participant => participant.id === guest.participantId), false);
 });
 
 test('collaboration mode is explicit and invalid modes cannot create rooms', async t => {
@@ -177,9 +179,8 @@ test('peer rooms keep canvas out of the server while retaining admission and iso
   const host = await f.connect(auth);
   assert.equal(host.init.room.collaboration, 'peer');
   assert.deepEqual(host.init.entities, []);
-  const guests = await Promise.all(Array.from({ length: 10 }, (_, i) => f.join(auth.room, `Peer ${i}`)));
-  assert.equal(guests.filter(guest => guest.status === 200).length, 9);
-  assert.equal(guests.filter(guest => guest.code === 'ROOM_FULL').length, 1);
+  const guests = await Promise.all(Array.from({ length: 12 }, (_, i) => f.join(auth.room, `Peer ${i}`)));
+  assert.ok(guests.every(guest => guest.status === 200));
   const guestAuth = guests.find(guest => guest.status === 200);
   assert.equal(guestAuth.room.collaboration, 'peer');
   const guest = await f.connect(guestAuth);

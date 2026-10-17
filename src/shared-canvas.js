@@ -94,7 +94,7 @@ export class SharedCanvas {
     this.entities = this.doc.getMap('canvas');
     this.tombstones = this.doc.getMap('canvas-deleted');
     this.onChange = onChange; this.onDelete = onDelete; this.onInvalid = onInvalid;
-    this.cache = new Map(); this.bytesById = new Map(); this.totalBytes = 0; this.maxBytes = maxBytes; this.destroyed = false;
+    this.cache = new Map(); this.bytesById = new Map(); this.deferredIds = new Set(); this.totalBytes = 0; this.maxBytes = maxBytes; this.destroyed = false;
     this.entityObserver = events => {
       const ids = new Set();
       for (const event of events) {
@@ -104,7 +104,14 @@ export class SharedCanvas {
       this.publish(ids);
     };
     this.deletedObserver = event => this.publish(event.keysChanged);
-    this.updateObserver = (update, origin) => onUpdate(update, origin);
+    this.updateObserver = (update, origin) => {
+      // A repair can resolve dependencies outside this entity's map. Recheck
+      // deferred views even when observeDeep receives no event for their IDs.
+      if (!this.doc.store.pendingStructs && this.deferredIds.size) {
+        const ids = [...this.deferredIds]; this.deferredIds.clear(); this.publish(ids);
+      }
+      onUpdate(update, origin);
+    };
     this.entities.observeDeep(this.entityObserver);
     this.tombstones.observe(this.deletedObserver);
     this.doc.on('update', this.updateObserver);
@@ -117,6 +124,15 @@ export class SharedCanvas {
     // Unknown CRDT fields never reach DOM/SVG renderers.
     const candidate = {};
     for (const [field, value] of record) if (FIELDS.has(field)) candidate[field] = value;
+    // A later Yjs update can carry deletions for old field values while its
+    // replacement structs wait on a dropped predecessor. Keep the last valid
+    // view until state-vector repair fills those dependencies. This is not a
+    // validation bypass: complete malformed records are still rejected, and
+    // tombstones above always win. Yjs exposes its pending struct store here.
+    if (this.doc.store.pendingStructs && ['id', 'type', 'x', 'y', 'width', 'height'].some(field => !Object.hasOwn(candidate, field))) {
+      this.deferredIds.add(id);
+      return this.cache.get(id);
+    }
     try { return sanitize(candidate, id); }
     catch (error) { this.onInvalid(error); return undefined; }
   }
@@ -261,6 +277,6 @@ export class SharedCanvas {
     this.entities.unobserveDeep(this.entityObserver);
     this.tombstones.unobserve(this.deletedObserver);
     this.doc.off('update', this.updateObserver);
-    this.doc.destroy(); this.cache.clear(); this.bytesById.clear(); this.totalBytes = 0;
+    this.doc.destroy(); this.cache.clear(); this.bytesById.clear(); this.deferredIds.clear(); this.totalBytes = 0;
   }
 }

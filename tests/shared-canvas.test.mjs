@@ -11,6 +11,38 @@ const exchange = (a, b) => {
   assert.equal(b.applyUpdate(aUpdate), true);
 };
 
+test('deferred incomplete records are revalidated when unrelated Yjs dependencies resolve', t => {
+  const deleted = [], invalid = [];
+  const source = new SharedCanvas();
+  const receiver = new SharedCanvas({ onDelete: id => deleted.push(id), onInvalid: error => invalid.push(error.message) });
+  const unrelated = new Y.Doc();
+  t.after(() => { source.destroy(); receiver.destroy(); unrelated.destroy(); });
+  source.setLocal(item('box'));
+  receiver.applyUpdate(source.encodeState());
+  const updates = [];
+  unrelated.on('update', bytes => updates.push(bytes));
+  unrelated.getMap('auxiliary').set('first', 1);
+  unrelated.getMap('auxiliary').set('second', 2);
+  receiver.applyUpdate(updates[1]);
+  assert.ok(receiver.doc.store.pendingStructs);
+
+  let removal;
+  source.doc.once('update', bytes => { removal = bytes; });
+  source.entities.get('box').delete('width');
+  receiver.applyUpdate(removal);
+  assert.equal(receiver.get('box').width, 220, 'only the previously validated view is retained');
+  assert.deepEqual(deleted, []);
+  assert.deepEqual(invalid, []);
+
+  receiver.applyUpdate(updates[0]);
+  assert.equal(receiver.doc.store.pendingStructs, null);
+  assert.equal(receiver.get('box'), undefined);
+  assert.equal(receiver.cache.has('box'), false, 'the renderer cache must also discard the now-invalid record');
+  assert.deepEqual(deleted, ['box']);
+  assert.ok(invalid.includes('Invalid shared canvas coordinates.'));
+  assert.equal(receiver.deferredIds.size, 0);
+});
+
 test('field-level changes preserve a simultaneous move, resize, text edit and layer action', () => {
   const a = new SharedCanvas({ clientId: 1 }); const b = new SharedCanvas({ clientId: 2 });
   a.replaceInitial([item('one', { z: 1 }), item('two', { z: 2 }), item('three', { z: 3 })]); exchange(a, b);

@@ -66,12 +66,13 @@ function pointList(points) { return (points || []).map(p => Array.isArray(p) ? {
 
 /** A collaborative, zoomable DOM/SVG whiteboard. Only local edits call onChange. */
 export class Board {
-  constructor({ el, onChange = () => {}, onDelete = () => {}, onCursor = () => {}, onSelect = () => {}, onStatus = () => {}, onViewChange = () => {}, onEditDiagram = null, onToolChange = () => {}, onLayerAction = null, onLockChange = null, allowExternalPlantUml = false, canEdit = () => true }) {
+  constructor({ el, onChange = () => {}, onDelete = () => {}, onCursor = () => {}, onSelect = () => {}, onStatus = () => {}, onViewChange = () => {}, onEditDiagram = null, onToolChange = () => {}, onLayerAction = null, onLockChange = null, onWatchScreen = () => {}, allowExternalPlantUml = false, canEdit = () => true }) {
     this.el = el;
     this.onChange = onChange; this.onDelete = onDelete; this.onCursor = onCursor;
     this.onSelect = onSelect; this.onStatus = onStatus; this.onViewChange = onViewChange;
     this.onEditDiagram = onEditDiagram; this.onToolChange = onToolChange; this.allowExternalPlantUml = allowExternalPlantUml; this.canEdit = canEdit; this.readOnly = false;
     this.onLayerAction = onLayerAction; this.onLockChange = onLockChange; this.layerOrder = [];
+    this.onWatchScreen = onWatchScreen; this.screenSubscriptions = null; this.localParticipantId = null;
     this.entities = new Map(); this.nodes = new Map(); this.streams = new Map(); this.cursors = new Map();
     this.externalConsents = new Set(); this.selectedId = null; this.tool = 'select'; this.color = '#52765e';
     this.zoom = 1; this.pan = { x: 24, y: 24 }; this.gesture = null; this.spaceHeld = false;
@@ -354,7 +355,9 @@ export class Board {
     node.classList.toggle('is-position-locked', !!entity.locked);
     node.setAttribute('aria-label', entity.title || `${entity.type} on canvas`);
     if (node._signature === signature(entity) || this.editingId === entity.id) return;
-    node._signature = signature(entity); node.replaceChildren();
+    node._signature = signature(entity);
+    const previousVideo = node.querySelector('video'); if (previousVideo) previousVideo.srcObject = null;
+    node.replaceChildren();
     if (entity.type === 'text' || entity.type === 'sticky') this.renderText(node, entity);
     else if (entity.type === 'screen') this.renderScreen(node, entity);
     else if (entity.type === 'image') this.renderImage(node, entity);
@@ -389,15 +392,53 @@ export class Board {
     const frame = element('div', 'board-screen-frame');
     const video = document.createElement('video'); video.autoplay = true; video.playsInline = true; video.muted = true;
     video.setAttribute('aria-label', entity.title || 'Shared window video');
-    const stream = this.streams.get(entity.streamId) || this.streams.get(entity.participantId);
+    const view = this.screenView(entity);
+    const stream = view.watched ? this.streams.get(entity.streamId) || this.streams.get(entity.participantId) : null;
     if (stream) { video.srcObject = stream; video.play().catch(() => {}); }
-    const placeholder = element('div', 'board-screen-placeholder'); placeholder.append(icon('screen', 32), element('strong', '', 'Connecting to shared window'), element('span', '', 'The live view will appear here.'));
+    const placeholder = element('div', 'board-screen-placeholder');
+    placeholder.append(icon('screen', 32), element('strong', '', view.watched ? 'Connecting to shared window' : 'Window ready to watch'), element('span', '', view.watched ? 'The live view will appear here.' : 'Choose the windows you want to view.'));
+    if (view.managed && !view.local && !view.watched) placeholder.append(this.screenWatchButton(entity, false));
     placeholder.hidden = !!stream; video.hidden = !stream;
     frame.append(video, placeholder); node.append(frame);
-    if (!stream) header.querySelector('.board-live-badge').textContent = 'CONNECTING';
+    if (!stream) header.querySelector('.board-live-badge').textContent = view.watched ? 'CONNECTING' : 'NOT WATCHING';
     const footer = element('div', 'board-screen-footer');
-    footer.append(element('span', 'board-window-dot'), element('span', '', entity.title || 'Shared window'), element('span', 'board-screen-footer-end', 'Live screen'));
+    footer.append(element('span', 'board-window-dot'), element('span', 'board-screen-footer-title', entity.title || 'Shared window'));
+    if (view.managed && !view.local && view.watched) footer.append(this.screenWatchButton(entity, true));
+    else footer.append(element('span', 'board-screen-footer-end', view.watched ? 'Live screen' : 'View paused'));
     node.append(footer);
+  }
+  screenView(entity, subscriptions = this.screenSubscriptions, localParticipantId = this.localParticipantId) {
+    const participantId = entity.participantId || entity.streamId;
+    const local = localParticipantId != null && participantId === localParticipantId;
+    return { managed: subscriptions !== null, local, watched: local || subscriptions === null || subscriptions.has(participantId) };
+  }
+  screenWatchButton(entity, watched) {
+    const label = watched ? 'Pause view' : 'Watch window';
+    const control = element('button', watched ? 'board-screen-pause' : 'board-screen-watch', label);
+    control.type = 'button'; control.dataset.screenWatch = watched ? 'pause' : 'watch';
+    control.setAttribute('aria-label', `${label}: ${entity.title || 'Shared window'}`);
+    control.addEventListener('pointerdown', event => event.stopPropagation());
+    control.addEventListener('dblclick', event => event.stopPropagation());
+    control.addEventListener('keydown', event => event.stopPropagation());
+    control.addEventListener('keyup', event => event.stopPropagation());
+    control.addEventListener('click', event => {
+      event.stopPropagation();
+      this.onWatchScreen(entity.participantId || entity.streamId);
+    });
+    return control;
+  }
+  /** Local viewing choices do not change screen entities or stop another person's capture. */
+  setScreenSubscriptions(ids, localParticipantId = this.localParticipantId) {
+    const next = new Set([...(ids || [])].filter(id => typeof id === 'string' && id));
+    const previous = this.screenSubscriptions; const previousLocalId = this.localParticipantId;
+    this.screenSubscriptions = next; this.localParticipantId = localParticipantId;
+    for (const entity of this.entities.values()) {
+      if (entity.type !== 'screen') continue;
+      const before = this.screenView(entity, previous, previousLocalId); const after = this.screenView(entity);
+      if (before.managed === after.managed && before.local === after.local && before.watched === after.watched) continue;
+      const node = this.nodes.get(entity.id);
+      if (node) { node._signature = null; this.renderEntity(entity); }
+    }
   }
   setStream(participantId, stream) {
     if (stream) this.streams.set(participantId, stream); else this.streams.delete(participantId);

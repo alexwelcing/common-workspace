@@ -1,3 +1,5 @@
+import { canvasNeighbors } from './peer-topology.js';
+
 const DEFAULT_ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const ICE_CACHE_MS = 5 * 60_000;
 const ICE_EXPIRY_MARGIN_MS = 30_000;
@@ -15,8 +17,16 @@ const ASSEMBLY_TIMEOUT_MS = 60_000;
 const DATA_HIGH_WATER = 512 * 1024;
 const DATA_LOW_WATER = 128 * 1024;
 const MAX_FRAMES_PER_SECOND = 4096;
+const SCREEN_BUDGET_BITS = 1_500_000;
+const MIN_VIEWER_BITS = 180_000;
+const EARLY_SUBSCRIPTION_MS = 30_000;
+const MAX_EARLY_SUBSCRIPTIONS = 2048;
+const NEGOTIATION_RETRY_MS = 2000;
+const MAX_NEGOTIATION_RETRIES = 8;
 
-/** Direct peer connections carry one screen and the shared canvas per participant. */
+/** A bounded canvas overlay plus explicitly subscribed screen connections.
+ * A presenter still uploads one media copy per viewer; large audiences need an SFU.
+ */
 export class ScreenSharing {
   constructor({
     send,
@@ -45,6 +55,13 @@ export class ScreenSharing {
     this.localStream = null;
     this.peers = new Map();
     this.myId = null;
+    this.members = new Set();
+    this.desiredCanvasPeers = new Set();
+    this.subscriptions = new Set();
+    this.viewers = new Set();
+    this._announcedSubscriptions = new Set();
+    this._earlySubscriptions = new Map();
+    this._hasMembership = false;
     this._wantedPeers = new Set();
     this._pendingPeers = new Map();
     this._captureVersion = 0;
@@ -53,10 +70,45 @@ export class ScreenSharing {
     this._lastStatusAt = 0;
   }
 
+  /** Open canvas transport neighbors, excluding media-only connections. */
+  get dataPeerIds() {
+    return [...this.desiredCanvasPeers].filter((id) => this.peers.get(id)?.dataOpen);
+  }
+
+  /** Watch only these screen owners. This never opts the participant into capture. */
+  setSubscriptions(ids) {
+    if (this._destroyed) return Promise.resolve();
+    const next = new Set([...(ids || [])].filter((id) => typeof id === 'string' && id && id !== this.myId &&
+      (!this._hasMembership || this.members.has(id))));
+    for (const id of this.subscriptions) if (!next.has(id)) this._sendSubscription(id, false);
+    this.subscriptions = next;
+    for (const id of next) this._sendSubscription(id, true);
+    return this._reconcileRoles();
+  }
+
+  _sendSubscription(id, subscribed, force = false) {
+    if (!this.myId || !this.members.has(id) || this._destroyed) return;
+    if (!force && this._announcedSubscriptions.has(id) === subscribed) return;
+    if (subscribed) this._announcedSubscriptions.add(id); else this._announcedSubscriptions.delete(id);
+    this.send({ type: 'signal', to: id, data: { subscribe: subscribed } });
+  }
+
+  _reconcileRoles() {
+    this._wantedPeers = new Set([...this.desiredCanvasPeers, ...this.subscriptions, ...this.viewers]
+      .filter((id) => this.members.has(id)));
+    for (const [id, peer] of this.peers) {
+      if (!this._wantedPeers.has(id)) { this._closePeer(peer); this.peers.delete(id); }
+      else { this._syncCanvasRole(peer); this._emitRemote(peer); }
+    }
+    return Promise.all([...this._wantedPeers].map((id) => this._ensurePeer(id).catch((error) => {
+      this._status(`Live screen sharing is unavailable: ${error.message || 'browser connection error'}`);
+    }))).then(() => Promise.all([...this.peers.values()].map((peer) => this._updateSender(peer))));
+  }
+
   /** Queue one complete binary message. False means the peer cannot accept it. */
   sendData(peerId, bytes) {
     const peer = this.peers.get(peerId);
-    if (this._destroyed || !peer || peer.closed || peer.channel?.readyState !== 'open' ||
+    if (this._destroyed || !peer || peer.closed || !this.desiredCanvasPeers.has(peerId) || !peer.dataOpen || peer.channel?.readyState !== 'open' ||
       !(bytes instanceof Uint8Array) || bytes.byteLength > MAX_DATA_BYTES ||
       peer.dataQueuedBytes + bytes.byteLength > MAX_QUEUED_BYTES || peer.dataQueue.length >= 1024) return false;
     // The caller can reuse its buffer as soon as this method returns.
@@ -73,7 +125,7 @@ export class ScreenSharing {
 
   broadcastData(bytes) {
     let accepted = 0;
-    for (const id of this.peers.keys()) if (this.sendData(id, bytes)) ++accepted;
+    for (const id of this.desiredCanvasPeers) if (this.sendData(id, bytes)) ++accepted;
     return accepted;
   }
 
@@ -115,6 +167,7 @@ export class ScreenSharing {
         track.addEventListener('ended', this._captureEnded);
         this.onStream('local', stream);
         await Promise.all([...this.peers.values()].map((peer) => this._updateSender(peer)));
+        if (this._destroyed || version !== this._captureVersion || this.localStream !== stream) return null;
         return stream;
       } catch (error) {
         this._captureError(error);
@@ -133,8 +186,29 @@ export class ScreenSharing {
   }
 
   async handleSignal(from, data) {
-    if (this._destroyed || !data || !this._wantedPeers.has(from)) return;
+    if (this._destroyed || !data || typeof from !== 'string' || !from || from === this.myId) return;
+    if (!this.members.has(from)) {
+      // Admission and signaling can arrive before the next membership snapshot.
+      // Hold only the authenticated subscription intent, never unknown SDP.
+      if (typeof data.subscribe === 'boolean') {
+        const now = Date.now();
+        for (const [id, expires] of this._earlySubscriptions) if (expires <= now) this._earlySubscriptions.delete(id);
+        if (data.subscribe) {
+          if (!this._earlySubscriptions.has(from) && this._earlySubscriptions.size >= MAX_EARLY_SUBSCRIPTIONS) {
+            this._earlySubscriptions.delete(this._earlySubscriptions.keys().next().value);
+          }
+          this._earlySubscriptions.set(from, now + EARLY_SUBSCRIPTION_MS);
+        }
+        else this._earlySubscriptions.delete(from);
+      }
+      return;
+    }
     try {
+      if (typeof data.subscribe === 'boolean') {
+        if (data.subscribe) this.viewers.add(from); else this.viewers.delete(from);
+        await this._reconcileRoles();
+      }
+      if (!this._wantedPeers.has(from)) return;
       const peer = await this._ensurePeer(from);
       if (!peer) return;
       return this._enqueue(peer, async () => {
@@ -142,6 +216,12 @@ export class ScreenSharing {
         if (data.description) {
           const description = data.description;
           if (!['offer', 'answer'].includes(description.type) || typeof description.sdp !== 'string') return;
+          // A retry may reach a participant that already answered. Reuse its
+          // answer; an already-applied answer likewise needs no second apply.
+          if (pc.signalingState === 'stable' && pc.remoteDescription?.sdp === description.sdp) {
+            if (description.type === 'offer' && pc.localDescription?.type === 'answer') this._sendDescription(peer);
+            return;
+          }
           const readyForOffer = !peer.makingOffer &&
             (pc.signalingState === 'stable' || peer.settingRemoteAnswer);
           const collision = description.type === 'offer' && !readyForOffer;
@@ -167,10 +247,16 @@ export class ScreenSharing {
           // The answerer adopts the offered video transceiver. Creating its own
           // before the first offer would leave two independent video m-lines
           // after glare instead of one bidirectional screen connection.
-          if (!peer.transceiver) {
+          const adoptingTransceiver = !peer.transceiver;
+          if (adoptingTransceiver) {
             peer.transceiver = pc.getTransceivers().find((item) => item.receiver.track.kind === 'video');
           }
           await this._applySender(peer);
+          if (adoptingTransceiver && peer.transceiver) {
+            // The answerer now has a real sender. Rebalance other viewers too;
+            // their budget previously excluded this not-yet-negotiated sender.
+            for (const other of this.peers.values()) if (other !== peer) this._updateSender(other);
+          }
           if (typeof data.sharing === 'boolean') {
             peer.remoteSharing = data.sharing;
             this._emitRemote(peer);
@@ -205,24 +291,30 @@ export class ScreenSharing {
     }
   }
 
-  syncParticipants(participants, myId) {
+  syncParticipants(participants, myId, { reconnect = false } = {}) {
     if (this._destroyed) return Promise.resolve();
     if (this.myId && this.myId !== myId) {
       for (const peer of this.peers.values()) this._closePeer(peer);
       this.peers.clear();
+      this.viewers.clear(); this.subscriptions.clear(); this._announcedSubscriptions.clear(); this._earlySubscriptions.clear();
     }
+    const previousMembers = this.members;
     this.myId = myId;
-    this._wantedPeers = new Set((participants || []).map((person) =>
+    this.members = new Set((participants || []).map((person) =>
       typeof person === 'string' ? person : person.id).filter((id) => id && id !== myId));
-    for (const [id, peer] of this.peers) {
-      if (!this._wantedPeers.has(id)) {
-        this._closePeer(peer);
-        this.peers.delete(id);
-      }
+    this._hasMembership = true;
+    for (const id of previousMembers) if (!this.members.has(id)) this._earlySubscriptions.delete(id);
+    this.desiredCanvasPeers = new Set(canvasNeighbors(participants || [], myId));
+    for (const set of [this.subscriptions, this.viewers, this._announcedSubscriptions]) {
+      for (const id of set) if (!this.members.has(id)) set.delete(id);
     }
-    return Promise.all([...this._wantedPeers].map((id) => this._ensurePeer(id).catch((error) => {
-      this._status(`Live screen sharing is unavailable: ${error.message || 'browser connection error'}`);
-    })));
+    const now = Date.now();
+    for (const [id, expires] of this._earlySubscriptions) {
+      if (expires <= now) this._earlySubscriptions.delete(id);
+      else if (this.members.has(id)) { this.viewers.add(id); this._earlySubscriptions.delete(id); }
+    }
+    for (const id of this.subscriptions) this._sendSubscription(id, true, reconnect);
+    return this._reconcileRoles();
   }
 
   destroy() {
@@ -234,6 +326,8 @@ export class ScreenSharing {
     for (const peer of this.peers.values()) this._closePeer(peer);
     this.peers.clear();
     this._wantedPeers.clear();
+    this.members.clear(); this.desiredCanvasPeers.clear(); this.subscriptions.clear(); this.viewers.clear();
+    this._announcedSubscriptions.clear(); this._earlySubscriptions.clear();
   }
 
   _status(message) {
@@ -325,7 +419,7 @@ export class ScreenSharing {
         candidates: [], operations: Promise.resolve(), closed: false,
         remoteStream: null, remoteSharing: undefined, remoteCleanup: null,
         iceConfiguration: configuration, hasTurn: hasTurn(configuration),
-        channel: null, dataOpen: false, nextDataId: 0,
+        channel: null, dataOpen: false, canvasRole: this.desiredCanvasPeers.has(id), dataRoleVersion: 0, nextDataId: 0,
         dataQueue: [], dataQueuedBytes: 0, dataAssemblies: new Map(), dataAssemblyBytes: 0,
         dataBlobBytes: 0, dataFrames: 0, dataFrameWindow: Date.now(),
       };
@@ -343,7 +437,8 @@ export class ScreenSharing {
         peer.remoteStream = event.streams?.[0] || this.streamFactory([event.track]);
         const ended = () => {
           if (peer.remoteStream?.getVideoTracks().every((track) => track.readyState === 'ended')) {
-            this.onStream(id, null);
+            peer.remoteStream = null;
+            this._emitRemote(peer);
           }
         };
         event.track.addEventListener('ended', ended);
@@ -352,7 +447,11 @@ export class ScreenSharing {
       };
       pc.onconnectionstatechange = () => {
         clearTimeout(peer.disconnectTimer);
-        if (pc.connectionState === 'connected') peer.restarted = false;
+        if (pc.connectionState === 'connected') {
+          peer.restarted = false;
+          peer.negotiationRetries = 0;
+          clearTimeout(peer.negotiationRetryTimer); peer.negotiationRetryTimer = null;
+        }
         else if (pc.connectionState === 'failed') this._restartPeer(peer, true);
         else if (pc.connectionState === 'disconnected') {
           peer.disconnectTimer = setTimeout(() => this._restartPeer(peer, false), 10000);
@@ -363,11 +462,16 @@ export class ScreenSharing {
       // changing the media section the other participant uses for its screen.
       if (!peer.polite) {
         this._openDataChannel(peer);
-        const track = this.localStream?.getVideoTracks()[0];
+        const track = this.viewers.has(id) ? this.localStream?.getVideoTracks()[0] : null;
         peer.transceiver = pc.addTransceiver(track || 'video', {
           direction: 'sendrecv',
         });
+        peer.attachedTrack = track || null;
+      } else {
+        // This also retries an offer that arrived before membership caught up.
+        this._negotiate(peer);
       }
+      this._scheduleNegotiationRetry(peer);
       return peer;
     })().finally(() => this._pendingPeers.delete(id));
     this._pendingPeers.set(id, pending);
@@ -375,7 +479,7 @@ export class ScreenSharing {
   }
 
   _openDataChannel(peer) {
-    if (peer.closed || this._destroyed || peer.channel || peer.pc.signalingState === 'closed') return;
+    if (peer.closed || this._destroyed || !this.desiredCanvasPeers.has(peer.id) || peer.channel || peer.pc.signalingState === 'closed') return;
     try {
       this._adoptDataChannel(peer, peer.pc.createDataChannel(DATA_LABEL, { ordered: true }));
     } catch (error) {
@@ -396,10 +500,8 @@ export class ScreenSharing {
     channel.binaryType = 'arraybuffer';
     channel.bufferedAmountLowThreshold = DATA_LOW_WATER;
     channel.onopen = () => {
-      if (peer.closed || this._destroyed || peer.channel !== channel || peer.dataOpen) return;
-      peer.dataOpen = true;
-      this.onPeerOpen(peer.id);
-      this._flushData(peer);
+      if (peer.closed || this._destroyed || peer.channel !== channel) return;
+      this._syncCanvasRole(peer);
     };
     channel.onmessage = ({ data }) => this._receiveData(peer, channel, data);
     channel.onbufferedamountlow = () => this._flushData(peer);
@@ -408,7 +510,7 @@ export class ScreenSharing {
       this._clearDataChannel(peer);
       // The same deterministic offer owner recreates a closed data channel.
       // Existing video transceivers stay intact while SDP adds its replacement.
-      if (!peer.polite && !peer.closed && !this._destroyed) {
+      if (!peer.polite && !peer.closed && !this._destroyed && this.desiredCanvasPeers.has(peer.id)) {
         peer.dataReconnectTimer = setTimeout(() => this._openDataChannel(peer), 500);
         peer.dataReconnectTimer.unref?.();
       }
@@ -421,11 +523,25 @@ export class ScreenSharing {
     if (channel.readyState === 'open') queueMicrotask(() => channel.onopen?.());
   }
 
+  _syncCanvasRole(peer) {
+    const desired = this.desiredCanvasPeers.has(peer.id);
+    if (peer.canvasRole !== desired) {
+      peer.canvasRole = desired;
+      ++peer.dataRoleVersion;
+      if (!desired) this._resetDataBuffers(peer);
+    }
+    if (desired && !peer.channel && !peer.polite) this._openDataChannel(peer);
+    const open = desired && peer.channel?.readyState === 'open' && !peer.closed && !this._destroyed;
+    if (open && !peer.dataOpen) { peer.dataOpen = true; this.onPeerOpen(peer.id); }
+    else if (!open && peer.dataOpen) { peer.dataOpen = false; this.onPeerClose(peer.id); }
+    if (open) this._flushData(peer);
+  }
+
   _flushData(peer) {
     clearTimeout(peer.dataSendTimer);
     peer.dataSendTimer = null;
     const channel = peer.channel;
-    if (peer.closed || this._destroyed || channel?.readyState !== 'open') return;
+    if (peer.closed || this._destroyed || !peer.dataOpen || !this.desiredCanvasPeers.has(peer.id) || channel?.readyState !== 'open') return;
     let sent = 0;
     while (peer.dataQueue.length && sent < 64) {
       const message = peer.dataQueue[0];
@@ -460,7 +576,7 @@ export class ScreenSharing {
   }
 
   _receiveData(peer, channel, data) {
-    if (peer.closed || this._destroyed || peer.channel !== channel) return;
+    if (peer.closed || this._destroyed || !this.desiredCanvasPeers.has(peer.id) || peer.channel !== channel) return;
     if (data instanceof ArrayBuffer) return this._receiveFrame(peer, new Uint8Array(data));
     if (ArrayBuffer.isView(data)) {
       return this._receiveFrame(peer, new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
@@ -469,18 +585,20 @@ export class ScreenSharing {
     // conversions in flight so queued asynchronous reads cannot consume memory.
     if (typeof Blob !== 'undefined' && data instanceof Blob &&
       data.size <= DATA_HEADER_BYTES + DATA_CHUNK_BYTES && peer.dataBlobBytes + data.size <= MAX_ASSEMBLY_BYTES) {
+      const roleVersion = peer.dataRoleVersion;
       peer.dataBlobBytes += data.size;
       data.arrayBuffer().then((buffer) => {
-        if (!peer.closed && !this._destroyed && peer.channel === channel) {
+        if (!peer.closed && !this._destroyed && peer.channel === channel && peer.dataRoleVersion === roleVersion) {
           this._receiveFrame(peer, new Uint8Array(buffer));
         }
       }).catch(() => {}).finally(() => {
-        if (peer.channel === channel) peer.dataBlobBytes -= data.size;
+        if (peer.channel === channel && peer.dataRoleVersion === roleVersion) peer.dataBlobBytes -= data.size;
       });
     }
   }
 
   _receiveFrame(peer, frame) {
+    if (peer.closed || this._destroyed || !peer.dataOpen || !this.desiredCanvasPeers.has(peer.id)) return;
     const now = Date.now();
     if (now - peer.dataFrameWindow >= 1000) {
       peer.dataFrameWindow = now;
@@ -541,20 +659,26 @@ export class ScreenSharing {
     peer.dataExpiryTimer.unref?.();
   }
 
-  _clearDataChannel(peer) {
+  _resetDataBuffers(peer) {
     clearTimeout(peer.dataSendTimer);
     clearTimeout(peer.dataExpiryTimer);
+    peer.dataSendTimer = peer.dataExpiryTimer = null;
+    peer.dataQueue.length = 0;
+    peer.dataQueuedBytes = peer.dataAssemblyBytes = peer.dataBlobBytes = 0;
+    peer.dataAssemblies.clear();
+  }
+
+  _clearDataChannel(peer) {
+    this._resetDataBuffers(peer);
     clearTimeout(peer.dataReconnectTimer);
-    peer.dataSendTimer = peer.dataExpiryTimer = peer.dataReconnectTimer = null;
+    peer.dataReconnectTimer = null;
+    ++peer.dataRoleVersion;
     const channel = peer.channel;
     peer.channel = null;
     if (channel) {
       channel.onopen = channel.onmessage = channel.onbufferedamountlow = channel.onclose = channel.onerror = null;
       channel.close();
     }
-    peer.dataQueue.length = 0;
-    peer.dataQueuedBytes = peer.dataAssemblyBytes = peer.dataBlobBytes = 0;
-    peer.dataAssemblies.clear();
     if (peer.dataOpen) {
       peer.dataOpen = false;
       this.onPeerClose(peer.id);
@@ -584,7 +708,8 @@ export class ScreenSharing {
         return;
       }
       if (peer.pc.signalingState !== 'stable') {
-        peer.negotiateAgain = true;
+        if (peer.pc.signalingState === 'have-local-offer' && peer.pc.localDescription?.type === 'offer') this._sendDescription(peer);
+        else peer.negotiateAgain = true;
         return;
       }
       try {
@@ -597,11 +722,35 @@ export class ScreenSharing {
     });
   }
 
+  _scheduleNegotiationRetry(peer) {
+    if (!this._needsNegotiationRetry(peer) || peer.negotiationRetryTimer ||
+      (peer.negotiationRetries || 0) >= MAX_NEGOTIATION_RETRIES) return;
+    peer.negotiationRetryTimer = setTimeout(() => this._retryNegotiation(peer), NEGOTIATION_RETRY_MS);
+    peer.negotiationRetryTimer.unref?.();
+  }
+
+  _retryNegotiation(peer) {
+    clearTimeout(peer.negotiationRetryTimer); peer.negotiationRetryTimer = null;
+    if (!this._needsNegotiationRetry(peer) ||
+      (peer.negotiationRetries || 0) >= MAX_NEGOTIATION_RETRIES) return Promise.resolve();
+    peer.negotiationRetries = (peer.negotiationRetries || 0) + 1;
+    if (this.subscriptions.has(peer.id)) this._sendSubscription(peer.id, true, true);
+    const operation = this._enqueue(peer, () => this._configurePeerIce(peer)).then(() => this._negotiate(peer));
+    this._scheduleNegotiationRetry(peer);
+    return operation;
+  }
+
+  _needsNegotiationRetry(peer) {
+    return !peer.closed && !this._destroyed &&
+      (peer.pc.connectionState !== 'connected' || peer.pc.signalingState !== 'stable');
+  }
+
   _sendDescription(peer) {
     const { type, sdp } = peer.pc.localDescription;
     this.send({ type: 'signal', to: peer.id, data: {
-      description: { type, sdp }, sharing: Boolean(this.localStream),
+      description: { type, sdp }, sharing: Boolean(this.localStream && this.viewers.has(peer.id)),
     } });
+    if (type === 'offer') this._scheduleNegotiationRetry(peer);
   }
 
   _updateSender(peer) {
@@ -609,15 +758,37 @@ export class ScreenSharing {
       await this._applySender(peer);
       // replaceTrack alone does not require SDP negotiation. Publish capture
       // state separately and keep the receiver's stream stable per participant.
-      this.send({ type: 'signal', to: peer.id, data: { sharing: Boolean(this.localStream) } });
+      const sharing = Boolean(this.localStream && this.viewers.has(peer.id));
+      if (sharing !== peer.lastSentSharing) {
+        peer.lastSentSharing = sharing;
+        this.send({ type: 'signal', to: peer.id, data: { sharing } });
+      }
     });
   }
 
   async _applySender(peer) {
     if (!peer.transceiver) return; // Initial offer has not reached the answerer.
-    const track = this.localStream?.getVideoTracks()[0] || null;
-    await peer.transceiver.sender.replaceTrack(track);
+    const track = this.viewers.has(peer.id) ? this.localStream?.getVideoTracks()[0] || null : null;
+    const sender = peer.transceiver.sender;
+    if (peer.attachedTrack !== track) {
+      await sender.replaceTrack(track);
+      peer.attachedTrack = track;
+    }
     peer.transceiver.direction = 'sendrecv';
+    if (track && typeof sender.getParameters === 'function' && typeof sender.setParameters === 'function') {
+      const viewers = [...this.viewers].filter((id) => this.peers.get(id)?.transceiver && !this.peers.get(id)?.closed).length;
+      const bitrate = Math.max(MIN_VIEWER_BITS, Math.floor(SCREEN_BUDGET_BITS / Math.max(1, viewers)));
+      if (peer.senderBudgetBits !== bitrate) {
+        peer.senderBudgetBits = bitrate;
+        try {
+          const parameters = sender.getParameters() || {};
+          if (!parameters.encodings?.length) parameters.encodings = [{}];
+          parameters.encodings[0].maxBitrate = bitrate;
+          parameters.encodings[0].maxFramerate = 15;
+          await sender.setParameters(parameters);
+        } catch { /* Sender budgets are optional browser capabilities. */ }
+      }
+    }
   }
 
   async _addCandidate(peer, candidate) {
@@ -632,16 +803,23 @@ export class ScreenSharing {
   }
 
   _emitRemote(peer) {
-    this.onStream(peer.id, peer.remoteSharing === false ? null : peer.remoteStream);
+    const stream = this.subscriptions.has(peer.id) && peer.remoteSharing !== false ? peer.remoteStream : null;
+    if (stream !== (peer.emittedStream || null)) {
+      peer.emittedStream = stream;
+      this.onStream(peer.id, stream);
+    }
   }
 
   _restartPeer(peer, failed) {
     if (peer.closed || this._destroyed) return;
+    if (this.subscriptions.has(peer.id)) this._sendSubscription(peer.id, true, true);
     if (failed && (this.localStream || peer.remoteSharing)) this._status(peer.hasTurn
       ? 'A screen connection failed. Reconnecting; check your network if it continues.'
       : 'A screen connection failed. Reconnecting; this network may need a TURN relay.');
     if (!peer.restarted) {
       peer.restarted = true;
+      peer.negotiationRetries = 0;
+      this._scheduleNegotiationRetry(peer);
       return this._enqueue(peer, async () => {
         await this._configurePeerIce(peer);
         if (!peer.closed && !this._destroyed) peer.pc.restartIce?.();
@@ -653,6 +831,7 @@ export class ScreenSharing {
     peer.closed = true;
     this._clearDataChannel(peer);
     clearTimeout(peer.disconnectTimer);
+    clearTimeout(peer.negotiationRetryTimer); peer.negotiationRetryTimer = null;
     peer.remoteCleanup?.();
     peer.pc.onicecandidate = null;
     peer.pc.onnegotiationneeded = null;

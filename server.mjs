@@ -10,7 +10,6 @@ const scrypt = promisify(scryptCallback);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_TTL = 24 * 60 * 60 * 1000;
 const ROOM_TTL = 7 * 24 * 60 * 60 * 1000;
-const MAX_PARTICIPANTS = 10;
 const MAX_ENTITIES = 1000;
 const MAX_ROOM_BYTES = 24 * 1024 * 1024;
 const COLORS = ['#7867ef', '#e3a444', '#4aa3b9', '#df7b9d', '#75b790', '#d27b58', '#8b9ed5', '#ba91ce', '#9baf5f', '#68b3aa'];
@@ -135,7 +134,6 @@ export async function createApp(options = {}) {
   };
   const broadcast = (room, message, except) => { for (const p of room.participants.values()) if (p.id !== except) send(p.socket, message); };
   const participants = room => [...room.participants.values()].filter(p => p.socket?.readyState === WebSocket.OPEN).map(publicParticipant);
-  const count = room => [...room.participants.values()].filter(p => p.expiresAt > Date.now() && (p.socket?.readyState === WebSocket.OPEN || p.reservedUntil > Date.now())).length;
   function addParticipant(room, name, isAdmin) {
     const token = randomId(32);
     const id = randomId(10);
@@ -266,9 +264,8 @@ export async function createApp(options = {}) {
           if (typeof input.password !== 'string' || input.password.length > 128) throw httpError(401, 'WRONG_PASSWORD', 'That password does not match.');
           const actual = await scrypt(input.password, room.passwordSalt, 64);
           if (!timingSafeEqual(Buffer.from(room.passwordHash, 'hex'), actual)) throw httpError(401, 'WRONG_PASSWORD', 'That password does not match.');
-          // Check after the asynchronous password work, so concurrent joins cannot overbook.
+          // Revalidate after the asynchronous password work; the host may have ended the room.
           if (!rooms.has(room.id)) throw httpError(404, 'ROOM_NOT_FOUND', 'This session has ended.');
-          if (count(room) >= MAX_PARTICIPANTS) throw httpError(409, 'ROOM_FULL', 'This session already has ten people.');
           const { participant, token } = addParticipant(room, displayName, false);
           await persist();
           return json(res, 200, { room: publicRoom(room), token, participantId: participant.id, isAdmin: false });
@@ -308,10 +305,6 @@ export async function createApp(options = {}) {
       const token = url.searchParams.get('token');
       const participant = token && token.length <= 128 && room?.participants.get(hashToken(token));
       if (!room || !participant || participant.expiresAt <= Date.now() || room.expiresAt <= Date.now()) throw httpError(401, 'UNAUTHORIZED', 'Session expired');
-      const existing = participant.socket?.readyState === WebSocket.OPEN;
-      const reserved = participant.reservedUntil > Date.now();
-      if (!existing && !reserved && count(room) >= MAX_PARTICIPANTS) throw httpError(409, 'ROOM_FULL', 'Room full');
-      // Reserve synchronously before completing an upgrade.
       participant.reservedUntil = Date.now() + reservationMs;
       wss.handleUpgrade(req, socket, head, ws => {
         const oldSocket = participant.socket;
