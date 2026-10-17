@@ -1,0 +1,76 @@
+:host {
+  all: initial;
+  display: block;
+  color: #273d32;
+  color-scheme: light;
+  font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+button { font: inherit; cursor: pointer; }
+button:focus-visible { outline: 3px solid #7ba58b; outline-offset: 3px; }
+.common-embed-launcher {
+  position: fixed;
+  right: 20px;
+  bottom: 18px;
+  z-index: 2147482001;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 11px 18px;
+  border: 1px solid #355f48;
+  border-radius: 999px;
+  background: #355f48;
+  color: #fff;
+  box-shadow: 0 5px 20px #182a2529;
+  font-weight: 650;
+}
+.common-embed-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 78px;
+  z-index: 2147482000;
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, calc(100vw - 40px));
+  height: min(800px, calc(100dvh - 104px));
+  min-height: 240px;
+  overflow: hidden;
+  border: 1px solid #dce4dc;
+  border-radius: 16px;
+  background: #fafbf8;
+  box-shadow: 0 14px 65px #13241b38;
+}
+:host([data-open="false"]) .common-embed-panel { visibility: hidden; pointer-events: none; }
+.common-embed-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 47px;
+  padding: 8px 12px 8px 17px;
+  border-bottom: 1px solid #e2e7df;
+  background: #f8faf5;
+}
+.common-embed-close {
+  margin-left: auto;
+  min-height: 32px;
+  padding: 5px 11px;
+  border: 1px solid #d6dfd4;
+  border-radius: 8px;
+  background: #fff;
+  color: #304b3b;
+}
+.common-embed-frame { display: block; flex: 1 1 auto; width: 100%; min-height: 0; border: 0; background: #f8f9f6; }
+.common-embed-status { margin: 0; padding: 14px 17px; color: #4d6455; border-bottom: 1px solid #e2e7df; background: #fffdf5; }
+.common-embed-indicator { font-size: 11px; font-weight: 650; color: #9d361e; background: #fff0df; border: 1px solid #ebccb8; border-radius: 999px; padding: 3px 8px; white-space: nowrap; }
+:host([data-mode="inline"]) { position: relative; height: 100%; min-height: 320px; }
+:host([data-mode="inline"]) .common-embed-panel { position: relative; inset: auto; width: 100%; height: 100%; min-height: 320px; box-shadow: none; }
+:host([data-mode="inline"]) .common-embed-launcher { position: relative; inset: auto; }
+:host([data-mode="inline"][data-open="false"]) .common-embed-panel { position: absolute; inset: 0; }
+:host([data-mode="inline"][data-open="true"]) .common-embed-launcher { display: none; }
+@media (max-width: 640px) {
+  .common-embed-panel { right: 8px; bottom: 76px; width: calc(100vw - 16px); height: calc(100dvh - 92px); border-radius: 12px; }
+  .common-embed-launcher { right: 12px; bottom: 14px; }
+}

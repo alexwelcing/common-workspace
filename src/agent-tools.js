@@ -1,4 +1,5 @@
 import './agent-tools.css';
+import { appPath } from './app-path.js';
 import { AGENT_CAPABILITIES } from './agent-api.js';
 
 const MAX_IMAGE_BYTES = Math.floor(1.3 * 1024 * 1024);
@@ -130,7 +131,7 @@ export function installAgentTools({
   const permissionStatus = element('p', 'agent-permission-status');
   permissionStatus.setAttribute('aria-live', 'polite');
   const instructions = element('a', 'agent-instructions', 'Agent instructions ↗');
-  instructions.href = '/agents.md';
+  instructions.href = appPath('/agents.md');
   instructions.target = '_blank';
   instructions.rel = 'noopener';
   scroll.append(intro, consent, permissionStatus, instructions);

@@ -12,6 +12,8 @@
     "media:export": "bun scripts/media-worker.mjs",
     "build": "bun scripts/build.mjs",
     "build:local": "bun scripts/build-local.mjs",
+    "build:module": "bun scripts/build-module.mjs",
+    "pack:module": "bun scripts/pack-module.mjs",
     "start": "bun server.mjs",
     "lint": "oxlint scripts vite.config.js",
     "test": "bun test ./tests/*.test.mjs",

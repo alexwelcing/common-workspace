@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your app, with Common inside</title>
+  <style>
+    :root { color-scheme: light; font: 15px/1.5 system-ui, sans-serif; color: #34483b; background: #fbf8f0; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input { font: inherit; }
+    button { min-height: 40px; border: 1px solid #d7ddce; border-radius: 10px; padding: 8px 14px; color: #365d49; background: #fffef9; cursor: pointer; }
+    button:hover { background: #e7eddf; }
+    button:focus-visible, input:focus-visible { outline: 2px solid #365d49; outline-offset: 3px; }
+    button:disabled { opacity: .5; cursor: default; }
+    header, main { width: min(1280px, calc(100% - 40px)); margin: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 28px 0; }
+    .brand { font-weight: 650; letter-spacing: -.4px; }
+    .brand small { display: block; color: #697565; font-weight: 400; font-size: 12px; margin-top: 3px; }
+    .primary { background: #365d49; border-color: #365d49; color: #fffef9; }
+    .primary:hover { background: #294a38; }
+    .intro { max-width: 760px; margin: 8px 0 30px; }
+    .eyebrow { color: #697565; font-size: 11px; letter-spacing: 1.6px; text-transform: uppercase; }
+    h1 { font: 400 clamp(30px, 4vw, 43px)/1.15 Georgia, serif; letter-spacing: -.7px; margin: 12px 0 14px; }
+    p { color: #697565; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+    .card { background: #fffef9; border: 1px solid #e3dfd3; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 16px #34483b06; }
+    .card-head { padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; gap: 14px; border-bottom: 1px solid #e3dfd3; }
+    .card-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+    .card-head p { font-size: 12px; margin: 3px 0 0; }
+    #inline-mount { position: relative; height: 650px; }
+    .waiting { position: absolute; inset: 0; display: grid; place-content: center; padding: 30px; text-align: center; color: #697565; pointer-events: none; }
+    .waiting[hidden] { display: none; }
+    .side { display: grid; gap: 16px; }
+    .side .card { padding: 19px; }
+    .side h2 { margin: 0 0 8px; font-size: 14px; }
+    .side p, .side label { font-size: 12px; }
+    .counter { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 18px; }
+    #host-count { font-size: 30px; font-weight: 500; font-variant-numeric: tabular-nums; }
+    .field { display: flex; gap: 6px; margin-top: 14px; }
+    .field input { min-width: 0; width: 100%; border: 1px solid #e3dfd3; border-radius: 8px; padding: 9px; color: #34483b; background: #fbf8f0; font-size: 12px; }
+    .field button { padding: 7px 10px; font-size: 12px; }
+    output, pre { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, monospace; background: #f3f4e9; border-radius: 8px; padding: 10px; margin-top: 12px; }
+    .status { font-size: 12px; color: #697565; min-height: 18px; margin: 0; }
+    .status.error { color: #944b38; }
+    .auth-toggle { display: flex; align-items: center; gap: 8px; margin: 15px 0 8px; }
+    .auth-toggle input { accent-color: #365d49; width: 17px; height: 17px; }
+    #auth-note { line-height: 1.6; margin-bottom: 0; }
+    .bottom { padding: 22px 0 80px; display: flex; justify-content: space-between; gap: 16px; color: #697565; font-size: 12px; }
+    .bottom button { min-height: 32px; font-size: 12px; }
+    @media (max-width: 920px) { .layout { grid-template-columns: 1fr; } .side { grid-template-columns: repeat(2, minmax(0, 1fr)); } #inline-mount { height: 600px; } }
+    @media (max-width: 580px) { header, main { width: calc(100% - 24px); } header { padding: 20px 0; } header > button { max-width: 130px; font-size: 12px; } .side { grid-template-columns: 1fr; } .card-head { padding: 14px; } .card-head button { font-size: 12px; } .bottom { flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <header><div class="brand">Your existing app<small>A native Bun server. A little room for collaboration.</small></div><button class="primary" id="open-floating" disabled>Open floating canvas</button></header>
+  <main>
+    <section class="intro"><div class="eyebrow">A working embedding example</div><h1>Make a little space for Common.</h1><p>The canvas below and the floating launcher have separate namespaces. The host app's counter, health endpoint, and echo WebSocket keep working alongside both.</p></section>
+    <div class="layout">
+      <section class="card"><div class="card-head"><div><h2>Inline workspace</h2><p id="inline-status" class="status" role="status">Preparing the Common mount…</p></div><button id="toggle-inline" disabled>Hide canvas</button></div><div id="inline-mount"><div id="inline-waiting" class="waiting">Loading the host application…</div></div></section>
+      <aside class="side">
+        <section class="card"><h2>The host app still works</h2><p>This counter belongs to <code>/api/counter</code>. Opening or closing Common does not reset it.</p><div class="counter"><span id="host-count">—</span><button id="increment">Add one</button></div><button id="probe-host" style="margin-top:14px;width:100%">Check host health</button><output id="health-output" aria-live="polite">Connecting to /api/health…</output></section>
+        <section class="card"><h2>Your original WebSocket</h2><p><code>/echo</code> uses the host's original handlers. Common has its own sockets under each mount.</p><div class="field"><input id="echo-message" value="Hello from the host app" aria-label="Echo message"><button id="send-echo">Send</button></div><output id="echo-output" aria-live="polite">Connecting to /echo…</output></section>
+        <section class="card"><h2>Optional host sign-in demo</h2><label class="auth-toggle"><input id="demo-auth" type="checkbox" disabled>Signed in to the demo host</label><p id="auth-note">Checking whether the demonstration gate is enabled…</p></section>
+        <section class="card"><h2>Floating workspace</h2><p>A second mount uses <code>/common-floating/</code>. Its canvas and room storage stay separate from the inline mount.</p><p id="floating-status" class="status" role="status">Not mounted yet.</p><p>Hiding a workspace keeps its session active. Destroying it releases its media and session.</p></section>
+      </aside>
+    </div>
+    <div class="bottom"><span>Common is embedded in this app. It owns no additional listener.</span><button id="reload-mounts" disabled>Destroy and remount both canvases</button></div>
+  </main>
+  <div id="floating-mount"></div>
+  <script type="module">
+    import { mountCommon } from '/vendor/common-client.js';
+    const $ = selector => document.querySelector(selector);
+    let inline, floating, hostState, echo, generation = 0, shuttingDown = false;
+    const status = (selector, text, error = false) => { const node = $(selector); node.textContent = text; node.classList.toggle('error', error); };
+    async function json(url, options) { const response = await fetch(url, options); if (!response.ok) throw new Error(`${url} returned ${response.status}: ${await response.text()}`); return response.json(); }
+    async function probeHost() {
+      hostState = await json('/api/health'); $('#host-count').textContent = hostState.counter;
+      $('#health-output').textContent = `Host healthy · counter ${hostState.counter}\nCommon mounts: ${hostState.mounts.join(', ')}`;
+      $('#demo-auth').disabled = !hostState.authDemo; $('#demo-auth').checked = hostState.signedIn;
+      $('#auth-note').textContent = hostState.authDemo ? 'This checkbox sets a demonstration cookie. It is not production authentication. Both Common mounts check the host cookie before HTTP access and WebSocket admission.' : 'The gate is off. Start with DEMO_AUTH=1 to try an existing-app cookie check. This example is not a production sign-in system.';
+      return hostState;
+    }
+    async function destroyMounts() {
+      generation++; const old = [inline, floating].filter(Boolean); inline = floating = null;
+      $('#toggle-inline').disabled = true; $('#open-floating').disabled = true; $('#reload-mounts').disabled = true;
+      await Promise.all(old.map(controller => controller.destroy()));
+    }
+    async function mountBoth() {
+      await destroyMounts();
+      if (shuttingDown) return;
+      if (hostState.authDemo && !hostState.signedIn) { $('#inline-waiting').hidden = false; $('#inline-waiting').textContent = 'Use the host sign-in toggle to load both Common canvases.'; status('#inline-status', 'Waiting for host sign-in.'); status('#floating-status', 'Waiting for host sign-in.'); return; }
+      const current = generation;
+      $('#inline-waiting').hidden = true;
+      status('#inline-status', 'Opening the inline canvas…'); status('#floating-status', 'Floating launcher ready. Open it when you need it.');
+      try {
+        inline = mountCommon({ target: $('#inline-mount'), basePath: '/common-inline/', mode: 'inline',
+          onReady: () => { if (current === generation) status('#inline-status', 'Inline canvas ready · /common-inline/'); },
+          onOpenChange: open => { $('#toggle-inline').textContent = open ? 'Hide canvas' : 'Show canvas'; },
+          onError: error => { if (current === generation) status('#inline-status', `${error.code || 'Common error'}: ${error.message}`, true); },
+        });
+        floating = mountCommon({ target: $('#floating-mount'), basePath: '/common-floating/', mode: 'floating', open: false,
+          onReady: () => { if (current === generation) status('#floating-status', 'Floating canvas ready · /common-floating/'); },
+          onOpenChange: open => { $('#open-floating').textContent = open ? 'Hide floating canvas' : 'Open floating canvas'; },
+          onError: error => { if (current === generation) status('#floating-status', `${error.code || 'Common error'}: ${error.message}`, true); },
+        });
+        $('#toggle-inline').disabled = false; $('#open-floating').disabled = false; $('#reload-mounts').disabled = false;
+        $('#toggle-inline').textContent = 'Hide canvas'; $('#open-floating').textContent = 'Open floating canvas';
+        // The floating mount stays lazy until opened. Awaiting ready() would
+        // explicitly load it even while closed, which is unnecessary here.
+        void inline.ready().catch(error => { if (current === generation) status('#inline-status', error.message, true); });
+      } catch (error) { status('#inline-status', `Could not mount Common: ${error.message}`, true); }
+    }
+    function connectEcho() {
+      if (echo?.readyState === WebSocket.OPEN || echo?.readyState === WebSocket.CONNECTING) return;
+      const url = new URL('/echo', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      echo = new WebSocket(url);
+      echo.addEventListener('message', event => { $('#echo-output').textContent = String(event.data); });
+      echo.addEventListener('error', () => { $('#echo-output').textContent = 'The host echo connection failed. Check the Bun server, then press Send to reconnect.'; });
+      echo.addEventListener('close', () => { if (!shuttingDown) $('#echo-output').textContent = 'Host echo closed. Press Send to reconnect.'; });
+    }
+    $('#increment').onclick = async () => { try { $('#host-count').textContent = (await json('/api/counter', { method: 'POST' })).count; } catch (error) { $('#health-output').textContent = error.message; } };
+    $('#probe-host').onclick = () => { void probeHost().catch(error => { $('#health-output').textContent = error.message; }); };
+    $('#toggle-inline').onclick = () => inline?.toggle(); $('#open-floating').onclick = () => floating?.toggle();
+    $('#reload-mounts').onclick = () => { void mountBoth(); };
+    $('#send-echo').onclick = () => { connectEcho(); const text = $('#echo-message').value; if (echo.readyState === WebSocket.OPEN) echo.send(text); else echo.addEventListener('open', () => echo.send(text), { once: true }); };
+    $('#demo-auth').onchange = async event => {
+      const wanted = event.target.checked; event.target.disabled = true;
+      try { await destroyMounts(); await json('/api/demo-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signedIn: wanted }) }); await probeHost(); await mountBoth(); }
+      catch (error) { status('#inline-status', `Host sign-in demo failed: ${error.message}`, true); event.target.disabled = false; }
+    };
+    window.addEventListener('pagehide', () => { shuttingDown = true; echo?.close(); void destroyMounts(); }, { once: true });
+    connectEcho();
+    probeHost().then(mountBoth).catch(error => { $('#health-output').textContent = error.message; status('#inline-status', 'The host app could not initialize. Check the Bun server console.', true); });
+  </script>
+</body>
+</html>

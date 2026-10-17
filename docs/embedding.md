@@ -1,0 +1,190 @@
+# Embed Common in a Bun application
+
+Common can run inside an existing Bun application as a canvas panel or a floating workspace. The host owns the HTTP listener, routes, WebSocket server, and authentication. Common mounts its assets and room service beneath one path; it does not start a second server or open a hidden port.
+
+This module is being developed on `feature/embeddable-common`. It has not been deployed to the production Common site. The [standalone app](https://github.com/alexwelcing/common-workspace/blob/feature/embeddable-common/README.md#run-on-your-own-laptop) remains available separately. Source links in this guide require access to the private repository.
+
+## Obtain the package
+
+An administrator can provide the built package directly. Install that file in your Bun application:
+
+```sh
+bun add /absolute/path/common-workspace-0.1.0-embed.0.tgz
+```
+
+You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
+
+To build the package from an authorized source checkout, use Bun 1.4.3:
+
+```sh
+bun install --frozen-lockfile
+bun run pack:module
+```
+
+This builds the package and writes `artifacts/common-workspace-0.1.0-embed.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build.
+
+## Choose how Common appears
+
+Use an inline panel when the canvas belongs beside your product's existing controls. Use the overlay mode for a floating Common workspace that a person can open while using the rest of your tool. Both modes load the same isolated Common interface in a same-origin iframe; the host does not need React, another UI framework, or Common's internal canvas classes.
+
+The default mount path is `/__common/`. Use the same path in the server and browser configuration. A different prefix lets Common coexist with your own `/api`, `/ws`, and page routes. Keep one Common service instance per intended room store; creating a new instance on every request would create a new in-memory service on every request.
+
+## Attach to your Bun server
+
+Create the service once, then compose it with your existing handlers:
+
+```js
+import { createCommon } from 'common-workspace/bun';
+
+const common = await createCommon({ basePath: '/__common/' });
+
+const server = Bun.serve({
+  port: 3000,
+  fetch: common.wrapFetch((request, server) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/health') return new Response('Host is running');
+    // Your other HTTP routes and WebSocket upgrades go here.
+    return new Response('Not found', { status: 404 });
+  }),
+  websocket: common.wrapWebSocket({
+    message(socket, message) {
+      // Handles your application's sockets, not Common's sockets.
+      socket.send(message);
+    },
+  }),
+});
+
+// During your host application's shutdown:
+// await common.close();
+// server.stop();
+```
+
+`wrapFetch` tries Common's prefix first and passes unmatched requests to your handler. `wrapWebSocket` dispatches Common-owned sockets to Common and your other sockets to the handlers you supply. Keep your own socket upgrade and authentication logic in the host handler. Your existing WebSocket options are retained; choose limits that also accommodate Common's messages when changing server-wide options.
+
+The server options are:
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `basePath` | `/__common/` | Same-origin mount prefix; normalized with a trailing slash. |
+| `authorize` | No host-level check | Your asynchronous host-session authorization hook. |
+| `dataFile` | `null` | Optional JSON room-state file; otherwise rooms stay in memory. |
+| `env` | Private profile only; no process environment inheritance | Explicit environment object or `(name) => value` function for network policy, TURN, and diagnostics. |
+| `assetsDir` | Packaged frontend | Override only when deliberately supplying a compatible built frontend. |
+
+Pass selected settings through `env` when configuring organization TURN, a diagram renderer, or diagnostics. `env: process.env` explicitly opts into the full host environment; without it, unrelated host settings do not alter Common's private defaults.
+
+For a complete host page, inline and floating mounts, and an existing WebSocket echo route, see [the Bun example](https://github.com/alexwelcing/common-workspace/blob/feature/embeddable-common/examples/bun-embed/README.md). It uses the installed tarball directly and needs no frontend build tool.
+
+## Mount the browser panel
+
+In your browser entry point, mount after the target element exists. Give an inline container enough height for the canvas, for example `min-height: 620px`:
+
+```js
+import { mountCommon } from 'common-workspace/client';
+
+const canvas = mountCommon({
+  target: document.querySelector('#collaboration-panel'),
+  basePath: '/__common/',
+  mode: 'inline',
+  onError(error) {
+    console.error(error.code, error.message);
+  },
+});
+
+await canvas.ready();
+```
+
+For a floating launcher and overlay, mount into the page body instead:
+
+```js
+const canvas = mountCommon({
+  target: document.body,
+  basePath: '/__common/',
+  mode: 'overlay',
+});
+```
+
+Inline mode opens immediately; overlay mode starts closed and loads Common on its first opening. Calling `ready()` or an `agent` method also starts that load. Set `open: true` or `false` to choose visibility explicitly. Optional `roomId` opens an existing room's join view; it does not supply its password. `onReady(controller)`, `onError(error)`, and `onOpenChange(isOpen)` let your host reflect the panel's state. Readiness means the embedded interface is initialized, not that someone has joined a room or granted an agent access.
+
+If your host has no browser bundler, serve the installed client export as a JavaScript module from your existing server:
+
+```js
+if (url.pathname === '/common-client.js') {
+  return new Response(Bun.file(new URL(import.meta.resolve('common-workspace/client'))), {
+    headers: { 'Content-Type': 'text/javascript; charset=utf-8' },
+  });
+}
+```
+
+Then import `mountCommon` from `/common-client.js` in a browser `<script type="module">`. The [example](https://github.com/alexwelcing/common-workspace/blob/feature/embeddable-common/examples/bun-embed/README.md) shows the complete route and HTML.
+
+The returned controller provides:
+
+| Method | Behavior |
+| --- | --- |
+| `open()`, `close()`, `toggle()` | Show or hide this panel. |
+| `ready()` | Await the current iframe's initialization; call again after a frame reload. |
+| `agent.describe()`, `agent.state(options?)` | Read the embedded agent interface and state, subject to its current permissions. |
+| `agent.execute(command, options?)`, `agent.batch(commands, options?)` | Call the existing command API; optional `options.signal` cancels pending work. |
+| `destroy()` | Asynchronously stop the embedded session and remove its iframe and launcher; safe to call repeatedly. |
+
+Closing the panel **does not stop sharing or recording**. The launcher continues to show their status, and reopening preserves the room. Incoming video subscriptions pause while hidden. Call `await canvas.destroy()` when your host view is removed or the person signs out; destruction stops captures, revokes agent access, and closes the embedded connections. Destroy and mount again to change the prefix or initially selected room.
+
+## Host authentication and room access
+
+The optional `authorize(request, { kind })` hook receives the original host request. `kind` is `http` or `websocket`. Return `true` to allow it, `false` to deny it, or a `Response` to supply your own response. The hook may be asynchronous. It runs for every matched Common route, including frontend assets and WebSocket upgrades, so your existing session cookie can protect the whole mount.
+
+Host authorization and Common room passwords serve different purposes. Passing your host's session check does not skip a room's password or grant an agent control of the canvas. The iframe is same-origin, so normal same-origin session cookies remain available; keep bearer credentials out of iframe URLs and invite links.
+
+The hook checks requests and WebSocket admission; it does not continuously recheck an established socket. Destroy the browser mount when the person signs out. If your host requires immediate server-side revocation of existing sessions, account for those open connections in its session design.
+
+The server's `matches(request)` checks the mount boundary. `fetch(request, server)` returns `null` for an unmatched route, a `Response` for a handled request, and `undefined` after a successful Bun WebSocket upgrade. Do not turn that successful upgrade into a fallback HTTP response. Use the provided wrappers when combining Common with an existing fetch or WebSocket handler.
+
+## Agents remain visible and opt in
+
+Embedding does not grant agent access. A person opens **Agent tools** in Common and chooses the current tab's permissions and duration. Canvas read/edit access is separate from capture and recording permissions, and grants expire or can be revoked. Your product can explain this step, but it should not silently enable access when the panel opens.
+
+The agent command runner and agent API live inside the Common iframe. A browser agent can use the labeled controls there. A JavaScript-capable integration must follow its own browser tooling policy and the current Common grant; embedding is not a permission bypass. See the packaged `agents.md`, `agent-api.md`, and `agent-tools.json` beneath your mount path for the actual interface and command schemas.
+
+The controller's `agent` methods are asynchronous proxies into that iframe. For example, after a person grants read access:
+
+```js
+const response = await canvas.agent.execute({ action: 'canvas.inspect' });
+if (!response.ok) console.error(response.error.code, response.error.message);
+```
+
+Agent command failures use the existing `{ ok: false, error: { code, message } }` envelope. Mount, readiness, reload, and destruction failures can instead reject with `CommonEmbedError`; use its `code` and `message` in your host's error handling. A reloaded or destroyed frame cancels pending work rather than forwarding it into a new session.
+
+## Screen sharing and capture
+
+Serve the host application over trusted HTTPS for team use. Browsers also permit `http://localhost` for development. The host page's Permissions Policy must permit `display-capture` for its same-origin Common frame. A parent policy that denies capture cannot be loosened by the iframe.
+
+Sharing still requires a person's click inside Common and the browser's native screen/window picker. Loading Common, mounting an iframe, opening the overlay, or granting an agent permission does not capture a window automatically. The browser decides which capture sources can be offered; Common cannot silently select your application's tab or another cross-origin page. Sharing pixels does not grant remote control of the source application.
+
+The same-origin iframe is an integration boundary, not a separate security origin from your host application. Cross-origin embedding is not provided by this module. The SDK supplies the iframe's capture permissions and sandbox attributes; overriding them can block scripts, storage, downloads, or capture. Keep your host's Content Security Policy compatible with same-origin frames and Common's scripts, styles, connections, and assets.
+
+## Storage, networking, and lifetime
+
+The module defaults to an in-memory room service and the private network profile. It does not write a room database unless you explicitly configure `dataFile`. Restarting an in-memory service removes its room access, presence, and chat state. Peer canvas content and shared images live in participating browsers; live video travels between peers. Personal-canvas browser storage is scoped to the installation's mount path.
+
+The private profile uses bundled fonts and does not select public STUN or PlantUML services by default. Mermaid renders locally. Your host can explicitly configure organization STUN/TURN or a diagram renderer when needed. A reachable host page does not guarantee a WebRTC connection: restrictive networks may still need a reachable TURN relay. There is no included SFU, media relay, hosted account requirement, or automatic Cloudflare tunnel.
+
+One service instance owns one process's room state. Mounting it on multiple unrelated application replicas does not synchronize those stores. Keep a single owner for a room, or design shared admission, signaling, and presence before spreading requests across replicas. Canvas traffic uses a bounded-neighbor peer network, but every participant still holds the canvas document, and a presenter uploads video separately to each viewer. There is no promised room size or unlimited video audience.
+
+Call `close()` during your application's shutdown to stop Common-owned sockets and state. It leaves your host listener under your control. Remove the browser mount when its host view is destroyed, so captures and connections do not survive an abandoned panel.
+
+## Check it in your tool
+
+Open the integrated host in two separate browser profiles. Confirm your own pages and WebSockets still work, host authentication protects the Common mount, and both profiles can join the same password-protected room. Add text, resize and reorder an object, approve a window share, and choose **Watch window** in the other profile. Then hide and reopen the panel, revoke an agent grant, and remove the mount while sharing to confirm its visible lifecycle.
+
+Use **Canvas options → Connection details** for transport and peer states, or download its report when diagnosing a problem. Reports contain counts, states, build information, and generated request IDs, without canvas content, room IDs, credentials, or recordings. Check the host's route and upgrade handling first if assets load but a room cannot connect.
+
+| Error or symptom | What to check |
+| --- | --- |
+| `SDK_UNAUTHORIZED`, `SDK_FORBIDDEN`, or `SDK_SIGN_IN_REQUIRED` | Sign in through your host page first. Check the authorization hook; an embedded sign-in redirect is not a substitute for host authentication. |
+| `SDK_ROUTE_NOT_FOUND` or `SDK_READY_TIMEOUT` | Server and browser `basePath` must match, and Common's built assets must be installed. |
+| `SDK_STYLESHEET_ERROR` | Allow the mount's `embed.css` through host authentication and Content Security Policy. |
+| `UPGRADE_UNAVAILABLE` | Pass Bun's `server` argument to Common's fetch handler; the wrapper does this for you. |
+| `SDK_FRAME_RELOADED` or `SDK_DESTROYED` | Await the current frame's readiness, or create a new mount after destruction. Reconsider an interrupted command before retrying. |
+| `PERMISSION_DENIED` or `GRANT_EXPIRED` | Let the person review and grant the required agent permissions in Common. |
+| Page and room work, but no live window appears | Approve sharing, select **Watch window**, and check browser/OS capture permissions, trusted HTTPS, host Permissions Policy, and peer connectivity. |

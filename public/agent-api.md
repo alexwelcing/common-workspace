@@ -2,7 +2,9 @@
 
 Common exposes the current browser canvas through `window.commonAgent` and a visible **Agent tools** panel. This supports product walkthrough annotations, text and diagrams, imports from an agent's image generator, canvas snapshots, and local video recordings. It does not run an agent, navigate the product being demonstrated, provide a model API key, or expose a remote MCP server.
 
-Discovery files are served at [`/agents.md`](agents.md) and [`/.well-known/agent.json`](.well-known/agent.json) on the current app's origin, including local installations. [`/agent-tools.json`](agent-tools.json) supplies machine-readable tool descriptions, JSON input schemas, and required capabilities from the same registry used by the browser adapter. These files describe the interfaces; they do not imply that every agent client automatically discovers them.
+Discovery files are served at [`agents.md`](agents.md) and [`.well-known/agent.json`](.well-known/agent.json), relative to the current Common mount, including local and embedded installations. [`agent-tools.json`](agent-tools.json) supplies machine-readable tool descriptions, JSON input schemas, and required capabilities from the same registry used by the browser adapter. For example, the default embedded mount serves schemas at `/__common/agent-tools.json`; keep requests beneath that mount. These files describe the interfaces; they do not imply that every agent client automatically discovers them.
+
+In an embedded installation, `window.commonAgent` and **Agent tools** belong to the Common iframe. The host's `mountCommon` controller exposes asynchronous `agent.describe()`, `agent.state()`, `agent.execute()`, and `agent.batch()` proxies; no parent-window global or automatic permission grant is installed.
 
 ## Access from a browser agent
 
@@ -72,7 +74,7 @@ Common error codes include `AGENT_DISABLED`, `PERMISSION_DENIED`, `GRANT_EXPIRED
 
 When a browser implements `document.modelContext.registerTool`, Common registers only tools permitted by the current grant. Revocation, expiry, or session change removes those registrations and aborts their pending work. Unsupported browsers keep the JSON runner and `window.commonAgent`; no extension or hosted service is required for those interfaces.
 
-Tool names use `common_` plus the action with periods changed to underscores, such as `common_canvas_add`. Tool arguments omit `action`: `{entity:{type:"text",text:"Walkthrough"},requestId:"intro-1"}` maps to the normal `canvas.add` command. Tool execution returns a JSON string containing the same success/error envelope. Consult `/agent-tools.json` rather than guessing fields. This browser integration is experimental and creates no remote MCP HTTP endpoint.
+Tool names use `common_` plus the action with periods changed to underscores, such as `common_canvas_add`. Tool arguments omit `action`: `{entity:{type:"text",text:"Walkthrough"},requestId:"intro-1"}` maps to the normal `canvas.add` command. Tool execution returns a JSON string containing the same success/error envelope. Consult [agent-tools.json](agent-tools.json) beneath the current mount rather than guessing fields. This browser integration is experimental and creates no remote MCP HTTP endpoint.
 
 ## Commands
 
