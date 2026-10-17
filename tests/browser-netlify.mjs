@@ -149,7 +149,7 @@ let host, guest, late, roomUrl, targetId;
 const password = `Common-Netlify-${Date.now()}`;
 try {
   await check('production assets and the WebAssembly kernel load', async () => {
-    host = await newPage(); await host.goto(baseUrl); await host.locator('#engine-label[title="wasm"]').waitFor(); assert.equal(await host.locator('.board-entity').count(), 9);
+    host = await newPage(); await host.goto(baseUrl); await host.locator('#engine-label[title="wasm"]').waitFor(); assert.equal(await host.locator('[data-entity-id="welcome"]').count(), 1);
   });
   await check('host creates a password-protected peer room through the polling backend', async () => {
     await host.locator('#new-session').click(); await host.locator('input[name="name"]').fill('Netlify team smoke'); await host.locator('input[name="displayName"]').fill('Polling host'); await host.locator('input[name="password"]').fill(password); await host.locator('#create-form .modal-submit').click(); await host.locator('#invite-link').waitFor(); roomUrl = await host.locator('#invite-link').inputValue(); assert.match(roomUrl, /\/room\/[A-Za-z0-9_-]+$/); assert.ok(!roomUrl.includes(password)); await host.locator('#done-invite').click(); await connected(host);
@@ -196,7 +196,7 @@ try {
     }
   });
   await check('host ends the room and every participant receives the end event', async () => {
-    await host.locator('#room-menu').click(); await host.locator('#end-room').click(); await host.locator('#confirm-end').click(); await Promise.all([host, guest, late].map(page => page.locator('#modal-title').filter({ hasText: 'A good place to leave it.' }).waitFor()));
+    await host.locator('#room-menu').click(); await host.locator('#end-room').click(); await host.locator('#confirm-end').click(); await Promise.all([host, guest, late].map(page => page.locator('#modal-title').filter({ hasText: 'Session ended' }).waitFor()));
   });
   await check('no uncaught browser errors or unexpected failed HTTP resources', async () => {
     assert.deepEqual(report.pageErrors, []); const unexpected = report.consoleErrors.filter(value => !/Failed to load resource: the server responded with a status of 401/.test(value.message)); assert.deepEqual(unexpected, []);

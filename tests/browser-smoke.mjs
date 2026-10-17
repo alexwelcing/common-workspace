@@ -137,7 +137,7 @@ try {
   await check('personal canvas loads with the real WebAssembly kernel', async () => {
     await host.goto(baseUrl);
     await host.locator('#engine-label[title="wasm"]').waitFor();
-    assert.equal(await host.locator('.board-entity').count(), 9);
+    assert.equal(await host.locator('[data-entity-id="welcome"]').count(), 1);
     assert.match(await host.locator('.type-rectangle').first().textContent(), /An idea/);
     await screenshot(host, 'desktop-canvas');
   });
