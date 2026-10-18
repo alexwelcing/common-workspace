@@ -125,7 +125,7 @@
     </div>
     <aside class="intro-note" aria-label="What you need">
       <span aria-hidden="true">✦</span>
-      <p><strong>No Netlify account or Postgres needed.</strong> The local launcher uses Bun, bundled fonts, and a private network profile. Team screen sharing adds a trusted HTTPS address through Caddy. Organization relays and other external services remain explicit choices.</p>
+      <p><strong>No Netlify account or Postgres needed.</strong> The local launcher uses Bun, bundled fonts, and a private network profile. Team screen sharing adds a trusted HTTPS address through Caddy. Browsers connect directly by default; no relay service or cloud account is required.</p>
     </aside>
     <div class="layout">
       <nav class="contents" aria-label="On this page">
@@ -134,6 +134,7 @@
           <li><a href="#quickstart">1. Start on your laptop</a></li>
           <li><a href="#team">2. Invite the team</a></li>
           <li><a href="#trust">3. Trust the certificate</a></li>
+          <li><a href="#guided-sessions">Run a guided session</a></li>
           <li><a href="#data">Where the data lives</a></li>
           <li><a href="#network">Network &amp; external services</a></li>
           <li><a href="#media-export">Optional MP4 exports</a></li>
@@ -144,7 +145,7 @@
       <article aria-label="Self-hosting instructions">
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">1. Start on your laptop</h2>
-          <p>Install <a href="https://bun.sh/docs/installation">Bun 1.4.3</a> and Git. Get read access to the repository, or ask your administrator for a source archive. This repository is currently private; a public app link does not grant source access. The examples use macOS/Linux terminal or Windows PowerShell syntax; the launcher has been exercised on Linux, with native certificate/process behavior on other systems still needing a device check.</p>
+          <p>Install <a href="https://bun.sh/docs/installation">Bun 1.4.3</a> and Git. Get read access to the repository and the <a href="https://github.com/alexwelcing/common-workspace/releases/tag/v1.1.0">v1.1.0 release</a>, or ask your administrator for a source archive. This repository is currently private; a public app link does not grant source access. The examples use macOS/Linux terminal or Windows PowerShell syntax; the launcher has been exercised on Linux, with native certificate/process behavior on other systems still needing a device check.</p>
           <pre><code>git clone https://github.com/alexwelcing/common-workspace.git
 cd common-workspace
 bun install --frozen-lockfile
@@ -204,6 +205,17 @@ COMMON_NETWORK_PROFILE=private</code></pre>
           <p>Use a site address covered by that certificate and reachable by every device. Keep the private key on the host. Caddy's documentation explains <a href="https://caddyserver.com/docs/automatic-https#local-https">local HTTPS</a>, the <a href="https://caddyserver.com/docs/api#get-pkicaltidgt">CA export API</a>, and <a href="https://caddyserver.com/docs/caddyfile/options#skip-install-trust">manual trust installation</a>.</p>
         </section>
 
+        <section id="guided-sessions" aria-labelledby="guided-sessions-title">
+          <h2 id="guided-sessions-title">Start with a plan, then make room for everyone</h2>
+          <p>When creating a room, choose <strong>Team walkthrough</strong>, <strong>Weekly check-in</strong>, or <strong>Design review</strong>. Each preset adds editable canvas prompts and a <strong>Session guide</strong>. Add expected names and customize the checklist before starting; choose <strong>Open canvas</strong> for a freeform room.</p>
+          <ol>
+            <li>Share the generated link and password separately. Approve your main window with <strong>Share a window</strong>; the first host window becomes featured automatically.</li>
+            <li>Ask each teammate to join, choose their planned name or join as an additional participant, share their own window, and complete their checklist. The guide shows waiting names, sharing status, and progress.</li>
+            <li>Choose <strong>Feature</strong> beside a person or <strong>Next window</strong> to rotate through sharing teammates. <strong>Feature my window</strong> returns to your main presentation.</li>
+          </ol>
+          <p>Each browser chooses <strong>Follow featured</strong> or <strong>Explore canvas</strong> independently. Following changes only that person's view, respects paused windows, and never starts capture. Each person still approves their own share in the browser picker. Planned names are self-selected labels, not verified accounts or an invitation restriction; joining still needs the room link and password.</p>
+        </section>
+
         <section id="data" aria-labelledby="data-title">
           <h2 id="data-title">Where the data lives</h2>
           <div class="table-scroll">
@@ -211,7 +223,7 @@ COMMON_NETWORK_PROFILE=private</code></pre>
               <caption>Standalone hosting, using new peer-canvas rooms</caption>
               <thead><tr><th scope="col">Content</th><th scope="col">Location &amp; lifetime</th></tr></thead>
               <tbody>
-                <tr><th scope="row">Room access &amp; chat</th><td>The host's <code>data/rooms.json</code> contains room metadata and names, password hashes, token hashes, and recent chat. Restrict access to that file. <code>DATA_FILE</code> can select another writable location.</td></tr>
+                <tr><th scope="row">Room access, plan &amp; chat</th><td>The host's <code>data/rooms.json</code> contains room metadata and names, guided-session plans and checklist state, password hashes, token hashes, and recent chat. Restrict access to that file. <code>DATA_FILE</code> can select another writable location.</td></tr>
                 <tr><th scope="row">Shared canvas &amp; images</th><td>New rooms keep their Yjs canvas and embedded images in participants' browser memory and synchronize between peers. The host server stores no canvas snapshot. Export anything you want to keep before the last copy closes. The personal canvas saves on that browser's device.</td></tr>
                 <tr><th scope="row">Shared windows</th><td>Video travels over WebRTC between peers, with TURN relaying only if configured. The application server does not store the video.</td></tr>
                 <tr><th scope="row">Recordings &amp; snapshots</th><td>Recordings remain browser blobs until downloaded; reloading or closing the tab loses them. They are not synchronized. Choosing optional MP4 export sends selected media to the connected loopback worker on that same device, which removes its temporary files after the job. Downloads stay in the user's download location.</td></tr>
@@ -232,7 +244,11 @@ COMMON_NETWORK_PROFILE=private</code></pre>
             <li><strong>Diagrams:</strong> private mode disables external PlantUML unless <code>PLANTUML_URL</code> selects a renderer; <code>PLANTUML_URL=none</code> disables it in either profile. Standard mode uses the consented public <code>plantuml.com</code> renderer. Rendering sends the complete source, and shared <code>externalConsent</code> can permit rendering on other participants' devices. Mermaid stays local.</li>
             <li><strong>Fonts:</strong> DM Sans is served from the installation. This guide uses system fonts and loads no external scripts or fonts.</li>
           </ul>
-          <p>For restricted networks, your team may need its own reachable TURN relay. Configure <code>TURN_URLS</code> plus <code>TURN_SECRET</code>, or dedicated <code>TURN_USERNAME</code>/<code>TURN_CREDENTIAL</code>, in the host environment. The server issues credentials only to admitted room participants. <code>ICE_TRANSPORT_POLICY=relay</code> forces relay routes and needs a working TURN setup; leave it as <code>all</code> for normal direct connections. The repository does not run a TURN service for you.</p>
+          <p>Direct browser connections are the default, and a relay is not required to install or run Common. If a particular device cannot connect, use <strong>Connection details</strong> and check that device's actual network policy before changing infrastructure.</p>
+          <details>
+            <summary>Optional advanced setting: an organization-operated relay</summary>
+            <p>If your organization chooses a TURN relay, configure <code>TURN_URLS</code> plus <code>TURN_SECRET</code>, or dedicated <code>TURN_USERNAME</code>/<code>TURN_CREDENTIAL</code>, in the host environment. The server issues credentials only to admitted room participants. <code>ICE_TRANSPORT_POLICY=relay</code> forces relay routes and needs a working TURN setup; leave it as <code>all</code> for normal direct connections. Common does not operate a relay service.</p>
+          </details>
           <p>One HTTPS endpoint gets people into the room; canvas and video also need working peer connections. Wi-Fi client isolation, VPN routing, NAT, or firewall policy can block them. Browser WASM does not bypass those boundaries. There is no fixed admission cap, but device memory, the full replicated canvas, host signaling work, and presenter upload still limit practical room size.</p>
           <p>A larger video audience may need a separately operated SFU to forward one presenter's stream. Common does not include an SFU server or a ready-to-use SFU integration. A tunnel is optional too: choosing Cloudflare Tunnel routes tunneled HTTP/WebSocket traffic through Cloudflare and does not by itself relay WebRTC media. It is not part of the private local defaults.</p>
         </section>
@@ -284,7 +300,7 @@ bun run media:export --origin http://localhost:3001 --engine docker</code></pre>
           </details>
           <details>
             <summary>Rooms open, but the canvas or video never connects</summary>
-            <p>HTTPS room admission can work while peer traffic is blocked. Check VPN routes, Wi-Fi client isolation, peer/UDP firewall rules, and whether your network requires an organization TURN relay. For remote video, use <strong>Watch window</strong> on its tile; a paused view does not receive live frames.</p>
+            <p>HTTPS room admission can work while peer traffic is blocked. Use <strong>Connection details</strong> to inspect peer state, then check VPN routes, Wi-Fi client isolation, and peer/UDP firewall rules on the affected devices. For remote video, use <strong>Watch window</strong> on its tile; a paused view does not receive live frames.</p>
           </details>
           <details>
             <summary>The app uses the wrong transport or gets API errors</summary>

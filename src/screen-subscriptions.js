@@ -18,7 +18,7 @@ export class ScreenSubscriptions {
     else { this.paused.delete(id); this.preferred.unshift(id); }
   }
 
-  plan(entities, { participantId, selectedId, view = {}, width, height, hidden = false } = {}) {
+  plan(entities, { participantId, selectedId, focusedId = null, view = {}, width, height, hidden = false } = {}) {
     const screens = entities.filter(entity => entity.type === 'screen' && entity.participantId && entity.participantId !== participantId);
     const owners = new Set(screens.map(entity => entity.participantId));
     this.preferred = this.preferred.filter(id => owners.has(id));
@@ -26,6 +26,7 @@ export class ScreenSubscriptions {
     if (hidden || !(width > 0 && height > 0)) return (this.watching = []);
     const zoom = view.zoom || 1, panX = view.x || 0, panY = view.y || 0;
     const visible = screens.filter(entity => {
+      if (focusedId && entity.id !== focusedId) return false;
       const x = entity.x * zoom + panX, y = entity.y * zoom + panY;
       return !this.paused.has(entity.participantId) && x < width && y < height &&
         x + entity.width * zoom > 0 && y + entity.height * zoom > 0;

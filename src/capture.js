@@ -243,7 +243,7 @@ export class CanvasCapture {
     this.assets.clear();
     for (const timer of this.downloadTimers) this.clearTimeout(timer);
     this.downloadTimers.clear();
-    for (const url of [...this.urls]) this._revoke(url);
+    for (const url of this.urls) this._revoke(url);
     this._changed();
   }
 
@@ -252,7 +252,8 @@ export class CanvasCapture {
     const copy = svg.cloneNode(true);
     copy.querySelectorAll('script, foreignObject, iframe, object, embed, image, animate, animateTransform, set').forEach(node => node.remove());
     for (const node of [copy, ...copy.querySelectorAll('*')]) {
-      for (const attribute of [...node.attributes]) {
+      // Attribute removal mutates the live NamedNodeMap, so retain a snapshot.
+      for (const attribute of Array.from(node.attributes)) {
         const name = attribute.name.toLowerCase(), value = attribute.value;
         if (name.startsWith('on') || ((name === 'href' || name.endsWith(':href')) && !value.startsWith('#')) || hasExternalUrl(value)) node.removeAttribute(attribute.name);
       }
@@ -273,7 +274,7 @@ export class CanvasCapture {
     return null;
   }
   _prepareAssets(board) {
-    const entities = board.listEntities(), retained = new Set(), promises = [];
+    const entities = board.listVisibleEntities?.() ?? board.listEntities(), retained = new Set(), promises = [];
     for (const entity of entities) {
       const spec = this._assetSpec(entity, board); if (!spec) continue;
       retained.add(entity.id);
@@ -313,7 +314,7 @@ export class CanvasCapture {
     const scale = Math.min(canvas.width / width, canvas.height / height);
     ctx.save(); ctx.translate((canvas.width - width * scale) / 2, (canvas.height - height * scale) / 2); ctx.scale(scale, scale);
     ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip(); ctx.translate(finite(view.x), finite(view.y)); ctx.scale(Math.max(.01, finite(view.zoom, 1)), Math.max(.01, finite(view.zoom, 1)));
-    for (const entity of board.listEntities()) {
+    for (const entity of board.listVisibleEntities?.() ?? board.listEntities()) {
       ctx.save();
       try { ctx.translate(finite(entity.x), finite(entity.y)); this._drawEntity(ctx, entity, board); }
       finally { ctx.restore(); }

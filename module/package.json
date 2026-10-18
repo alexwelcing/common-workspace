@@ -1,0 +1,17 @@
+{
+  "name": "common-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An embeddable collaborative canvas and Bun session adapter, with no hosted service dependency.",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./client.d.ts", "default": "./client.js" },
+    "./client": { "types": "./client.d.ts", "default": "./client.js" },
+    "./bun": { "types": "./bun.d.ts", "bun": "./bun.mjs", "default": "./bun.mjs" },
+    "./schema": "./app/agent-tools.json",
+    "./package.json": "./package.json"
+  },
+  "files": ["client.js", "client.d.ts", "bun.mjs", "bun.d.ts", "app", "example", "README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.txt"],
+  "sideEffects": false,
+  "engines": { "bun": ">=1.4.3" }
+}

@@ -114,7 +114,7 @@ export function createAgentPermissions({ getContext = () => ({}), getSession = (
     if (!Array.isArray(capabilities) || !capabilities.length || capabilities.some(capability => !Object.hasOwn(AGENT_CAPABILITIES, capability))) throw new Error('Choose at least one supported agent permission.');
     if (!Number.isFinite(ttlMs) || ttlMs < 1000 || ttlMs > MAX_GRANT_TTL_MS) throw new Error('Choose a permission duration between one second and one hour.');
     const ctx = getContext() || {};
-    if (!ctx.enabled || (!ctx.sandbox && !ctx.connected)) throw new Error('Enable Agent tools in a connected canvas before granting access.');
+    if (!ctx.enabled || (!ctx.sandbox && !ctx.connected)) throw new Error('Open a personal canvas or connect to a session, then choose Allow selected access.');
     const selected = new Set(capabilities);
     if ([...selected].some(capability => capability !== 'inspect')) selected.add('inspect');
     const removed = grant && [...grant.capabilities].some(capability => !selected.has(capability));
@@ -331,14 +331,15 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
   const active = ctx => !!ctx.enabled && (!!ctx.sandbox || !!ctx.connected);
   function access(command) {
     const ctx = context();
-    if (!ctx.enabled) fail('AGENT_DISABLED', 'Enable Agent tools in this browser before using canvas commands.');
+    if (!ctx.enabled) fail('AGENT_DISABLED', 'Open Agent tools, choose permissions, then select Allow selected access in this browser.');
     if (!ctx.sandbox && !ctx.connected) fail('DISCONNECTED', 'Reconnect to the session before using canvas commands.');
     const permission = grants.state();
     if (!permission.active) {
       const code = permission.reason === 'expired' ? 'GRANT_EXPIRED' : permission.reason === 'session-changed' ? 'SESSION_CHANGED' : 'GRANT_REVOKED';
       fail(code, 'Agent access has ended. Ask the user to grant access again in Agent tools.');
     }
-    if (ACTION_CAPABILITIES[command.action].some(capability => !permission.capabilities.includes(capability))) fail('PERMISSION_DENIED', `This command requires: ${ACTION_CAPABILITIES[command.action].join(', ')}. Ask the user to update Agent tools permissions.`);
+    const missingCapabilities = ACTION_CAPABILITIES[command.action].filter(capability => !permission.capabilities.includes(capability));
+    if (missingCapabilities.length) fail('PERMISSION_DENIED', `This command needs ${missingCapabilities.map(capability => AGENT_CAPABILITIES[capability].title).join(' and ')}. Ask the user to choose those permissions in Agent tools, then select Update access.`);
     if (!getModel?.() || !getBoard?.()) fail('NOT_READY', 'The canvas is not ready.');
     if (EDIT_ACTIONS.has(command.action) && getBoard().readOnly) fail('READ_ONLY', 'The canvas is currently read-only.');
     return ctx;
@@ -353,7 +354,7 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
   }
   function entities(includeImageData = false) {
     return getModel().all().map(entity => {
-      const { streamId, screenId, ...safe } = entity;
+      const { streamId: _streamId, screenId: _screenId, ...safe } = entity;
       if (safe.type === 'image' && !includeImageData && safe.url) { safe.hasImageData = true; safe.imageDataLength = safe.url.length; delete safe.url; }
       return safe;
     });
@@ -391,6 +392,7 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
   }
   function focus(target) {
     const board = getBoard(); const width = board.el?.clientWidth || 1000; const height = board.el?.clientHeight || 700;
+    board.exitFocus?.({ restoreFocus: false });
     board.setZoom(Math.min(1.5, (width - 96) / target.width, (height - 96) / target.height));
     board.pan = { x: width / 2 - (target.x + target.width / 2) * board.zoom, y: height / 2 - (target.y + target.height / 2) * board.zoom };
     board.updateView(); return board.getView();
@@ -427,7 +429,7 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
       if (entity) board.select(entity.id);
       return focus(entity || command.bounds);
     }
-    if (action === 'view.fit') { board.fit(); return board.getView(); }
+    if (action === 'view.fit') { board.exitFocus?.({ restoreFocus: false }); board.fit(); return board.getView(); }
     if (action.startsWith('walkthrough.')) return service(action, walkthrough, action.split('.')[1], ...(action === 'walkthrough.load' ? [command.steps] : []));
     if (action === 'capture.snapshot') return service(action, recording, 'snapshot', { download: command.download ?? false, isAllowed });
     if (action.startsWith('recording.')) {

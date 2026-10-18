@@ -39,6 +39,8 @@ function icon(name, size = 18) {
     duplicate: ['M9 9h11v11H9zM5 15H3V3h12v2'],
     trash: ['M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7'],
     edit: ['m16 3 5 5-12 12-6 1 1-6Z', 'm13 6 5 5'],
+    focus: ['M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5'],
+    backToCanvas: ['m9 5-7 7 7 7M2 12h20'],
     layers: ['m12 3 10 6-10 6L2 9Z', 'm2 13 10 6 10-6M2 17l10 6 10-6'],
     front: ['M4 3h16M12 20V7m-5 5 5-5 5 5'],
     back: ['M4 21h16M12 4v13m-5-5 5 5 5-5'],
@@ -59,7 +61,8 @@ function button(label, iconName, action) {
   return node;
 }
 function signature(entity) {
-  const { x, y, width, height, z, orderKey, locked, updatedAt, updatedBy, ...content } = entity;
+  // Geometry and collaboration metadata update the existing node in place.
+  const { x: _x, y: _y, width: _width, height: _height, z: _z, orderKey: _orderKey, locked: _locked, updatedAt: _updatedAt, updatedBy: _updatedBy, ...content } = entity;
   return JSON.stringify(content);
 }
 function finite(value, fallback = 0) { return Number.isFinite(Number(value)) ? Number(value) : fallback; }
@@ -67,16 +70,18 @@ function pointList(points) { return (points || []).map(p => Array.isArray(p) ? {
 
 /** A collaborative, zoomable DOM/SVG whiteboard. Only local edits call onChange. */
 export class Board {
-  constructor({ el, onChange = () => {}, onDelete = () => {}, onCursor = () => {}, onSelect = () => {}, onStatus = () => {}, onViewChange = () => {}, onEditDiagram = null, onToolChange = () => {}, onLayerAction = null, onLockChange = null, onWatchScreen = () => {}, allowExternalPlantUml = false, canEdit = () => true }) {
+  constructor({ el, onChange = () => {}, onDelete = () => {}, onCursor = () => {}, onSelect = () => {}, onStatus = () => {}, onViewChange = () => {}, onEditDiagram = null, onToolChange = () => {}, onLayerAction = null, onLockChange = null, onWatchScreen = () => {}, onHistoryStart = () => {}, onHistoryEnd = () => {}, allowExternalPlantUml = false, canEdit = () => true }) {
     this.el = el;
     this.onChange = onChange; this.onDelete = onDelete; this.onCursor = onCursor;
     this.onSelect = onSelect; this.onStatus = onStatus; this.onViewChange = onViewChange;
     this.onEditDiagram = onEditDiagram; this.onToolChange = onToolChange; this.allowExternalPlantUml = allowExternalPlantUml; this.canEdit = canEdit; this.readOnly = false;
     this.onLayerAction = onLayerAction; this.onLockChange = onLockChange; this.layerOrder = [];
+    this.onHistoryStart = onHistoryStart; this.onHistoryEnd = onHistoryEnd; this.historyGroup = false;
     this.onWatchScreen = onWatchScreen; this.screenSubscriptions = null; this.localParticipantId = null;
     this.entities = new Map(); this.nodes = new Map(); this.streams = new Map(); this.cursors = new Map();
     this.externalConsents = new Set(); this.selectedId = null; this.tool = 'select'; this.color = '#52765e';
     this.zoom = 1; this.pan = { x: 24, y: 24 }; this.gesture = null; this.spaceHeld = false;
+    this.focusedId = null; this.previousFocusView = null;
     this.abort = new AbortController(); this.lastCursor = 0; this.editingId = null;
     this.el.classList.add('common-board'); this.el.tabIndex = 0;
     this.el.setAttribute('aria-label', 'Shared canvas. Use the toolbar to add notes, drawings, and diagrams.');
@@ -85,19 +90,36 @@ export class Board {
     this.stage.append(this.cursorLayer); this.el.append(this.stage);
     this.selectionTools = element('div', 'board-selection-tools');
     this.selectionTools.setAttribute('role', 'toolbar'); this.selectionTools.setAttribute('aria-label', 'Selected object controls');
+    this.focusButton = button('Focus object (F) — only your view', 'focus', () => this.focusSelected());
+    this.editButton = button('Edit text or diagram (Enter)', 'edit', () => this.editSelected());
+    this.focusButton.classList.add('board-labeled-button'); this.focusButton.append(element('span', '', 'Focus'));
+    this.editButton.classList.add('board-labeled-button'); this.editButton.append(element('span', '', 'Edit'));
+    this.selectionTools.append(this.focusButton, this.editButton);
     this.layerButtons = new Map();
     for (const [action, label] of [['front', 'Bring to front'], ['forward', 'Bring forward'], ['backward', 'Send backward'], ['back', 'Send to back']]) {
       const control = button(label, action, () => this.changeLayer(this.selectedId, action));
       this.layerButtons.set(action, control); this.selectionTools.append(control);
     }
     this.lockButton = button('Lock position', 'lock', () => this.toggleLock(this.selectedId));
-    this.selectionTools.append(this.lockButton, element('span', 'board-mini-divider'));
+    this.mutationDivider = element('span', 'board-mini-divider');
+    this.selectionTools.append(this.lockButton, this.mutationDivider);
     this.duplicateButton = button('Duplicate selected item', 'duplicate', () => this.duplicateSelected());
     this.deleteButton = button('Delete selected item', 'trash', () => this.deleteSelected()); this.deleteButton.dataset.action = 'delete';
     this.selectionTools.append(
       this.duplicateButton, this.deleteButton,
     );
     this.el.append(this.selectionTools);
+    this.selectionHint = element('p', 'board-selection-hint'); this.selectionHint.hidden = true;
+    this.selectionHint.id = `board-instructions-${crypto.randomUUID()}`;
+    this.el.setAttribute('aria-describedby', this.selectionHint.id); this.el.append(this.selectionHint);
+    this.focusBar = element('div', 'board-focus-bar'); this.focusBar.hidden = true;
+    this.backButton = button('Back to canvas (Esc)', 'backToCanvas', () => this.exitFocus());
+    this.backButton.classList.add('board-focus-back'); this.backButton.append(element('span', '', 'Back to canvas'));
+    const focusDetail = element('div', 'board-focus-detail'); this.focusTitle = element('strong');
+    this.focusHint = element('span', '', 'Only your view · Shared layout stays the same');
+    focusDetail.append(this.focusTitle, this.focusHint);
+    this.focusActions = element('div', 'board-focus-actions');
+    this.focusBar.append(this.backButton, focusDetail, this.focusActions); this.el.append(this.focusBar);
     this.layersControl = element('div', 'board-layers-control');
     this.layersToggle = element('button', 'board-layers-toggle'); this.layersToggle.type = 'button';
     this.layersToggle.setAttribute('aria-label', 'Layers'); this.layersToggle.setAttribute('aria-expanded', 'false');
@@ -121,12 +143,13 @@ export class Board {
     this.el.addEventListener('pointermove', e => this.pointerMove(e), { signal });
     this.el.addEventListener('pointerup', e => this.pointerUp(e), { signal });
     this.el.addEventListener('pointercancel', e => this.pointerUp(e, true), { signal });
+    this.el.addEventListener('lostpointercapture', e => this.pointerUp(e, true), { signal });
     this.el.addEventListener('wheel', e => this.wheel(e), { passive: false, signal });
     this.el.addEventListener('dblclick', e => this.doubleClick(e), { signal });
     document.addEventListener('keydown', e => this.keyDown(e), { signal });
     document.addEventListener('keyup', e => { if (e.code === 'Space') { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); } }, { signal });
     window.addEventListener('blur', () => { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); }, { signal });
-    this.resizeObserver = new ResizeObserver(() => this.updateSelectionTools()); this.resizeObserver.observe(this.el);
+    this.resizeObserver = new ResizeObserver(() => { if (this.focusedId) this.fitFocusedEntity(); else this.updateSelectionTools(); }); this.resizeObserver.observe(this.el);
     this.updateView();
     initGeometry().catch(() => {});
   }
@@ -139,6 +162,7 @@ export class Board {
   toClient(point) { return { x: point.x * this.zoom + this.pan.x, y: point.y * this.zoom + this.pan.y }; }
   centerPoint() { return { x: (this.el.clientWidth / 2 - this.pan.x) / this.zoom, y: (this.el.clientHeight / 2 - this.pan.y) / this.zoom }; }
   updateView() {
+    this.el.style.setProperty('--board-inverse-zoom', String(1 / this.zoom));
     this.stage.style.transform = `translate(${this.pan.x}px, ${this.pan.y}px) scale(${this.zoom})`;
     const spacing = Math.max(8, 20 * this.zoom);
     this.el.style.backgroundSize = `${spacing}px ${spacing}px`;
@@ -153,6 +177,7 @@ export class Board {
     return this.zoom;
   }
   fit() {
+    if (this.focusedId) { this.fitFocusedEntity(); return; }
     const items = [...this.entities.values()];
     if (!items.length) { this.pan = { x: 24, y: 24 }; this.zoom = 1; this.updateView(); return; }
     const minX = Math.min(...items.map(e => e.x)); const minY = Math.min(...items.map(e => e.y));
@@ -162,6 +187,7 @@ export class Board {
     this.updateView();
   }
   setTool(tool) {
+    if (this.focusedId && tool !== 'select') this.exitFocus();
     const changed = this.tool !== tool;
     this.tool = tool;
     this.el.dataset.tool = tool;
@@ -180,6 +206,7 @@ export class Board {
       return finite(a.z) - finite(b.z) || a.id.localeCompare(b.id);
     });
   }
+  listVisibleEntities() { return this.focusedId ? this.listEntities().filter(entity => entity.id === this.focusedId) : this.listEntities(); }
   setLayerOrder(ids) {
     this.layerOrder = [...new Set(ids.filter(id => typeof id === 'string'))];
     this.applyLayerOrder(); this.updateSelectionTools();
@@ -228,7 +255,11 @@ export class Board {
       select.append(icon(['screen', 'image', 'diagram'].includes(entity.type) ? entity.type : 'layers', 15));
       const detail = element('span', 'board-layer-detail');
       detail.append(element('span', 'board-layer-title', title), element('span', 'board-layer-type', type)); select.append(detail);
-      select.addEventListener('click', () => { this.setTool('select'); this.select(entity.id); });
+      select.addEventListener('click', () => {
+        if (this.focusedId && this.focusedId !== entity.id) this.exitFocus();
+        this.setTool('select'); this.select(entity.id); this.revealEntity(entity.id);
+        this.el.focus({ preventScroll: true });
+      });
       const lock = button(entity.locked ? 'Unlock position' : 'Lock position', entity.locked ? 'lock' : 'unlock', () => this.toggleLock(entity.id));
       lock.classList.add('board-layer-lock'); lock.disabled = !this.mayEdit(entity); lock.setAttribute('aria-pressed', String(!!entity.locked));
       row.append(select, lock); this.layersList.append(row);
@@ -238,16 +269,18 @@ export class Board {
     if (!this.gesture || !['move', 'resize'].includes(this.gesture.type)) return;
     this.gesture = null; this.el.classList.remove('board-is-dragging');
     if (this.activePointerId != null && this.el.hasPointerCapture(this.activePointerId)) this.el.releasePointerCapture(this.activePointerId);
-    this.activePointerId = null;
+    this.activePointerId = null; this.endHistoryGroup();
   }
   setReadOnly(value) {
     this.readOnly = !!value;
+    if (this.readOnly) this.closeDiagramEditor();
     this.el.classList.toggle('board-read-only', this.readOnly);
     if (this.readOnly && this.gesture && this.gesture.type !== 'pan') {
       if (this.gesture.type === 'create') this.remove(this.gesture.id);
       else if (this.gesture.original) this.upsert(this.gesture.original);
       this.gesture = null; this.el.classList.remove('board-is-dragging');
       if (this.activePointerId != null && this.el.hasPointerCapture(this.activePointerId)) this.el.releasePointerCapture(this.activePointerId);
+      this.activePointerId = null; this.endHistoryGroup();
     }
     if (this.readOnly && this.editingId) this.nodes.get(this.editingId)?.querySelector('[contenteditable="true"]')?.blur();
     for (const entity of this.entities.values()) this.renderEntity(entity);
@@ -267,9 +300,15 @@ export class Board {
     if (!entity?.id || !DEFAULTS[entity.type]) return;
     const normalized = { ...DEFAULTS[entity.type], ...entity, x: finite(entity.x), y: finite(entity.y), width: Math.max(2, finite(entity.width, DEFAULTS[entity.type].width)), height: Math.max(2, finite(entity.height, DEFAULTS[entity.type].height)) };
     if (this.gesture?.id === entity.id && (normalized.locked || !this.mayEdit(normalized))) this.cancelPositionGesture();
+    const previous = this.entities.get(entity.id);
     this.entities.set(entity.id, normalized); this.renderEntity(normalized); this.applyLayerOrder(); this.updateSelectionTools();
+    if (this.focusedId === entity.id) this.updateFocusBar();
+    if (this.focusedId === entity.id && (!previous || ['x', 'y', 'width', 'height'].some(key => previous[key] !== normalized[key]))) this.fitFocusedEntity();
   }
   remove(id) {
+    if (this.diagramEditor?.id === id) this.closeDiagramEditor();
+    if (this.editingId === id) this.finishTextEdit?.(false);
+    if (this.focusedId === id) this.exitFocus();
     if (this.gesture?.id === id) this.cancelPositionGesture();
     this.entities.delete(id); this.nodes.get(id)?.remove(); this.nodes.delete(id); this.externalConsents.delete(id);
     if (this.selectedId === id) this.select(null);
@@ -288,6 +327,7 @@ export class Board {
   add(type, options = {}) {
     if (!DEFAULTS[type]) return null;
     if (this.readOnly) { this.onStatus('Reconnect to edit the shared canvas.'); return null; }
+    if (this.focusedId) this.exitFocus();
     const center = this.centerPoint(); const defaults = DEFAULTS[type];
     const entity = { id: crypto.randomUUID(), type, ...defaults, color: COLORS[type] || this.color, x: Math.round(center.x - defaults.width / 2), y: Math.round(center.y - defaults.height / 2), z: this.nextZ(), ...options };
     if (type === 'draw' && !options.color) entity.color = this.color;
@@ -298,6 +338,7 @@ export class Board {
   }
   nextZ() { return Math.max(0, ...[...this.entities.values()].map(e => finite(e.z))) + 1; }
   select(id) {
+    if (this.focusedId && id !== this.focusedId) this.exitFocus();
     if (this.selectedId === id) return;
     if (this.selectedId) this.nodes.get(this.selectedId)?.classList.remove('is-selected');
     this.selectedId = id && this.entities.has(id) ? id : null;
@@ -323,20 +364,96 @@ export class Board {
       this.commit({ ...entity, ...patch }, patch);
     }
   }
-  updateSelectionTools() {
+  editableContent(entity) { return !!entity && ['text', 'sticky', 'rectangle', 'ellipse', 'diagram'].includes(entity.type); }
+  beginHistoryGroup(label) {
+    if (this.historyGroup) return;
+    this.historyGroup = true; this.onHistoryStart(label);
+  }
+  endHistoryGroup() {
+    if (!this.historyGroup) return;
+    this.historyGroup = false; this.onHistoryEnd();
+  }
+  /** Reveal a layer locally, preserving zoom unless the object is larger than the viewport. */
+  revealEntity(id) {
+    const entity = this.entities.get(id); if (!entity) return false;
+    if (this.focusedId) { this.fitFocusedEntity(); return true; }
+    const point = this.toClient(entity); const margin = 64;
+    if (point.x >= margin && point.y >= margin && point.x + entity.width * this.zoom <= this.el.clientWidth - margin && point.y + entity.height * this.zoom <= this.el.clientHeight - margin) return true;
+    const availableWidth = Math.max(40, this.el.clientWidth - margin * 2); const availableHeight = Math.max(40, this.el.clientHeight - margin * 2);
+    this.zoom = Math.max(.15, Math.min(this.zoom, availableWidth / entity.width, availableHeight / entity.height));
+    this.pan = { x: this.el.clientWidth / 2 - (entity.x + entity.width / 2) * this.zoom, y: this.el.clientHeight / 2 - (entity.y + entity.height / 2) * this.zoom };
+    this.updateView(); return true;
+  }
+  /** Reading view: no geometry writes, capture requests, or subscription changes. */
+  focusEntity(id = this.selectedId, { hint = null, focusControls = true } = {}) {
+    const entity = this.entities.get(id); if (!entity || this.gesture || this.editingId) return false;
+    this.focusHintText = hint;
+    if (!this.focusedId) this.previousFocusView = this.getView();
+    this.focusedId = id; this.tool = 'select'; this.el.dataset.tool = 'select'; this.onToolChange('select');
+    this.select(id); this.layersPanel.hidden = true; this.layersToggle.setAttribute('aria-expanded', 'false');
+    this.el.classList.add('board-is-focused');
+    for (const [entityId, node] of this.nodes) node.classList.toggle('is-focused', entityId === id);
+    this.focusBar.hidden = false; this.updateFocusBar();
+    this.fitFocusedEntity(); if (focusControls) this.backButton.focus({ preventScroll: true }); return true;
+  }
+  focusSelected() { return this.focusEntity(this.selectedId); }
+  updateFocusBar() {
+    const entity = this.entities.get(this.focusedId); if (!entity) return;
+    this.focusHint.textContent = this.focusHintText || 'Only your view · Shared layout stays the same';
+    this.focusTitle.textContent = entity.title || (entity.type === 'screen' ? 'Shared window' : 'Focused object');
+    const view = entity.type === 'screen' ? this.screenView(entity) : null;
+    const next = JSON.stringify([entity.id, view]); if (next === this.focusActionsSignature) return;
+    this.focusActionsSignature = next; const hadFocus = this.focusActions.contains(document.activeElement);
+    this.focusActions.replaceChildren();
+    if (view?.managed && !view.local) this.focusActions.append(this.screenWatchButton(entity, view.watched));
+    this.focusActions.hidden = !this.focusActions.childElementCount;
+    if (hadFocus) (this.focusActions.firstElementChild || this.backButton).focus({ preventScroll: true });
+  }
+  fitFocusedEntity() {
+    const entity = this.entities.get(this.focusedId); if (!entity) return;
+    const top = Math.max(84, this.focusBar.offsetHeight + 32); const side = this.el.clientWidth < 540 ? 24 : 48; const bottom = Math.max(64, parseFloat(getComputedStyle(this.el).getPropertyValue('--canvas-overlay-bottom')) || 124);
+    const width = Math.max(40, this.el.clientWidth - side * 2); const height = Math.max(40, this.el.clientHeight - top - bottom);
+    this.zoom = Math.max(.01, Math.min(2.5, width / entity.width, height / entity.height));
+    this.pan = { x: this.el.clientWidth / 2 - (entity.x + entity.width / 2) * this.zoom, y: top + height / 2 - (entity.y + entity.height / 2) * this.zoom };
+    this.updateView();
+  }
+  exitFocus({ restoreFocus = this.el.contains(document.activeElement) } = {}) {
+    if (!this.focusedId) return false;
+    const previous = this.previousFocusView; this.focusedId = null; this.previousFocusView = null;
+    this.el.classList.remove('board-is-focused'); this.focusBar.hidden = true;
+    for (const node of this.nodes.values()) node.classList.remove('is-focused');
+    if (previous) { this.zoom = previous.zoom; this.pan = { x: previous.x, y: previous.y }; }
+    this.updateView(); if (restoreFocus) this.el.focus({ preventScroll: true }); return true;
+  }
+  editSelected() {
     const entity = this.entities.get(this.selectedId);
-    this.selectionTools.hidden = !entity || !this.mayEdit(entity) || !!this.gesture || this.editingId === this.selectedId;
+    if (!entity || !this.mayEdit(entity) || !this.editableContent(entity)) return false;
+    if (this.focusedId) this.exitFocus();
+    this.revealEntity(entity.id);
+    if (entity.type === 'diagram') { if (this.onEditDiagram) this.onEditDiagram(entity); else this.editDiagram(entity); }
+    else this.editText(entity.id);
+    return true;
+  }
+  updateSelectionTools() {
+    const entity = this.entities.get(this.selectedId); const editable = entity && this.mayEdit(entity);
+    const show = !!entity && !this.gesture && this.editingId !== this.selectedId && !this.focusedId;
+    this.selectionTools.hidden = !show; this.selectionHint.hidden = !show;
     if (!entity) return;
+    this.selectionHint.textContent = editable && !entity.locked
+      ? `Arrows move · Alt + arrows resize · Shift for 10 px · ${this.editableContent(entity) ? 'Enter edit · ' : ''}F focus`
+      : `${entity.locked ? 'Position locked · ' : ''}${editable && this.editableContent(entity) ? 'Enter edit · ' : ''}F focus (only your view)`;
+    for (const control of [...this.layerButtons.values(), this.lockButton, this.duplicateButton, this.deleteButton, this.mutationDivider]) control.hidden = !editable;
+    this.editButton.hidden = !editable || !this.editableContent(entity);
     const order = this.listEntities(); const position = order.findIndex(item => item.id === entity.id);
-    this.layerButtons.get('front').disabled = this.layerButtons.get('forward').disabled = position === order.length - 1;
-    this.layerButtons.get('back').disabled = this.layerButtons.get('backward').disabled = position === 0;
+    this.layerButtons.get('front').disabled = this.layerButtons.get('forward').disabled = !editable || position === order.length - 1;
+    this.layerButtons.get('back').disabled = this.layerButtons.get('backward').disabled = !editable || position === 0;
     const label = entity.locked ? 'Unlock position' : 'Lock position';
     this.lockButton.title = label; this.lockButton.setAttribute('aria-label', label); this.lockButton.setAttribute('aria-pressed', String(!!entity.locked));
     this.lockButton.replaceChildren(icon(entity.locked ? 'lock' : 'unlock', 15));
     this.duplicateButton.disabled = entity.type === 'screen';
     const point = this.toClient(entity);
-    const width = this.selectionTools.offsetWidth || Math.min(235, this.el.clientWidth - 16);
-    const height = this.selectionTools.offsetHeight || 37;
+    const width = this.selectionTools.offsetWidth || Math.min(310, this.el.clientWidth - 16);
+    const height = this.selectionTools.offsetHeight || 44;
     const x = Math.max(8, Math.min(this.el.clientWidth - width - 8, point.x + entity.width * this.zoom / 2 - width / 2));
     const y = Math.max(8, Math.min(this.el.clientHeight - height - 8, point.y - height - 8));
     this.selectionTools.style.transform = `translate(${x}px, ${y}px)`;
@@ -352,6 +469,7 @@ export class Board {
     node.style.width = `${entity.width}px`; node.style.height = `${entity.height}px`;
     node.style.zIndex = String(this.listEntities().findIndex(item => item.id === entity.id) + 1);
     node.classList.toggle('is-selected', entity.id === this.selectedId);
+    node.classList.toggle('is-focused', entity.id === this.focusedId);
     node.classList.toggle('is-readonly', !this.mayEdit(entity));
     node.classList.toggle('is-position-locked', !!entity.locked);
     node.setAttribute('aria-label', entity.title || `${entity.type} on canvas`);
@@ -364,7 +482,8 @@ export class Board {
     else if (entity.type === 'image') this.renderImage(node, entity);
     else if (entity.type === 'diagram') this.renderDiagram(node, entity);
     else this.renderShape(node, entity);
-    const resize = element('div', 'board-resize-handle'); resize.dataset.resize = 'true'; resize.setAttribute('aria-label', 'Drag to resize');
+    const resize = element('button', 'board-resize-handle'); resize.type = 'button'; resize.dataset.resize = 'true';
+    resize.setAttribute('aria-label', 'Resize selected object. Use arrow keys; hold Shift for 10 pixels.'); resize.title = 'Drag to resize · Arrows resize · Shift for 10 px';
     node.append(resize);
   }
   header(entity, label, iconName) {
@@ -406,7 +525,9 @@ export class Board {
     footer.append(element('span', 'board-window-dot'), element('span', 'board-screen-footer-title', entity.title || 'Shared window'));
     if (view.managed && !view.local && view.watched) footer.append(this.screenWatchButton(entity, true));
     else footer.append(element('span', 'board-screen-footer-end', view.watched ? 'Live screen' : 'View paused'));
-    node.append(footer);
+    const focus = button('Focus window — only your view', 'focus', () => this.focusEntity(entity.id));
+    focus.classList.add('board-screen-focus'); focus.append(element('span', '', 'Focus'));
+    footer.append(focus); node.append(footer);
   }
   screenView(entity, subscriptions = this.screenSubscriptions, localParticipantId = this.localParticipantId) {
     const participantId = entity.participantId || entity.streamId;
@@ -440,6 +561,7 @@ export class Board {
       const node = this.nodes.get(entity.id);
       if (node) { node._signature = null; this.renderEntity(entity); }
     }
+    if (this.focusedId) this.updateFocusBar();
   }
   setStream(participantId, stream) {
     if (stream) this.streams.set(participantId, stream); else this.streams.delete(participantId);
@@ -527,16 +649,18 @@ export class Board {
   }
 
   pointerDown(event) {
+    if (this.gesture) return;
     if (event.button !== 0 && event.button !== 1) return;
-    if (event.target.closest('button,input,textarea,select,[contenteditable="true"]')) return;
+    if (event.target.closest('button:not([data-resize]),input,textarea,select,[contenteditable="true"]')) return;
     const point = this.worldPoint(event); const targetNode = event.target.closest('[data-entity-id]');
     const entity = targetNode && this.entities.get(targetNode.dataset.entityId);
     this.el.focus({ preventScroll: true });
     if (this.spaceHeld || this.tool === 'hand' || event.button === 1) {
       event.preventDefault(); this.gesture = { type: 'pan', clientX: event.clientX, clientY: event.clientY, pan: { ...this.pan } };
-    } else if (entity && this.tool === 'select') {
+    } else if (this.focusedId) { event.preventDefault(); return; }
+    else if (entity && this.tool === 'select') {
       this.select(entity.id); event.preventDefault();
-      if (!this.mayEdit(entity) || entity.locked) return;
+      if (this.focusedId || !this.mayEdit(entity) || entity.locked) return;
       if (event.target.closest('[data-resize]')) this.gesture = { type: 'resize', id: entity.id, start: point, original: { ...entity } };
       else this.gesture = { type: 'move', id: entity.id, start: point, original: { ...entity } };
     } else if (this.tool === 'select') { this.select(null); return; }
@@ -553,9 +677,10 @@ export class Board {
       this.setTool('select'); this.select(added.id); requestAnimationFrame(() => this.editText(added.id)); return;
     } else if (this.tool === 'image') { this.onStatus('Drop an image onto the canvas, or use Add image in the toolbar.'); return; }
     else if (this.tool === 'diagram') { this.onStatus('Use the diagram button to add Mermaid or PlantUML source.'); return; }
-    if (this.gesture) { this.activePointerId = event.pointerId; this.el.setPointerCapture(event.pointerId); this.el.classList.add('board-is-dragging'); this.updateSelectionTools(); }
+    if (this.gesture) { if (this.gesture.type !== 'pan') this.beginHistoryGroup(this.gesture.type); this.activePointerId = event.pointerId; this.el.setPointerCapture(event.pointerId); this.el.classList.add('board-is-dragging'); this.updateSelectionTools(); }
   }
   pointerMove(event) {
+    if (this.gesture && event.pointerId !== this.activePointerId) return;
     const point = this.worldPoint(event);
     if (performance.now() - this.lastCursor > 60) { this.lastCursor = performance.now(); this.onCursor({ x: Math.round(point.x), y: Math.round(point.y) }); }
     const gesture = this.gesture; if (!gesture) return;
@@ -588,10 +713,11 @@ export class Board {
     }
   }
   pointerUp(event, cancelled = false) {
-    const gesture = this.gesture; if (!gesture) return;
+    const gesture = this.gesture; if (!gesture || event.pointerId !== this.activePointerId) return;
     this.gesture = null; this.el.classList.remove('board-is-dragging');
     if (this.el.hasPointerCapture(event.pointerId)) this.el.releasePointerCapture(event.pointerId);
     this.activePointerId = null;
+    try {
     if (gesture.type === 'move' || gesture.type === 'resize') {
       const entity = this.entities.get(gesture.id);
       if (entity && !entity.locked && this.mayEdit(entity)) {
@@ -610,7 +736,7 @@ export class Board {
       this.commit(entity); this.select(entity.id);
       if (entity.type !== 'draw') this.setTool('select');
     }
-    this.updateSelectionTools();
+    } finally { this.endHistoryGroup(); this.updateSelectionTools(); }
   }
   wheel(event) {
     if (event.target.closest('textarea,[contenteditable="true"]')) return;
@@ -621,47 +747,98 @@ export class Board {
     } else { this.pan.x -= event.deltaX; this.pan.y -= event.deltaY; this.updateView(); }
   }
   doubleClick(event) {
-    if (this.tool !== 'select') return;
-    const node = event.target.closest('[data-entity-id]'); if (!node) return;
+    if (this.tool !== 'select' || event.target.closest('button,input,textarea,select,[contenteditable="true"]')) return;
+    // Pointer capture can retarget the native double-click to the viewport.
+    const hit = event.target.closest('[data-entity-id]') || document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-entity-id]');
+    const node = hit && this.el.contains(hit) ? hit : null; if (!node) return;
     const entity = this.entities.get(node.dataset.entityId); if (!entity) return;
+    this.select(entity.id);
+    if (entity.type === 'screen' || entity.type === 'image') { this.focusEntity(entity.id); return; }
     if (!this.mayEdit(entity)) { this.onStatus(this.readOnly ? 'Reconnect to edit the shared canvas.' : 'Only the screen owner or host can change this live screen.'); return; }
-    if (['text', 'sticky', 'rectangle', 'ellipse'].includes(entity.type)) this.editText(entity.id);
-    else if (entity.type === 'diagram') {
-      if (this.onEditDiagram) this.onEditDiagram(entity);
-      else this.editDiagram(entity);
-    }
+    this.editSelected();
   }
+
   editText(id) {
     const entity = this.entities.get(id); const node = this.nodes.get(id); const content = node?.querySelector('[data-editable]');
     if (!entity || !content || !this.mayEdit(entity)) return;
+    if (this.editingId === id) return;
+    this.finishTextEdit?.();
+    this.beginHistoryGroup('edit text');
     this.editingId = id; this.select(id); this.updateSelectionTools();
     content.contentEditable = 'true'; node.classList.add('is-editing'); content.focus();
+    const originalText = content.innerText.slice(0, 20000);
     const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(content); range.collapse(false); selection.removeAllRanges(); selection.addRange(range);
-    const finish = () => {
-      content.removeEventListener('blur', finish); content.contentEditable = 'false'; node.classList.remove('is-editing');
-      const text = content.innerText.slice(0, 20000); this.editingId = null;
-      const current = this.entities.get(id); if (current) this.commit({ ...current, text }, { text });
-      this.updateSelectionTools();
+    const editEvents = new AbortController();
+    const finish = (save = true) => {
+      if (this.editingId !== id) return;
+      editEvents.abort(); content.removeEventListener('blur', onBlur); content.contentEditable = 'false'; node.classList.remove('is-editing');
+      const text = content.innerText.slice(0, 20000); this.editingId = null; this.finishTextEdit = null;
+      const current = this.entities.get(id);
+      if (save && current && text !== originalText) this.commit({ ...current, text }, { text });
+      else if (current) {
+        // Remote content is deferred while this editor owns the DOM. Merely
+        // opening and leaving it must not overwrite a teammate's latest text.
+        node._signature = null; this.renderEntity(current);
+      }
+      this.endHistoryGroup(); this.updateSelectionTools();
     };
-    content.addEventListener('blur', finish, { once: true });
-    content.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); content.blur(); } }, { signal: this.abort.signal });
-    content.addEventListener('paste', event => { event.preventDefault(); const text = event.clipboardData.getData('text/plain').slice(0, 20000); document.execCommand('insertText', false, text); }, { signal: this.abort.signal });
+    const onBlur = () => finish(); this.finishTextEdit = finish;
+    content.addEventListener('blur', onBlur, { once: true });
+    content.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); content.blur(); this.el.focus({ preventScroll: true }); } }, { signal: editEvents.signal });
+    content.addEventListener('paste', event => { event.preventDefault(); const text = event.clipboardData.getData('text/plain').slice(0, 20000); document.execCommand('insertText', false, text); }, { signal: editEvents.signal });
   }
   editDiagram(entity) {
+    this.closeDiagramEditor({ restoreFocus: false });
+    if (!this.mayEdit(this.entities.get(entity.id))) return;
     const dialog = document.createElement('dialog'); dialog.className = 'board-source-dialog';
     const heading = element('h2', '', 'Edit diagram'); const label = element('label', '', entity.language === 'plantuml' ? 'PlantUML source' : 'Mermaid source');
-    const source = element('textarea', ''); source.value = entity.source || ''; source.rows = 12; source.setAttribute('aria-label', label.textContent);
+    const headingId = `diagram-heading-${crypto.randomUUID()}`; heading.id = headingId; dialog.setAttribute('aria-labelledby', headingId);
+    const originalSource = entity.source || '';
+    const source = element('textarea', ''); source.value = originalSource; source.rows = 12; source.setAttribute('aria-label', label.textContent);
+    source.id = `diagram-source-${crypto.randomUUID()}`; label.htmlFor = source.id; source.maxLength = 20000;
+    const editor = { id: entity.id, dialog, opener: document.activeElement, restoreFocus: true }; this.diagramEditor = editor;
     const actions = element('div', 'board-dialog-actions');
     const cancel = element('button', '', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => dialog.close());
-    const save = element('button', 'primary', 'Update diagram'); save.type = 'button'; save.addEventListener('click', () => { const current = this.entities.get(entity.id); const nextSource = source.value.slice(0, 20000); if (current) this.commit({ ...current, source: nextSource }, { source: nextSource }); dialog.close(); });
-    actions.append(cancel, save); dialog.append(heading, label, source, actions); document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal(); source.focus();
+    const save = element('button', 'primary', 'Update diagram'); save.type = 'button'; save.addEventListener('click', () => { const current = this.entities.get(entity.id); const nextSource = source.value.slice(0, 20000); if (current && nextSource !== originalSource) this.commit({ ...current, source: nextSource }, { source: nextSource }); dialog.close(); });
+    actions.append(cancel, save); dialog.append(heading, label, source, actions); document.body.append(dialog);
+    dialog.addEventListener('close', () => {
+      if (this.diagramEditor === editor) this.diagramEditor = null;
+      dialog.remove();
+      if (!editor.restoreFocus || this.abort.signal.aborted) return;
+      const opener = editor.opener;
+      const target = opener?.isConnected && !opener.disabled && !opener.closest('[hidden],[inert]') && opener.getClientRects().length ? opener : this.el;
+      target.focus({ preventScroll: true });
+    }, { once: true });
+    dialog.showModal(); source.focus();
+  }
+  closeDiagramEditor({ restoreFocus = true } = {}) {
+    const editor = this.diagramEditor; if (!editor) return;
+    this.diagramEditor = null; editor.restoreFocus = restoreFocus;
+    editor.dialog.close(); editor.dialog.remove();
   }
   keyDown(event) {
-    if (document.querySelector('#modal-root .modal')) return;
-    if (event.target.closest('input,textarea,select,[contenteditable="true"],dialog')) return;
-    if (document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
-    if (event.code === 'Space') { event.preventDefault(); this.spaceHeld = true; this.el.classList.add('board-space-pan'); }
-    if (event.key === 'Escape') { this.select(null); this.setTool('select'); }
+    const target = event.target;
+    if (!(target instanceof Element) || !this.el.contains(target) || event.defaultPrevented) return;
+    if (document.querySelector('#modal-root .modal, dialog[open], [role="dialog"][aria-modal="true"]')) return;
+    if (target.closest('input,textarea,select,[contenteditable="true"]')) return;
+    if (event.key === 'Escape' && this.focusedId) { event.preventDefault(); this.exitFocus(); return; }
+    const resizeHandle = target.closest('[data-resize]');
+    if (target.closest('button,a,[role="button"]') && !resizeHandle) return;
+    if (resizeHandle && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Escape'].includes(event.key)) return;
+    if (event.code === 'Space' && !event.metaKey && !event.ctrlKey && !event.altKey) { event.preventDefault(); this.spaceHeld = true; this.el.classList.add('board-space-pan'); return; }
+    if (event.key === 'Escape') { event.preventDefault(); this.select(null); this.setTool('select'); return; }
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'f') { if (this.selectedId) { event.preventDefault(); this.focusSelected(); } return; }
+    if (this.focusedId) return;
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key === 'Enter') { if (this.editableContent(this.entities.get(this.selectedId))) { event.preventDefault(); this.editSelected(); } return; }
+    const directions = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    if (this.selectedId && !event.metaKey && !event.ctrlKey && directions[event.key]) {
+      event.preventDefault(); const entity = this.entities.get(this.selectedId);
+      if (!this.mayEdit(entity)) { this.onStatus(this.readOnly ? 'Reconnect to edit the shared canvas.' : 'Only the screen owner or host can change this live screen.'); return; }
+      if (entity.locked) { this.onStatus('Unlock position to move or resize this object.'); return; }
+      const [dx, dy] = directions[event.key]; const step = event.shiftKey ? 10 : 1;
+      const patch = event.altKey || resizeHandle ? { width: Math.max(40, entity.width + dx * step), height: Math.max(32, entity.height + dy * step) } : { x: entity.x + dx * step, y: entity.y + dy * step };
+      this.commit({ ...entity, ...patch }, patch); this.revealEntity(entity.id); return;
+    }
     if ((event.key === 'Delete' || event.key === 'Backspace') && this.selectedId) { event.preventDefault(); this.deleteSelected(); }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); this.duplicateSelected(); }
     if ((event.metaKey || event.ctrlKey) && event.key === '0') { event.preventDefault(); this.fit(); }
@@ -671,6 +848,7 @@ export class Board {
       this.changeLayer(this.selectedId, event.shiftKey ? (forward ? 'front' : 'back') : (forward ? 'forward' : 'backward'));
     }
   }
+
   setCursor(participantId, cursor) {
     if (!cursor) { this.removeCursor(participantId); return; }
     let node = this.cursors.get(participantId);
@@ -706,7 +884,7 @@ export class Board {
           const text = svgElement('text', { x: entity.width / 2, y: entity.height / 2, 'text-anchor': 'middle', 'dominant-baseline': 'middle', fill: '#435b43', 'font-family': 'sans-serif', 'font-size': entity.fontSize || 14 });
           text.textContent = entity.text; group.append(text);
         }
-      } else if (entity.type === 'image' && /^data:image\//.test(entity.url || '')) {
+      } else if (entity.type === 'image' && (entity.url || '').startsWith('data:image/')) {
         group.append(svgElement('image', { href: entity.url, width: entity.width, height: entity.height, preserveAspectRatio: 'xMidYMid meet' }));
       } else if (entity.type === 'diagram') {
         group.append(svgElement('rect', { width: entity.width, height: entity.height, rx: 10, fill: '#fff', stroke: '#dfe4de' }));
@@ -724,9 +902,12 @@ export class Board {
     return new XMLSerializer().serializeToString(svg);
   }
   destroy() {
-    this.abort.abort(); this.resizeObserver.disconnect();
+    this.closeDiagramEditor({ restoreFocus: false });
+    this.finishTextEdit?.(false);
+    this.endHistoryGroup(); this.abort.abort(); this.resizeObserver.disconnect();
+    this.el.classList.remove('board-is-focused', 'board-space-pan', 'board-is-dragging', 'board-read-only');
     for (const node of this.nodes.values()) { const video = node.querySelector('video'); if (video) video.srcObject = null; }
-    this.stage.remove(); this.selectionTools.remove(); this.layersControl.remove(); this.entities.clear(); this.nodes.clear(); this.streams.clear(); this.cursors.clear();
+    this.stage.remove(); this.selectionTools.remove(); this.selectionHint.remove(); this.focusBar.remove(); this.layersControl.remove(); this.el.removeAttribute('aria-describedby'); this.entities.clear(); this.nodes.clear(); this.streams.clear(); this.cursors.clear();
   }
 }
 export default Board;

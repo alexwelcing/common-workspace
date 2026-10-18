@@ -95,6 +95,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .share-button.is-sharing:hover { border-color: #814731; background: #814731; }
 .canvas-bar { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; gap: 16px; min-height: 45px; padding: 0 28px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: #fffdf6; }
 .canvas-label { display: inline-flex; align-items: center; gap: 8px; color: #53674c; font-size: 12px; font-weight: 550; }
+.canvas-heading { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.canvas-history { display: flex; gap: 2px; padding-left: 10px; border-left: 1px solid var(--border); }
+.canvas-history .icon-button { width: 32px; height: 32px; }
+.canvas-history .icon-button:disabled { opacity: .35; cursor: default; background: transparent; }
 .canvas-status { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 11px; }
 #connection-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 #connection-status.disconnected { color: #9b5f38; }
@@ -103,7 +107,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 #toggle-panel { width: auto; min-height: 32px; padding: 5px 8px; color: #52664a; font-size: 12px; white-space: nowrap; }
 #toggle-panel[aria-expanded='true'] { background: var(--sage); }
 .workspace-area { position: relative; display: flex; flex: 1; min-height: 0; }
-.canvas-wrap { position: relative; flex: 1; min-width: 0; overflow: hidden; container-type: inline-size; background: var(--paper); }
+.canvas-wrap { position: relative; isolation: isolate; flex: 1; min-width: 0; overflow: hidden; container-type: inline-size; background: var(--paper); }
 #board-viewport { position: absolute; inset: 0; overflow: hidden; background-image: radial-gradient(#cfcab9 .7px, transparent .7px); background-size: 20px 20px; }
 #remote-cursors { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .remote-cursor { position: absolute; top: 0; left: 0; z-index: 100; display: flex; align-items: flex-start; transition: transform .08s, opacity .5s; pointer-events: none; }
@@ -211,6 +215,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .drop-overlay strong { font-family: Georgia, serif; font-size: 23px; font-weight: 400; }
 #toasts { position: fixed; bottom: 35px; left: 50%; z-index: 200; display: flex; flex-direction: column; gap: 8px; max-width: min(90vw, 530px); transform: translateX(-50%); pointer-events: none; }
 .toast { display: flex; align-items: center; gap: 9px; padding: 12px 18px; border-radius: 11px; background: #37513f; box-shadow: 0 5px 20px #14392125; color: #fffef9; font-size: 13px; line-height: 1.5; animation: toast-in .2s ease; }
+.toast-action { pointer-events: auto; flex-shrink: 0; padding: 4px 8px; margin-left: 4px; border: 1px solid #ffffff65; border-radius: 5px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.toast-action:hover { background: #ffffff18; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 

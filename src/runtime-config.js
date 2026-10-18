@@ -1,8 +1,12 @@
+import { appPath } from './app-path.js';
+
 const safeDefault = () => ({ version: 1, protocolVersion: 1, transport: null, networkProfile: 'private', buildId: 'unknown', rtc: { iceServers: [], iceTransportPolicy: 'all', hasTurn: false }, plantUml: { enabled: false, endpoint: null }, available: false });
 let current = safeDefault();
 let pending;
+let activeController;
 
 export function getRuntimeConfig() { return current; }
+export function cancelRuntimeConfigLoad() { activeController?.abort(); }
 
 export function normalizeRuntimeConfig(value) {
   if (value?.version !== 1 || !['websocket', 'polling'].includes(value.transport)) throw new Error('Unsupported configuration');
@@ -32,12 +36,15 @@ export function loadRuntimeConfig({ fetch: fetcher = globalThis.fetch, timeoutMs
   if (pending) return pending;
   if (current.available && !force) return Promise.resolve(current);
   const controller = new AbortController();
+  activeController = controller;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const request = Promise.resolve().then(() => fetcher('/api/config', { cache: 'no-store', signal: controller.signal })).then(async response => {
+  const request = Promise.resolve().then(() => fetcher(appPath('/api/config'), { cache: 'no-store', signal: controller.signal })).then(async response => {
     if (!response.ok) throw new Error('Configuration unavailable');
-    current = normalizeRuntimeConfig(await response.json());
+    const value = await response.json();
+    if (controller.signal.aborted) return current;
+    current = normalizeRuntimeConfig(value);
     return current;
-  }).catch(() => current).finally(() => { clearTimeout(timer); if (pending === request) pending = null; });
+  }).catch(() => current).finally(() => { clearTimeout(timer); if (pending === request) { pending = null; activeController = null; } });
   pending = request;
   return request;
 }

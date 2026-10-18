@@ -9,6 +9,7 @@ function buildId() {
 }
 const apiPort = parsePort(process.env.PORT, { fallback: 3001 });
 export default defineConfig({
+  base: './',
   define: { __COMMON_BUILD_ID__: JSON.stringify(buildId()) },
   server: {
     host: process.env.COMMON_DEV_HOST || '127.0.0.1',

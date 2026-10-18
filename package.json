@@ -1,6 +1,6 @@
 {
   "name": "common-workspace",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,8 +12,10 @@
     "media:export": "bun scripts/media-worker.mjs",
     "build": "bun scripts/build.mjs",
     "build:local": "bun scripts/build-local.mjs",
+    "build:module": "bun scripts/build-module.mjs",
+    "pack:module": "bun scripts/pack-module.mjs",
     "start": "bun server.mjs",
-    "lint": "oxlint scripts vite.config.js",
+    "lint": "oxlint src sdk lib netlify scripts examples/bun-embed server.mjs vite.config.js",
     "test": "bun test ./tests/*.test.mjs",
     "test:local": "bun tests/dev-built-smoke.mjs",
     "test:browser": "bun tests/browser-smoke.mjs",

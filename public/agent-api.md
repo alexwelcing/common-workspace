@@ -2,13 +2,15 @@
 
 Common exposes the current browser canvas through `window.commonAgent` and a visible **Agent tools** panel. This supports product walkthrough annotations, text and diagrams, imports from an agent's image generator, canvas snapshots, and local video recordings. It does not run an agent, navigate the product being demonstrated, provide a model API key, or expose a remote MCP server.
 
-Discovery files are served at [`/agents.md`](agents.md) and [`/.well-known/agent.json`](.well-known/agent.json) on the current app's origin, including local installations. [`/agent-tools.json`](agent-tools.json) supplies machine-readable tool descriptions, JSON input schemas, and required capabilities from the same registry used by the browser adapter. These files describe the interfaces; they do not imply that every agent client automatically discovers them.
+Discovery files are served at [`agents.md`](agents.md) and [`.well-known/agent.json`](.well-known/agent.json), relative to the current Common mount, including local and embedded installations. [`agent-tools.json`](agent-tools.json) supplies machine-readable tool descriptions, JSON input schemas, and required capabilities from the same registry used by the browser adapter. For example, the default embedded mount serves schemas at `/__common/agent-tools.json`; keep requests beneath that mount. These files describe the interfaces; they do not imply that every agent client automatically discovers them.
+
+In an embedded installation, `window.commonAgent` and **Agent tools** belong to the Common iframe. The host's `mountCommon` controller exposes asynchronous `agent.describe()`, `agent.state()`, `agent.execute()`, and `agent.batch()` proxies; no parent-window global or automatic permission grant is installed.
 
 ## Access from a browser agent
 
-Open the user's room and join normally, or use the personal canvas. In **Agent tools**, choose permissions and an **Access duration**, then use **Apply permissions**. Enabling **Enable agent control** also applies the selected permissions. The default is **Read the canvas** plus **Edit and present** for 15 minutes. Capture and recording are separate choices. Access starts off, resets on reload, and ends on expiry, revocation, disconnection, or a room/participant/canvas-session change.
+Open the user's room and join normally, or use the personal canvas. In **Agent tools**, choose permissions and an **Access duration**, then choose **Allow selected access**. Presets and checkbox changes do not grant access; **Update access** applies changes to an active grant. The default is **Read the canvas** plus **Edit and present** for 15 minutes. Capture and recording are separate choices. Access starts off, resets on reload, and ends on expiry, revocation, disconnection, or a room/participant/canvas-session change.
 
-For tools that support DOM actions without page JavaScript, fill **Agent command** (`#agent-command`) with one JSON command or an array, click **Run command** (`#agent-run`), and read `#agent-result`. **Inspect canvas** (`#agent-inspect`) shows safe status before a read grant and canvas metadata afterward. Use accessible labels; the panel button has `aria-label="Agent tools"`.
+For tools that support DOM actions without page JavaScript, fill **Agent command** (`#agent-command`) with one JSON command or an array, click **Run command** (`#agent-run`), and read `#agent-result`. The `#agent-inspect` button is labeled **Connection status** before a read grant and **Inspect canvas** afterward. Use accessible labels; the panel button has `aria-label="Agent tools"`.
 
 | Permission | Capability | Allows |
 | --- | --- | --- |
@@ -17,7 +19,7 @@ For tools that support DOM actions without page JavaScript, fill **Agent command
 | Capture canvas and shared windows | `media-capture` | PNG capture and use of an already approved local window; also requires inspection. |
 | Manage recordings | `recording` | Recording metadata/downloads and stopping a clip; starting also requires media capture and inspection. |
 
-Permission checkboxes use `#agent-grant-inspect`, `#agent-grant-canvas-write`, `#agent-grant-media-capture`, and `#agent-grant-recording`. Duration uses `#agent-grant-duration`; apply and revoke buttons are `#agent-grant-apply` and `#agent-grant-revoke`. The UI offers 15, 30, or 60 minutes. A grant lasts at most 60 minutes and applies to this tab/session only. `describe().grants` and `state().grants` are read-only snapshots; no public API method grants or extends access. The person's manual recording controls work independently of agent grants; the agent should use its granted commands and respect revocation.
+Permission checkboxes use `#agent-grant-inspect`, `#agent-grant-canvas-write`, `#agent-grant-media-capture`, and `#agent-grant-recording`. Duration uses `#agent-grant-duration`; allow/update and revoke buttons are `#agent-grant-apply` and `#agent-grant-revoke`. The UI offers 15, 30, or 60 minutes. A grant lasts at most 60 minutes and applies to this tab/session only. `describe().grants` and `state().grants` are read-only snapshots; no public API method grants or extends access. The person's manual recording controls work independently of agent grants; the agent should use its granted commands and respect revocation.
 
 While disabled, disconnected, expired, or without inspection permission, `state()` exposes safe status and grant metadata instead of canvas content or room details. `describe()` remains available. Permission changes invalidate pending operations and their request-ID cache; a later grant does not authorize an earlier queued command.
 
@@ -72,7 +74,7 @@ Common error codes include `AGENT_DISABLED`, `PERMISSION_DENIED`, `GRANT_EXPIRED
 
 When a browser implements `document.modelContext.registerTool`, Common registers only tools permitted by the current grant. Revocation, expiry, or session change removes those registrations and aborts their pending work. Unsupported browsers keep the JSON runner and `window.commonAgent`; no extension or hosted service is required for those interfaces.
 
-Tool names use `common_` plus the action with periods changed to underscores, such as `common_canvas_add`. Tool arguments omit `action`: `{entity:{type:"text",text:"Walkthrough"},requestId:"intro-1"}` maps to the normal `canvas.add` command. Tool execution returns a JSON string containing the same success/error envelope. Consult `/agent-tools.json` rather than guessing fields. This browser integration is experimental and creates no remote MCP HTTP endpoint.
+Tool names use `common_` plus the action with periods changed to underscores, such as `common_canvas_add`. Tool arguments omit `action`: `{entity:{type:"text",text:"Walkthrough"},requestId:"intro-1"}` maps to the normal `canvas.add` command. Tool execution returns a JSON string containing the same success/error envelope. Consult [agent-tools.json](agent-tools.json) beneath the current mount rather than guessing fields. This browser integration is experimental and creates no remote MCP HTTP endpoint.
 
 ## Commands
 

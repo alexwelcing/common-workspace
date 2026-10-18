@@ -2,10 +2,11 @@
   "schema_version": 1,
   "name": "common",
   "description": "An opt-in browser canvas interface for collaborative product walkthroughs, annotations, generated image imports, snapshots, and local video recording.",
-  "homepage": "/",
-  "documentation": "/agents.md",
-  "api_reference": "/agent-api.md",
-  "tool_definitions": "/agent-tools.json",
+  "url_resolution": "Resolve relative URLs against this manifest's URL",
+  "homepage": "../",
+  "documentation": "../agents.md",
+  "api_reference": "../agent-api.md",
+  "tool_definitions": "../agent-tools.json",
   "interfaces": {
     "browser_ui": {
       "open": "[aria-label=\"Agent tools\"]",
@@ -33,6 +34,7 @@
     },
     "browser_js": {
       "global": "window.commonAgent",
+      "window_scope": "Common's iframe when embedded; Common's top-level window when standalone",
       "version": "1",
       "methods": ["describe", "state", "execute", "batch"],
       "command_field": "action"
@@ -41,7 +43,7 @@
       "experimental": true,
       "feature": "document.modelContext.registerTool",
       "tool_name_pattern": "common_<action_with_underscores>",
-      "definitions": "/agent-tools.json",
+      "definitions": "../agent-tools.json",
       "arguments": "Tool inputSchema arguments without the action field",
       "availability": "Only tools allowed by the current grant are registered"
     }

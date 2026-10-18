@@ -1,0 +1,69 @@
+.session-guide { position:relative; z-index:22; flex:none; min-width:0; border-bottom:1px solid #dedfcf; background:#f3f2e6; color:var(--ink); font-size:12px; }
+.session-guide-header { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:45px; padding:5px 28px; }
+.session-guide-toggle { justify-content:flex-start; min-width:0; gap:9px; min-height:34px; padding:3px 0; text-align:left; }
+.session-guide-flower { color:#967d45; font-size:23px; line-height:1; }
+.session-guide-title { overflow:hidden; font-size:12px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+.session-guide-summary { color:var(--muted); font-size:11px; white-space:nowrap; }
+.session-guide-toggle:hover .session-guide-summary { text-decoration:underline; text-underline-offset:3px; }
+.session-guide-header-actions { display:flex; flex:none; align-items:center; gap:6px; }
+.session-guide-follow, .session-guide-next { min-height:32px; padding:5px 10px; border:1px solid #d8deca; border-radius:8px; background:#fffdf5; color:#486240; font-size:11px; white-space:nowrap; }
+.session-guide-follow:hover, .session-guide-next:hover { border-color:#aebf9c; background:#eaf0df; }
+.session-guide-next { background:#e4ecd7; }
+.session-guide-body { position:absolute; top:100%; left:16px; right:16px; max-width:900px; max-height:58dvh; overflow-y:auto; padding:17px 20px 20px; border:1px solid #d9ddcd; border-radius:0 0 16px 5px; background:#fffdf6; box-shadow:0 12px 26px #34483b1c; scrollbar-width:thin; }
+.session-guide-feature { padding-bottom:13px; border-bottom:1px solid var(--border); }
+.session-guide-feature-text { margin:0 0 5px; color:#3d593d; font-size:13px; font-weight:550; line-height:1.5; }
+.session-guide-hint { margin:5px 0 0; color:var(--muted); font-size:11px; line-height:1.6; }
+.session-guide-feature-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+.session-guide-feature-actions:has(> [hidden]):not(:has(> :not([hidden]))) { display:none; }
+.session-guide-small-button { flex:none; min-height:30px; padding:4px 9px; border:1px solid #d9dfce; border-radius:8px; background:#f7f8ed; color:#4d6542; font-size:11px; white-space:nowrap; }
+.session-guide-small-button:hover { border-color:#b0bf9e; background:#eaf0dd; }
+.session-guide-columns { display:grid; grid-template-columns:minmax(0,1fr); gap:24px; margin-top:15px; }
+.session-guide-columns.has-roster { grid-template-columns:minmax(220px,.85fr) minmax(280px,1.15fr); }
+.session-guide-section-heading { display:flex; align-items:baseline; justify-content:space-between; gap:9px; margin-bottom:12px; }
+.session-guide-section-heading h3 { margin:0; color:#3f583a; font-family:Georgia,serif; font-size:19px; font-weight:400; }
+.session-guide-section-heading > span { color:var(--muted); font-size:10px; text-align:right; }
+.session-guide-claim-label { display:grid; gap:6px; margin-top:4px; color:#52674a; font-size:11px; }
+.session-guide-claim { width:100%; min-width:0; max-width:100%; min-height:36px; padding:7px 9px; border:1px solid #d7ddcb; border-radius:8px; background:#fffef9; color:var(--ink); font-size:12px; text-overflow:ellipsis; }
+.session-guide-checklist { display:grid; gap:2px; margin:13px 0 10px; }
+.session-guide-task { display:flex; align-items:center; gap:8px; min-height:37px; padding:6px 0; color:#53654b; font-size:12px; line-height:1.45; }
+label.session-guide-task { cursor:pointer; }
+.session-guide-task input { width:17px; height:17px; margin:0; flex:none; accent-color:#526f43; cursor:pointer; }
+.session-guide-task input:disabled { cursor:default; }
+.session-guide-task input[aria-busy='true'], .session-guide-claim[aria-busy='true'] { cursor:progress; opacity:.7; }
+.session-guide-task-label { min-width:0; overflow-wrap:anywhere; }
+.session-guide-task-state { flex:none; margin-left:auto; color:var(--muted); font-size:10px; }
+.session-guide-check { display:inline-grid; place-items:center; width:17px; height:17px; flex:none; color:#8b967b; font-size:17px; }
+.session-guide-task.is-complete .session-guide-check { color:#587044; font-size:16px; }
+.session-guide-task.is-derived { color:#627058; }
+.session-guide-task.is-derived .session-guide-task-state { font-size:10px; }
+.session-guide-share { min-height:36px; margin-top:12px; padding:7px 12px; border:1px solid #67845b; border-radius:9px; background:#e8efdb; color:#405f36; font-size:12px; font-weight:550; }
+.session-guide-share:hover { background:#dce8cb; }
+.session-guide-roster { display:grid; gap:5px; }
+.session-guide-person { display:flex; align-items:center; gap:8px; min-height:51px; padding:7px 8px; border:1px solid transparent; border-radius:9px; }
+.session-guide-person.is-featured { border-color:#d5dfc3; background:#eef2e3; }
+.session-guide-person-dot { width:7px; height:7px; flex:none; border-radius:50%; background:#bdc4b0; }
+.session-guide-person.is-sharing .session-guide-person-dot { background:#6f8959; }
+.session-guide-person.is-waiting .session-guide-person-dot { border:1px solid #bfc5b1; background:transparent; }
+.session-guide-person-copy { min-width:0; flex:1; }
+.session-guide-person-copy strong { display:block; color:#4a6140; font-size:12px; font-weight:550; overflow-wrap:anywhere; }
+.session-guide-person-copy > span { display:block; margin-top:3px; color:var(--muted); font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.session-guide-you { color:var(--muted); font-size:10px; font-weight:400; }
+.session-guide-connection { margin:14px 0 0; padding:10px 11px; border-radius:8px; background:#f5edd9; color:#77653e; font-size:11px; line-height:1.6; }
+@media (max-width:900px) {
+  .session-guide-header { padding-left:18px; padding-right:18px; }
+  .session-guide-summary { max-width:145px; overflow:hidden; text-overflow:ellipsis; }
+  .session-guide-columns.has-roster { grid-template-columns:minmax(180px,.85fr) minmax(225px,1.15fr); gap:18px; }
+}
+@media (max-width:650px) {
+  .session-guide-header { gap:5px; padding:5px 10px; flex-wrap:wrap; }
+  .session-guide-toggle { flex:1; gap:6px; }
+  .session-guide-title { font-size:11px; }
+  .session-guide-summary { display:none; }
+  .session-guide-header-actions { gap:4px; }
+  .session-guide-follow, .session-guide-next { min-height:34px; padding:5px 7px; font-size:10px; }
+  .session-guide-body { left:6px; right:6px; max-height:58dvh; padding:15px 13px 17px; }
+  .session-guide-columns.has-roster { grid-template-columns:minmax(0,1fr); gap:20px; }
+  .session-guide-host { padding-top:16px; border-top:1px solid var(--border); }
+  .session-guide-task { min-height:40px; }
+  .session-guide-small-button { min-height:34px; }
+}

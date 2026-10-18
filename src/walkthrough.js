@@ -123,6 +123,7 @@ export class Walkthrough {
   }
 
   focus(board, bounds) {
+    board.exitFocus?.({ restoreFocus: false });
     const width = board.el?.clientWidth;
     const height = board.el?.clientHeight;
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
