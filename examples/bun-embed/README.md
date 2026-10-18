@@ -15,12 +15,12 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-The resulting artifact is `artifacts/common-workspace-0.1.0-embed.1.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
+The resulting artifact is `artifacts/common-workspace-0.1.0-embed.2.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
 
 ```sh
 cp -R /path/to/common/examples/bun-embed ./my-common-host
 cd my-common-host
-bun add /absolute/path/to/common-workspace-0.1.0-embed.1.tgz
+bun add /absolute/path/to/common-workspace-0.1.0-embed.2.tgz
 bun run start
 ```
 

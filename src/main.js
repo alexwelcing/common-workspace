@@ -1,7 +1,7 @@
 import './style.css';
 import './board.css';
-import {createElement, Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, X} from 'lucide';
-const icons={Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, X};
+import {createElement, Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, X} from 'lucide';
+const icons={Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, X};
 import {Board} from './board.js';
 import {ScreenSharing} from './media.js';
 import {ScreenShareControls} from './sharing-controls.js';
@@ -13,6 +13,7 @@ import {initGeometry, geometryBackend} from './geometry.js';
 import {getRuntimeConfig, loadRuntimeConfig, cancelRuntimeConfigLoad} from './runtime-config.js';
 import {DiagnosticLog, buildDiagnosticReport} from './diagnostics.js';
 import {appBasePath, appPath, appURL, appWebSocketURL, appRoute, appStorageKey} from './app-path.js';
+import {prepareImage, clipboardImages, MAX_IMAGE_BATCH} from './image-import.js';
 
 const diagnostics=new DiagnosticLog();
 async function refreshRuntimeConfiguration(){
@@ -113,7 +114,7 @@ const savedRooms=()=>{
 };
 const ownParticipantId=()=>sandbox?'local':auth?.participantId;
 const saveRoom=r=>{if(disposed)return;writeStored('localStorage',appStorageKey('common.rooms'),JSON.stringify([{id:r.id,name:r.name},...savedRooms().filter(x=>x.id!==r.id)].slice(0,8)));renderRecent()};
-function toast(message){if(disposed)return;const el=document.createElement('div');el.className='toast';el.innerHTML=icon('Check',16);el.append(document.createTextNode(message));$('#toasts').append(el);later(()=>el.remove(),4500)}
+function toast(message,action,key){if(disposed)return;if(key)document.querySelectorAll('[data-toast-key]').forEach(el=>{if(el.dataset.toastKey===key)el.remove()});const el=document.createElement('div');el.className='toast';if(key)el.dataset.toastKey=key;el.innerHTML=icon('Check',16);el.append(document.createTextNode(message));if(action){const button=document.createElement('button');button.type='button';button.className='toast-action';button.textContent=action.label;button.onclick=()=>{el.remove();action.run()};el.append(button);el.dataset.historyAction='true'}$('#toasts').append(el);later(()=>el.remove(),4500)}
 function modal(html,onSubmit){if(disposed)return;const revision=++modalRevision,root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);later(()=>{if(modalRevision===revision)root.querySelector('input,textarea,button:not(.close-modal)')?.focus()},20)}
 function closeModal(){modalRevision++;$('#modal-root').replaceChildren()}
 function dialogOperation(form){const revision=modalRevision,generation=sessionGeneration;return()=>!disposed&&form.isConnected&&modalRevision===revision&&sessionGeneration===generation}
@@ -146,10 +147,10 @@ $('#app').innerHTML=`
 </aside>
 <main class="main">
  <header class="topbar"><div class="session-heading"><span class="eyebrow" id="session-kind">PERSONAL</span><div class="title-row"><h1 id="room-title">Your canvas</h1><button class="icon-button" id="room-menu" aria-label="Canvas options">${icon('Ellipsis',21)}</button></div><p id="room-subtitle">Notes, diagrams, and shared windows.</p></div><div class="top-actions"><span class="privacy-label">${icon('LockKeyhole',13)} <span id="privacy-status">Only you</span></span><button class="button invite-button" id="invite" aria-label="Invite people">${icon('UserPlus',16)} Invite people</button><button class="primary share-button" id="share-screen" aria-label="Share a window" aria-pressed="false">${icon('MonitorUp',17)} Share a window</button></div></header>
- <div class="canvas-bar"><span class="canvas-label">Canvas</span><div class="canvas-status"><span id="connection-status">${icon('CloudUpload',15)} Saved on this device</span><div class="presence" id="header-presence"><span class="avatar avatar-small" aria-hidden="true">Y</span><span id="member-count">Only you</span></div><button class="button panel-toggle" id="toggle-panel" aria-label="People and chat" aria-expanded="false" aria-controls="right-panel">${icon('PanelRight',17)}<span>People &amp; chat</span></button></div></div>
+ <div class="canvas-bar"><div class="canvas-heading"><span class="canvas-label">Canvas</span><div class="canvas-history" role="toolbar" aria-label="Your canvas history"><button class="icon-button" id="undo-canvas" aria-label="Undo your last canvas change" aria-keyshortcuts="Control+Z Meta+Z" title="Undo (Ctrl/⌘ Z)" disabled>${icon('Undo2',17)}</button><button class="icon-button" id="redo-canvas" aria-label="Redo your last canvas change" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y" title="Redo (Ctrl/⌘ Shift Z)" disabled>${icon('Redo2',17)}</button></div></div><div class="canvas-status"><span id="connection-status">${icon('CloudUpload',15)} Saved on this device</span><div class="presence" id="header-presence"><span class="avatar avatar-small" aria-hidden="true">Y</span><span id="member-count">Only you</span></div><button class="button panel-toggle" id="toggle-panel" aria-label="People and chat" aria-expanded="false" aria-controls="right-panel">${icon('PanelRight',17)}<span>People &amp; chat</span></button></div></div>
  <section class="workspace-area">
  <div class="canvas-wrap"><div id="board-viewport" aria-label="Collaborative canvas"></div><div id="remote-cursors"></div>
- <div class="canvas-top-hint"><span class="hint-icon">${icon('MousePointer2',13)}</span><span id="canvas-hint">Drag to move · Double-click text to edit</span></div>
+ <div class="canvas-top-hint"><span class="hint-icon">${icon('MousePointer2',13)}</span><span id="canvas-hint">Drag to move · Enter to edit · Paste a screenshot</span></div>
  <div class="canvas-toolbar" role="toolbar" aria-label="Canvas tools">${[['select','MousePointer2','Select (V)'],['hand','Hand','Pan (H)'],['draw','Pencil','Draw (P)'],['text','Type','Text (T)'],['sticky','StickyNote','Sticky note (N)'],['rectangle','Square','Rectangle (R)'],['arrow','MoveUpRight','Arrow (A)'],['image','ImagePlus','Upload image'],['diagram','Workflow','Add diagram']].map(([id,i,label],n)=>`${n===2||n===7?'<span class="tool-divider"></span>':''}<button class="tool ${id==='select'?'selected':''}" data-tool="${id}" aria-label="${label}" aria-pressed="${id==='select'}" title="${label}">${icon(i,20)}</button>`).join('')}<span class="tool-divider"></span><input type="color" value="#305e48" id="tool-color" title="Drawing color" aria-label="Drawing color"></div>
  <span id="engine-label" class="sr-only">Canvas ready</span><div class="canvas-bottom"><div class="zoom-controls"><button class="icon-button" id="zoom-out" aria-label="Zoom out">${icon('Minus',15)}</button><button id="zoom-label" title="Reset zoom" aria-label="Reset zoom">100%</button><button class="icon-button" id="zoom-in" aria-label="Zoom in">${icon('Plus',15)}</button><span></span><button class="icon-button" id="fit-canvas" aria-label="Fit canvas to view">${icon('Scan',16)}</button></div></div>
  <div class="drop-overlay" id="drop-overlay">${icon('ImagePlus',40)}<strong>Drop images onto the canvas</strong></div>
@@ -157,7 +158,7 @@ $('#app').innerHTML=`
  <aside class="right-panel collapsed" id="right-panel" aria-label="People and chat"><div class="panel-tabs"><button class="panel-tab active" data-panel="people">People <span id="people-number">1</span></button><button class="panel-tab" data-panel="chat">Chat <span id="chat-number" hidden>0</span></button></div><div id="panel-content"></div></aside>
  </section>
  <footer class="footer"><span id="footer-access">Saved on this device</span><span id="footer-tip">V Select · H Pan · P Draw</span></footer>
-</main><input type="file" id="image-input" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden>`;
+</main><input type="file" id="image-input" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" multiple hidden>`;
 
 sharingControls=new ScreenShareControls({
   button:$('#share-screen'),insertAfter:$('.topbar'),icon,
@@ -169,7 +170,8 @@ board=new Board({
   el:$('#board-viewport'),
   canEdit:entity=>entity.type!=='screen'||sandbox||entity.participantId===auth?.participantId,
   onChange:(entity,patch)=>{if(!shared?.setLocal(entity,patch))refreshCanvas()},
-  onDelete:id=>{shared?.deleteLocal(id);stopDeletedLocalScreen()},
+  onDelete:id=>deleteCanvasEntity(id),
+  onHistoryStart:label=>shared?.beginHistoryGroup(label),onHistoryEnd:()=>shared?.endHistoryGroup(),
   onLayerAction:(id,action)=>shared?.reorder(id,action),
   onLockChange:(id,locked)=>shared?.patch(id,{locked}),
   onCursor:({x,y})=>{if(!sandbox&&connected)send({type:'cursor',x,y})},
@@ -194,7 +196,7 @@ function syncScreenSubscriptions(){
   const el=$('#board-viewport');
   const active=new Set(participants.map(person=>person.id));
   const screens=shared.all().filter(entity=>entity.type==='screen'&&(sandbox||active.has(entity.participantId)));
-  const ids=screenSubscriptions.plan(screens,{participantId:ownParticipantId(),selectedId:board.selectedId,view:board.getView(),width:el.clientWidth,height:el.clientHeight,hidden:document.hidden||!embedVisible||(!sandbox&&!connected)});
+  const ids=screenSubscriptions.plan(screens,{participantId:ownParticipantId(),selectedId:board.selectedId,focusedId:board.focusedId,view:board.getView(),width:el.clientWidth,height:el.clientHeight,hidden:document.hidden||!embedVisible||(!sandbox&&!connected)});
   board.setScreenSubscriptions(ids,ownParticipantId());
   media.setSubscriptions(ids);
 }
@@ -220,11 +222,53 @@ function makeCanvasModel(){
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'delete',id});
     },
     onUpdate:(update,origin)=>{if(isPeerRoom())peerCanvas?.broadcast(update,origin)},
+    onHistoryChange:()=>{document.querySelectorAll('[data-history-action]').forEach(el=>el.remove());updateHistoryControls()},
+    canApplyHistory:entity=>!disposed&&board.mayEdit(entity),
     onInvalid:error=>toast(error.message)
   });
-  board.setEntities([]);board.setLayerOrder([]);
+  board.setEntities([]);board.setLayerOrder([]);updateHistoryControls();
 }
-function receiveCanvas(action){receivingCanvas=true;try{return action()}finally{receivingCanvas=false}}
+function receiveCanvas(action){receivingCanvas=true;try{return shared.withoutHistory(action)}finally{receivingCanvas=false}}
+
+function updateHistoryControls(){
+  const state=shared?.getHistoryState(),enabled=!disposed&&!board?.readOnly&&(sandbox||connected);
+  const editor=board?.nodes.get(board.editingId)?.querySelector('[contenteditable="true"]');
+  const pendingText=editor&&editor.innerText.slice(0,20000)!==(shared?.get(board.editingId)?.text||'');
+  for(const direction of ['undo','redo']){
+    const button=$('#'+direction+'-canvas');if(!button)continue;
+    const available=state?.[direction==='undo'?'canUndo':'canRedo'];
+    const label=state?.[direction+'Label'];
+    button.disabled=!enabled||(direction==='undo'?!(available||pendingText):(!available||pendingText));
+    button.title=(direction==='undo'?'Undo':'Redo')+(label?' '+label.toLowerCase():'')+(direction==='undo'?' (Ctrl/⌘ Z)':' (Ctrl/⌘ Shift Z)');
+  }
+}
+function performHistory(direction){
+  if(disposed||!shared)return;
+  if(board.readOnly||(!sandbox&&!connected)){toast('Reconnect to change the shared canvas.');return}
+  // Do not rewind an in-flight pointer gesture. Text editors retain native
+  // undo; their blur has already committed before a history button click.
+  if(board.gesture)return;
+  const result=shared[direction]();
+  if(result.restoredIds?.length)board.select(result.restoredIds.at(-1));
+  if(result.ok||result.conflicts)toast(result.message,null,'history');
+  updateHistoryControls();
+}
+function deleteCanvasEntity(id){
+  const model=shared,entity=model?.get(id);if(!entity)return;
+  model.stopCapturing();
+  if(!model.deleteLocal(id))return;
+  stopDeletedLocalScreen();
+  if(entity.type==='screen')return;
+  model.stopCapturing();
+  const revision=model.getHistoryState().revision;
+  toast('Object removed.',{label:'Undo',run:()=>{
+    if(shared!==model||model.getHistoryState().revision!==revision)return;
+    performHistory('undo');
+  }},'history');
+}
+$('#undo-canvas').onclick=()=>performHistory('undo');
+$('#redo-canvas').onclick=()=>performHistory('redo');
+for(const type of ['input','focusin','focusout'])board.el.addEventListener(type,()=>queueMicrotask(updateHistoryControls),{signal:mainEvents.signal});
 
 let warnedCanvasStorage=false;
 function saveSandbox(){if(disposed)return;const saved=writeStored('localStorage',appStorageKey('common.canvas'),JSON.stringify([...board.entities.values()].filter(e=>e.type!=='screen')));if(!saved&&!warnedCanvasStorage){warnedCanvasStorage=true;toast('This browser cannot save the canvas on this device. Export it to keep your changes.')}}
@@ -233,7 +277,7 @@ loadSandbox();
 setupMedia();
 initGeometry().then(()=>{if(!disposed){$('#engine-label').textContent='Canvas ready';$('#engine-label').title=geometryBackend()}});
 
-function chooseTool(next){if(disposed)return;if(next==='image'){$('#image-input').click();return}if(next==='diagram'){diagramModal();return}board.setTool(next);document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>{const selected=e.dataset.tool===next;e.classList.toggle('selected',selected);e.setAttribute('aria-pressed',String(selected))});$('#canvas-hint').textContent=({select:'Drag to move · Double-click text to edit',hand:'Drag to pan the canvas',draw:'Click and drag to draw',text:'Click to add text',sticky:'Click to add a note',rectangle:'Click and drag to draw a box',arrow:'Click and drag to draw an arrow'})[next]||''}
+function chooseTool(next){if(disposed)return;if(next==='image'){$('#image-input').click();return}if(next==='diagram'){diagramModal();return}board.setTool(next);document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>{const selected=e.dataset.tool===next;e.classList.toggle('selected',selected);e.setAttribute('aria-pressed',String(selected))});$('#canvas-hint').textContent=({select:'Drag to move · Enter to edit · Paste a screenshot',hand:'Drag to pan the canvas',draw:'Click and drag to draw',text:'Click to add text',sticky:'Click to add a note',rectangle:'Click and drag to draw a box',arrow:'Click and drag to draw an arrow'})[next]||''}
 document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>e.onclick=()=>chooseTool(e.dataset.tool));
 $('#tool-color').oninput=e=>{activeColor=e.target.value;board.setColor(activeColor)};
 $('#zoom-in').onclick=()=>board.setZoom(Math.min(2,board.getView().zoom+.1));$('#zoom-out').onclick=()=>board.setZoom(Math.max(.25,board.getView().zoom-.1));$('#zoom-label').onclick=()=>board.setZoom(1);$('#fit-canvas').onclick=()=>board.fit();
@@ -312,7 +356,7 @@ function updateCanvasStatus(){
 function setConnection(status){
   if(disposed)return;
   diagnostics.record('connection',{state:status,participants:participants.length});
-  connected=status==='connected';board.setReadOnly(!sandbox&&!connected);
+  connected=status==='connected';board.setReadOnly(!sandbox&&!connected);updateHistoryControls();
   $('#connection-status').classList.toggle('disconnected',!connected);updateCanvasStatus();
   scheduleScreenSubscriptions();
   agentTools?.refresh();
@@ -372,7 +416,7 @@ async function connect(){
       case 'chat':chat.push(m.message);$('#chat-number').hidden=false;$('#chat-number').textContent=chat.length;renderChat();break;
       case 'signal':media.handleSignal(m.from,m.data);break;
       case 'ended':
-        intentionalClose=true;connected=false;agentPermissions?.revoke('session-ended');webMCP?.refresh();capture?.stop().catch(()=>{});walkthrough?.stop();board.setReadOnly(true);localStream=null;updateShareButton();forgetAuth(auth.room.id);media.destroy();peerCanvas?.destroy();$('#connection-status').textContent='Session ended';closeModal();
+        intentionalClose=true;connected=false;agentPermissions?.revoke('session-ended');webMCP?.refresh();capture?.stop().catch(()=>{});walkthrough?.stop();board.setReadOnly(true);updateHistoryControls();localStream=null;updateShareButton();forgetAuth(auth.room.id);media.destroy();peerCanvas?.destroy();$('#connection-status').textContent='Session ended';closeModal();
         toast('This session has ended. Your host closed the room.');
         modal(`<span class="modal-symbol">${icon('Sunset',25)}</span><h2 id="modal-title">Session ended</h2><p>The host has ended this session.</p><button class="primary modal-submit" id="back-home">Back to your canvas ${icon('ArrowRight',16)}</button>`);
         $('#back-home').onclick=()=>location.href=appPath('/');break;
@@ -431,36 +475,56 @@ function updateShareButton(){
   publishEmbedState();
 }
 function diagramModal(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Workflow',25)}</span><h2 id="modal-title">Add a diagram</h2><p>Use Mermaid or PlantUML syntax.</p><form><label>Diagram language<select name="language" id="diagram-language"><option value="mermaid">Mermaid · renders in your browser</option><option value="plantuml" ${getRuntimeConfig().plantUml.enabled?'':'disabled'}>PlantUML · ${getRuntimeConfig().plantUml.enabled?'configured renderer':'disabled here'}</option></select></label><label>Diagram source<textarea name="source" rows="8" spellcheck="false" required>flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]</textarea></label><label class="consent-label" id="plant-consent" hidden><input type="checkbox" name="consent">Allow sending this diagram to ${esc(getRuntimeConfig().plantUml.endpoint?new URL(getRuntimeConfig().plantUml.endpoint).host:'the configured renderer')} for rendering. Everyone in this room can see the result.</label><button class="primary modal-submit">Add to canvas ${icon('Plus',17)}</button></form>`,e=>{e.preventDefault();const vals=Object.fromEntries(new FormData(e.target));if(vals.language==='plantuml'&&(!getRuntimeConfig().plantUml.enabled||!vals.consent)){formError(e.target,'Allow external rendering to use PlantUML.');return}board.add('diagram',{source:vals.source,language:vals.language,externalConsent:vals.language==='plantuml',title:vals.language==='mermaid'?'Mermaid diagram':'PlantUML diagram',width:500,height:300});closeModal();chooseTool('select')});$('#diagram-language').onchange=e=>{$('#plant-consent').hidden=e.target.value!=='plantuml';const input=$('textarea[name=source]');input.value=e.target.value==='plantuml'?'@startuml\nAlice -> Bob: An idea\nBob --> Alice: Let’s build it\n@enduml':'flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]'}}
-// Images sync to every peer, so large photos are resized and re-encoded in the browser first.
-const IMAGE_EDGE=1600, MAX_IMAGE_URL=Math.floor(1.3*1024*1024*4/3);
-function compactImage(file,image,url){
-  // Re-encoding would drop the frames of an animated GIF.
-  if(file.type==='image/gif'||(file.size<=256*1024&&Math.max(image.naturalWidth,image.naturalHeight)<=IMAGE_EDGE))return url;
-  const scale=Math.min(1,IMAGE_EDGE/Math.max(image.naturalWidth,image.naturalHeight));
-  const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
-  const context=canvas.getContext?.('2d');if(!context)return url;
-  context.drawImage(image,0,0,canvas.width,canvas.height);
-  // Browsers that cannot encode WebP fall back to PNG, which is rarely smaller.
-  const encoded=canvas.toDataURL('image/webp',.85);
-  return encoded.startsWith('data:image/webp;')&&encoded.length<url.length?encoded:url;
+// Decode first, then commit a batch synchronously as one personal undo action.
+// Capture the intended world location now: decoding may outlast a pan or zoom.
+async function addImages(files,{point=board.centerPoint(),offset=32/board.zoom}={}){
+  if(disposed||!shared)return;
+  if(board.readOnly){toast('Reconnect to add images to the shared canvas.');return}
+  const targetModel=shared,generation=sessionGeneration,wasFocused=!!board.focusedId;
+  const current=()=>!disposed&&shared===targetModel&&sessionGeneration===generation;
+  const chosen=Array.from(files||[]),prepared=[],failures=[];
+  if(!chosen.length)return;
+  for(const [index,file] of chosen.slice(0,MAX_IMAGE_BATCH).entries()){
+    try{const image=await prepareImage(file,{signal:mainEvents.signal});if(!current())return;prepared.push({image,index})}
+    catch(error){if(!current())return;if(error.name==='AbortError')return;failures.push(`${String(file.name||'Image').slice(0,80)}: ${error.message||'This image could not be added. Choose it again to retry.'}`)}
+  }
+  if(!current())return;
+  if(board.readOnly){toast('Your connection changed. Reconnect and add the images again.');return}
+  let added=0,lastAdded=null;
+  if(prepared.length){
+    targetModel.beginHistoryGroup(prepared.length===1?'Add image':'Add images');
+    try{
+      for(const {image,index} of prepared){
+        const entity=board.add('image',{...image,x:Math.round(point.x-image.width/2+index*offset),y:Math.round(point.y-image.height/2+index*offset)});
+        if(entity&&targetModel.get(entity.id)){added++;lastAdded=entity.id}
+      }
+    }finally{targetModel.endHistoryGroup()}
+  }
+  if(added){chooseTool('select');board.select(lastAdded);if(wasFocused)board.revealEntity(lastAdded);toast(`${added===1?'Image added':`${added} images added`} to the canvas.`)}
+  if(added<prepared.length)toast('Some images could not be added. Remove a few objects, then choose the remaining images again.');
+  for(const failure of failures)toast(failure);
+  if(chosen.length>MAX_IMAGE_BATCH)toast(`Add up to ${MAX_IMAGE_BATCH} images at a time. Choose the remaining images to add them.`);
 }
-async function addImage(file){
-  if(disposed)return;
-  const targetModel=shared;
-  if(!file||!/^image\/(png|jpeg|webp|gif|avif)$/.test(file.type)){toast('Choose a PNG, JPEG, WebP, GIF, or AVIF image.');return}
-  if(file.size>(file.type==='image/gif'?1.3:20)*1024*1024){toast(file.type==='image/gif'?'Choose a GIF smaller than 1.3 MB.':'Choose an image smaller than 20 MB.');return}
-  try{
-    const url=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('This image could not be opened.'));reader.readAsDataURL(file)});
-    const image=await new Promise((resolve,reject)=>{const value=new Image();value.onload=()=>resolve(value);value.onerror=()=>reject(new Error('This image could not be decoded.'));value.src=url});
-    const compact=compactImage(file,image,url);
-    if(compact.length>MAX_IMAGE_URL){toast('This image is still larger than 1.3 MB after resizing. Try a smaller one.');return}
-    if(disposed||shared!==targetModel||board.readOnly){toast('The canvas changed. Choose the image again in this session.');return}
-    const width=Math.min(460,image.naturalWidth);
-    board.add('image',{url:compact,width,height:width*image.naturalHeight/image.naturalWidth,title:file.name});chooseTool('select');
-  }catch(error){toast(error.message||'This image could not be added.')}
+$('#image-input').onchange=e=>{const files=Array.from(e.target.files||[]);e.target.value='';void addImages(files)};
+let dragDepth=0;
+const wrap=$('.canvas-wrap');
+const hasFileDrag=event=>Array.from(event.dataTransfer?.types||[]).includes('Files');
+const hideImageDrop=()=>{dragDepth=0;$('#drop-overlay').classList.remove('visible')};
+wrap.addEventListener('dragenter',event=>{if(!hasFileDrag(event)||disposed)return;event.preventDefault();dragDepth++;if(!board.readOnly)$('#drop-overlay').classList.add('visible')},{signal:mainEvents.signal});
+wrap.addEventListener('dragleave',event=>{if(!hasFileDrag(event))return;dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)hideImageDrop()},{signal:mainEvents.signal});
+wrap.addEventListener('dragover',event=>{if(!hasFileDrag(event)||disposed)return;event.preventDefault();event.dataTransfer.dropEffect=board.readOnly?'none':'copy'},{signal:mainEvents.signal});
+wrap.addEventListener('drop',event=>{hideImageDrop();if(!hasFileDrag(event)||disposed)return;event.preventDefault();void addImages(event.dataTransfer.files,{point:board.worldPoint(event),offset:32/board.zoom})},{signal:mainEvents.signal});
+window.addEventListener('blur',hideImageDrop,{signal:mainEvents.signal});
+function isTextPasteTarget(event){
+  if($('#modal-root').childElementCount||document.querySelector('dialog[open],[role="dialog"][aria-modal="true"]')||board.editingId)return true;
+  return [...event.composedPath(),document.activeElement].some(node=>node instanceof Element&&(node.isContentEditable||node.closest('input,textarea,select,[role="textbox"],[role="searchbox"],[role="combobox"],[data-common-no-paste]')));
 }
-$('#image-input').onchange=e=>{addImage(e.target.files[0]);e.target.value=''};let dragDepth=0;const wrap=$('.canvas-wrap');wrap.addEventListener('dragenter',e=>{if(e.dataTransfer.types.includes('Files')){e.preventDefault();dragDepth++;$('#drop-overlay').classList.add('visible')}});wrap.addEventListener('dragleave',()=>{if(--dragDepth<=0)$('#drop-overlay').classList.remove('visible')});wrap.addEventListener('dragover',e=>e.preventDefault());wrap.addEventListener('drop',e=>{e.preventDefault();dragDepth=0;$('#drop-overlay').classList.remove('visible');[...e.dataTransfer.files].slice(0,5).forEach(addImage)});
-function tour(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Common ground.</h2><div class="tour-steps"><div>${icon('Link',21)}<span><strong>Create a session</strong>Invite your team with the session link and password.</span></div><div>${icon('MonitorUp',21)}<span><strong>Share a window</strong>Choose a window in your browser’s share picker. Use Watch window to view a teammate’s share.</span></div><div>${icon('Pencil',21)}<span><strong>Build on the canvas</strong>Add notes, images, drawings, and diagrams. Changes appear for everyone in the session.</span></div></div><p class="help-detail">Drag items to arrange them. Double-click text to edit. Use Pan (H) to move around the canvas. Some networks may block direct screen sharing.</p><a class="local-guide-link" href="${esc(appPath('/self-hosting.html'))}" target="_blank" rel="noopener">Run Common on your own laptop ${icon('ArrowUpRight',15)}</a><button class="primary modal-submit" id="tour-done">Got it ${icon('Check',16)}</button>`);$('#tour-done').onclick=closeModal}
+document.addEventListener('paste',event=>{
+  if(disposed||!embedVisible||document.hidden||event.defaultPrevented||isTextPasteTarget(event))return;
+  const files=clipboardImages(event.clipboardData);if(!files.length)return;
+  event.preventDefault();void addImages(files);
+},{signal:mainEvents.signal});
+function tour(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Common ground.</h2><div class="tour-steps"><div>${icon('Link',21)}<span><strong>Create a session</strong>Invite your team with the session link and password.</span></div><div>${icon('MonitorUp',21)}<span><strong>Share a window</strong>Choose a window in your browser’s share picker. Use Watch window to view a teammate’s share.</span></div><div>${icon('Pencil',21)}<span><strong>Build on the canvas</strong>Add notes, images, drawings, and diagrams. Changes appear for everyone in the session.</span></div></div><p class="help-detail">Select an item, then use Edit or Enter to write. Focus (F) enlarges an item just for you; Escape returns to the canvas. Arrow keys move items; Alt + arrows resize, and Shift makes larger steps. Undo (Ctrl/⌘ Z) restores your canvas changes. Paste a screenshot or drop images where you want them. Use Pan (H) to move around. Some networks may block direct screen sharing.</p><a class="local-guide-link" href="${esc(appPath('/self-hosting.html'))}" target="_blank" rel="noopener">Run Common on your own laptop ${icon('ArrowUpRight',15)}</a><button class="primary modal-submit" id="tour-done">Got it ${icon('Check',16)}</button>`);$('#tour-done').onclick=closeModal}
 function showSessions(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Layers',25)}</span><h2 id="modal-title">Recent sessions</h2><p>Saved on this device.</p><div class="sessions-list">${savedRooms().length?savedRooms().map(r=>`<a href="${esc(appPath('/room/'+encodeURIComponent(r.id)))}">${icon('Layers',18)}<span>${esc(r.name)}</span>${icon('ArrowUpRight',17)}</a>`).join(''):'<p>No recent sessions.</p>'}</div><button class="primary modal-submit" id="sessions-create">${icon('Plus',16)} Create a session</button>`);$('#sessions-create').onclick=createModal}
 async function showConnectionDetails(){
   if(!getRuntimeConfig().available){toast('Refreshing connection settings…');await refreshRuntimeConfiguration()}
@@ -483,7 +547,27 @@ async function showMediaExports(){
   openMediaExportDialog({capture,modal,closeModal,onStatus:toast});
 }
 function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#connection-details').onclick=showConnectionDetails;$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();chooseTool('select');return}if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.target.isContentEditable||$('#modal-root').children.length||document.querySelector('dialog[open]'))return;if(e.ctrlKey||e.metaKey)return;const keys={v:'select',h:'hand',p:'draw',t:'text',n:'sticky',r:'rectangle',a:'arrow'};if(keys[e.key.toLowerCase()])chooseTool(keys[e.key.toLowerCase()]);},{signal:mainEvents.signal});
+document.addEventListener('keydown',e=>{
+  if(e.defaultPrevented||disposed)return;
+  if(e.key==='Escape'){
+    if($('#modal-root').children.length){closeModal();e.preventDefault();return}
+    if(!document.querySelector('dialog[open]'))chooseTool('select');
+    return;
+  }
+  const target=e.target;
+  if(!(target instanceof Element)||/INPUT|TEXTAREA|SELECT/.test(target.tagName)||target.isContentEditable||$('#modal-root').children.length||document.querySelector('dialog[open]'))return;
+  const inCanvas=board.el.contains(target),inTools=!!target.closest('.canvas-toolbar,.canvas-history');
+  if(!inCanvas&&!inTools)return;
+  const key=e.key.toLowerCase();
+  if((e.ctrlKey||e.metaKey)&&!e.altKey){
+    if(key==='z'||(key==='y'&&!e.shiftKey)){e.preventDefault();performHistory(key==='y'||e.shiftKey?'redo':'undo')}
+    return;
+  }
+  if(e.altKey||e.ctrlKey||e.metaKey)return;
+  if(target.closest('button,a,[role="button"],[role="menuitem"]')&&!target.closest('.canvas-toolbar'))return;
+  const keys={v:'select',h:'hand',p:'draw',t:'text',n:'sticky',r:'rectangle',a:'arrow'};
+  if(keys[key]){e.preventDefault();chooseTool(keys[key])}
+},{signal:mainEvents.signal});
 window.addEventListener('beforeunload',destroyCommon,{signal:mainEvents.signal});window.addEventListener('popstate',()=>{if(!disposed)location.reload()},{signal:mainEvents.signal});
 // Public, opt-in browser agent interface. It never exposes room credentials.
 // Loaded in its own chunk so it never delays the first paint of the canvas.

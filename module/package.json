@@ -1,6 +1,6 @@
 {
   "name": "common-workspace",
-  "version": "0.1.0-embed.1",
+  "version": "0.1.0-embed.2",
   "private": true,
   "description": "An embeddable collaborative canvas and Bun session adapter, with no hosted service dependency.",
   "type": "module",

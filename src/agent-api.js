@@ -392,6 +392,7 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
   }
   function focus(target) {
     const board = getBoard(); const width = board.el?.clientWidth || 1000; const height = board.el?.clientHeight || 700;
+    board.exitFocus?.({ restoreFocus: false });
     board.setZoom(Math.min(1.5, (width - 96) / target.width, (height - 96) / target.height));
     board.pan = { x: width / 2 - (target.x + target.width / 2) * board.zoom, y: height / 2 - (target.y + target.height / 2) * board.zoom };
     board.updateView(); return board.getView();
@@ -428,7 +429,7 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
       if (entity) board.select(entity.id);
       return focus(entity || command.bounds);
     }
-    if (action === 'view.fit') { board.fit(); return board.getView(); }
+    if (action === 'view.fit') { board.exitFocus?.({ restoreFocus: false }); board.fit(); return board.getView(); }
     if (action.startsWith('walkthrough.')) return service(action, walkthrough, action.split('.')[1], ...(action === 'walkthrough.load' ? [command.steps] : []));
     if (action === 'capture.snapshot') return service(action, recording, 'snapshot', { download: command.download ?? false, isAllowed });
     if (action.startsWith('recording.')) {

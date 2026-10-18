@@ -9,7 +9,7 @@ This module is being developed on `feature/embeddable-common`. It has not been d
 An administrator can provide the built package directly. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.1.0-embed.1.tgz
+bun add /absolute/path/common-workspace-0.1.0-embed.2.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.1.0-embed.1.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This builds the package and writes `artifacts/common-workspace-0.1.0-embed.2.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
 
 The runnable host example is included in the package. After installing, try it directly from your Bun project:
 
@@ -180,6 +180,8 @@ The same-origin iframe is an integration boundary, not a separate security origi
 ## Storage, networking, and lifetime
 
 The module defaults to an in-memory room service and the private network profile. It does not write a room database unless you explicitly configure `dataFile`. Restarting an in-memory service removes its room access, presence, and chat state. Peer canvas content and shared images live in participating browsers; live video travels between peers. Personal-canvas browser storage is scoped to the installation's mount path.
+
+Each mounted browser canvas has its own local Focus view and personal Undo/Redo history. Focus changes no shared geometry. Undo applies inverse field edits only while those fields still belong to this browser's action; it preserves newer peer writes and respects current locks and edit access. Undoing deletion creates a new copy with a fresh ID, so integrations should inspect again before reusing an old object ID. Live screen objects are excluded from history. History ends with the session or mount, is not persisted, and is bounded to 100 entries and 24 MiB of recorded actions, plus an active group capped at 24 MiB. Paste uses the browser's normal paste event and requires no clipboard-read policy or permission.
 
 The private profile uses bundled fonts and does not select public STUN or PlantUML services by default. Mermaid renders locally. Your host can explicitly configure organization STUN/TURN or a diagram renderer when needed. A reachable host page does not guarantee a WebRTC connection: restrictive networks may still need a reachable TURN relay. There is no included SFU, media relay, hosted account requirement, or automatic Cloudflare tunnel.
 

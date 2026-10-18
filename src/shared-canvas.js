@@ -1,5 +1,6 @@
 import * as Y from 'yjs';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
+import { PersonalHistory } from './personal-history.js';
 
 const MAX_UPDATE_BYTES = 24 * 1024 * 1024;
 const MAX_CANVAS_BYTES = 16 * 1024 * 1024;
@@ -87,7 +88,7 @@ function sanitize(input, id = input?.id) {
  * from resurrecting an item that another participant deleted.
  */
 export class SharedCanvas {
-  constructor({ onChange = () => {}, onDelete = () => {}, onUpdate = () => {}, onInvalid = () => {}, clientId, maxBytes = MAX_CANVAS_BYTES } = {}) {
+  constructor({ onChange = () => {}, onDelete = () => {}, onUpdate = () => {}, onInvalid = () => {}, onHistoryChange = () => {}, canApplyHistory = () => true, clientId, maxBytes = MAX_CANVAS_BYTES } = {}) {
     if (!Number.isInteger(maxBytes) || maxBytes < 1024 || maxBytes > MAX_CANVAS_BYTES) throw new RangeError('Canvas byte limit must be between 1 KiB and 16 MiB.');
     this.doc = new Y.Doc();
     if (Number.isInteger(clientId) && clientId > 0 && clientId <= 0xffffffff) this.doc.clientID = clientId;
@@ -95,11 +96,33 @@ export class SharedCanvas {
     this.tombstones = this.doc.getMap('canvas-deleted');
     this.onChange = onChange; this.onDelete = onDelete; this.onInvalid = onInvalid;
     this.cache = new Map(); this.bytesById = new Map(); this.deferredIds = new Set(); this.totalBytes = 0; this.maxBytes = maxBytes; this.destroyed = false;
-    this.entityObserver = events => {
+    this.fieldVersions = new Map(); this.version = 0;
+    this.history = new PersonalHistory(this, { onChange: onHistoryChange, canApply: canApplyHistory });
+    this.entityObserver = (events, transaction) => {
       const ids = new Set();
+      // Peers can compact fractional keys too. Recognize only a complete,
+      // order-preserving coordinate rewrite, never an actual layer move.
+      const possibleNormalization = transaction.origin !== 'local' && events.length > 1 && events.every(event => event.target !== this.entities && event.path.length === 1 && event.keysChanged.size === 1 && event.keysChanged.has('orderKey'));
+      const previous = possibleNormalization ? [...this.cache.values()].sort(compareSharedEntities) : null;
+      const previousVersions = previous ? new Map(previous.map(entity => [entity.id, this.historyVersions(entity.id)])) : null;
       for (const event of events) {
-        if (event.target === this.entities) for (const id of event.keysChanged) ids.add(id);
-        else if (event.path.length) ids.add(event.path[0]);
+        if (event.target === this.entities) for (const id of event.keysChanged) {
+          ids.add(id);
+          const versions = this.fieldVersions.get(id) || {};
+          const record = this.entities.get(id);
+          for (const field of new Set([...Object.keys(versions), ...(record instanceof Y.Map ? record.keys() : [])])) versions[field] = ++this.version;
+          this.fieldVersions.set(id, versions);
+        }
+        else if (event.path.length) {
+          const id = event.path[0]; ids.add(id);
+          const versions = this.fieldVersions.get(id) || {};
+          for (const field of event.keysChanged || []) versions[field] = ++this.version;
+          this.fieldVersions.set(id, versions);
+        }
+      }
+      if (previous?.length > 1 && ids.size === previous.length) {
+        const next = this.all();
+        if (next.length === previous.length && next.every((entity, index) => entity.id === previous[index].id)) this.history.normalizeLayers(previous, next, previousVersions);
       }
       this.publish(ids);
     };
@@ -156,6 +179,22 @@ export class SharedCanvas {
   get(id) { const entity = this.materialize(id); return entity ? copy(entity) : undefined; }
   all() { return [...this.entities.keys()].map(id => this.materialize(id)).filter(Boolean).sort(compareSharedEntities).map(copy); }
   getOrder() { return this.all().map(entity => entity.id); }
+  historyVersions(id) { return { ...this.fieldVersions.get(id) }; }
+  retainHistoryVersions(id, fields) {
+    const versions = this.fieldVersions.get(id) || {};
+    for (const field of fields) if (!(field in versions)) versions[field] = ++this.version;
+    this.fieldVersions.set(id, versions); return { ...versions };
+  }
+  get canUndo() { return this.history.canUndo; }
+  get canRedo() { return this.history.canRedo; }
+  getHistoryState() { return this.history.state(); }
+  beginHistoryGroup(label) { this.history.begin(label); }
+  endHistoryGroup() { this.history.end(); }
+  stopCapturing() { this.history.stop(); }
+  withoutHistory(action) { return this.history.without(action); }
+  clearHistory() { this.history.clear(); }
+  undo() { return this.history.run('undo'); }
+  redo() { return this.history.run('redo'); }
 
   checkBudget(entity, previous) {
     const nextBytes = byteSize(entity); const previousBytes = previous ? byteSize(previous) : 0;
@@ -182,6 +221,7 @@ export class SharedCanvas {
       const record = new Y.Map();
       for (const [field, value] of Object.entries(normalized)) record.set(field, copy(value));
       this.doc.transact(() => this.entities.set(normalized.id, record), 'local');
+      this.history.record(undefined, normalized, {}, this.historyVersions(normalized.id), 'Add object');
       return true;
     } catch (error) { this.onInvalid(error); return false; }
   }
@@ -197,19 +237,35 @@ export class SharedCanvas {
       }
       const normalized = sanitize(candidate, id);
       this.checkBudget(normalized, current);
+      const beforeVersions = this.historyVersions(id);
       let changed = false;
       this.doc.transact(() => {
         for (const [field, value] of Object.entries(normalized)) if (!same(current[field], value)) { record.set(field, copy(value)); changed = true; }
         for (const field of Object.keys(current)) if (!(field in normalized)) { record.delete(field); changed = true; }
       }, 'local');
+      if (changed) this.history.record(current, normalized, beforeVersions, this.historyVersions(id), 'Edit object');
       return changed;
     } catch (error) { this.onInvalid(error); return false; }
   }
 
   deleteLocal(id) {
     if (this.destroyed || !this.entities.has(id) || this.tombstones.has(id)) return false;
+    const previous = this.get(id); const versions = this.historyVersions(id);
     this.doc.transact(() => { this.tombstones.set(id, true); this.entities.delete(id); }, 'local');
+    if (previous) this.history.record(previous, undefined, versions, {}, 'Delete object');
     return true;
+  }
+
+  /** Internal history recovery: a fresh ID with the deleted object's layer. */
+  insertHistoryEntity(entity) {
+    if (this.destroyed || entity?.type === 'screen' || this.entities.has(entity?.id) || this.tombstones.has(entity?.id) || this.entities.size >= MAX_ENTITIES) return false;
+    try {
+      const normalized = sanitize(entity); this.checkBudget(normalized);
+      const record = new Y.Map();
+      for (const [field, value] of Object.entries(normalized)) record.set(field, copy(value));
+      this.doc.transact(() => this.entities.set(normalized.id, record), 'local');
+      return true;
+    } catch (error) { this.onInvalid(error); return false; }
   }
 
   /** Seed only an entirely empty document, after its initial peer sync. */
@@ -239,22 +295,30 @@ export class SharedCanvas {
     if (index < 0) return false;
     const destination = action === 'front' ? items.length - 1 : action === 'back' ? 0 : action === 'forward' ? Math.min(items.length - 1, index + 1) : Math.max(0, index - 1);
     if (destination === index) return false;
+    let remaining = items.filter(entity => entity.id !== id);
+    let before = remaining[destination - 1]?.orderKey ?? null;
+    let after = remaining[destination]?.orderKey ?? null;
+    // Normalize as an order-preserving bookkeeping transaction first. Personal
+    // layer history follows the new coordinates; genuine peer edits stay guarded.
+    if (items.some(entity => !validKey(entity.orderKey) || entity.orderKey.length > 96) || (before != null && after != null && before >= after)) {
+      const original = items; const versions = new Map(items.map(entity => [entity.id, this.historyVersions(entity.id)]));
+      const keys = generateNKeysBetween(null, null, items.length);
+      items = items.map((entity, i) => ({ ...entity, orderKey: keys[i] }));
+      this.doc.transact(() => { for (const entity of items) this.entities.get(entity.id).set('orderKey', entity.orderKey); }, 'local');
+      this.history.normalizeLayers(original, items, versions);
+      remaining = items.filter(entity => entity.id !== id);
+      before = remaining[destination - 1]?.orderKey ?? null;
+      after = remaining[destination]?.orderKey ?? null;
+    }
+    const previous = this.get(id); const versions = this.historyVersions(id);
     this.doc.transact(() => {
-      const remaining = items.filter(entity => entity.id !== id);
-      let before = remaining[destination - 1]?.orderKey ?? null;
-      let after = remaining[destination]?.orderKey ?? null;
-      // Simultaneous inserts can produce equal fractional keys. Their ID order
-      // is deterministic; normalize once when a later move needs that gap.
-      if (items.some(entity => !validKey(entity.orderKey) || entity.orderKey.length > 96) || (before != null && after != null && before >= after)) {
-        const keys = generateNKeysBetween(null, null, items.length);
-        items = items.map((entity, i) => ({ ...entity, orderKey: keys[i] }));
-        for (const entity of items) this.entities.get(entity.id).set('orderKey', entity.orderKey);
-        const normalized = items.filter(entity => entity.id !== id);
-        before = normalized[destination - 1]?.orderKey ?? null;
-        after = normalized[destination]?.orderKey ?? null;
-      }
       this.entities.get(id).set('orderKey', generateKeyBetween(before, after));
     }, 'local');
+    this.beginHistoryGroup('Change layer');
+    try {
+      const next = this.get(id);
+      if (next) this.history.record(previous, next, versions, this.historyVersions(id), 'Change layer');
+    } finally { this.endHistoryGroup(); }
     return true;
   }
 
@@ -274,9 +338,10 @@ export class SharedCanvas {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.history.clear();
     this.entities.unobserveDeep(this.entityObserver);
     this.tombstones.unobserve(this.deletedObserver);
     this.doc.off('update', this.updateObserver);
-    this.doc.destroy(); this.cache.clear(); this.bytesById.clear(); this.deferredIds.clear(); this.totalBytes = 0;
+    this.doc.destroy(); this.cache.clear(); this.bytesById.clear(); this.deferredIds.clear(); this.fieldVersions.clear(); this.totalBytes = 0;
   }
 }

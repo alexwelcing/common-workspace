@@ -15,7 +15,7 @@ function dom(t) {
   const properties = {
     window, document: window.document, navigator: window.navigator, location: window.location,
     history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
-    HTMLElement: window.HTMLElement, FileReader: window.FileReader, Image: window.Image,
+    Element: window.Element, HTMLElement: window.HTMLElement, FileReader: window.FileReader, Image: window.Image,
     CustomEvent: window.CustomEvent, XMLSerializer: window.XMLSerializer,
     ResizeObserver: window.ResizeObserver, innerWidth: 1200,
     requestAnimationFrame: callback => window.requestAnimationFrame(callback),
@@ -287,7 +287,9 @@ test('the full application boots with opt-in agent control and shares a personal
   document.querySelector('.close-modal').click();
   panelToggle.click();
   assert.equal(panelToggle.getAttribute('aria-expanded'), 'false');
-  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'n', bubbles: true }));
+  const canvasViewport = document.querySelector('#board-viewport');
+  canvasViewport.focus();
+  canvasViewport.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'n', bubbles: true }));
   assert.equal(document.querySelector('.canvas-toolbar [data-tool="sticky"]').getAttribute('aria-pressed'), 'true');
   document.querySelector('.canvas-toolbar [data-tool="select"]').click();
   assert.equal(document.querySelector('.canvas-toolbar [data-tool="sticky"]').getAttribute('aria-pressed'), 'false');
