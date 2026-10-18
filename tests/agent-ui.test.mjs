@@ -12,6 +12,11 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 
 function dom(t) {
   const window = new Window({ url: 'https://common.test/' });
+  // Happy DOM has no layout engine. Give connected, visible controls a box so
+  // focus management can use the same visibility check as the real browser.
+  window.HTMLElement.prototype.getClientRects = function () {
+    return this.isConnected && !this.closest('[hidden]') ? [new window.DOMRect(0, 0, 100, 30)] : [];
+  };
   const properties = {
     window, document: window.document, navigator: window.navigator, location: window.location,
     history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage,

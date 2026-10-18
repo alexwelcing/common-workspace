@@ -1,5 +1,7 @@
 import './style.css';
 import './board.css';
+import './chat.css';
+import {ChatPanel} from './chat-panel.js';
 import {createElement, Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, X} from 'lucide';
 const icons={Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, X};
 import {Board} from './board.js';
@@ -14,6 +16,7 @@ import {getRuntimeConfig, loadRuntimeConfig, cancelRuntimeConfigLoad} from './ru
 import {DiagnosticLog, buildDiagnosticReport} from './diagnostics.js';
 import {appBasePath, appPath, appURL, appWebSocketURL, appRoute, appStorageKey} from './app-path.js';
 import {prepareImage, clipboardImages, MAX_IMAGE_BATCH} from './image-import.js';
+import {ModalController} from './modal-controller.js';
 
 const diagnostics=new DiagnosticLog();
 async function refreshRuntimeConfiguration(){
@@ -34,10 +37,11 @@ const uid=()=>crypto.randomUUID();
 let shared=null, peerCanvas=null, receivingCanvas=false;
 let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null, sharingControls=null;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
-let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor='#305e48';
+let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor='#305e48', chatPanel=null;
 const screenSubscriptions=new ScreenSubscriptions();
 let subscriptionTimer, disposed=false, embedVisible=true, sessionGeneration=0, roomLookupGeneration=0, modalRevision=0, destroyPromise=null, disconnectExports=null, initialFitNeeded=false;
 const mainEvents=new AbortController(), appTimers=new Set(), appFrames=new Set(), activeRequests=new Set(), objectUrls=new Set(), embedListeners=new Set(), visibilityListeners=new Set();
+const modalController=new ModalController({root:$('#modal-root'),getFallback:()=>board?.el||$('#new-session'),onRequestClose:closeModal,signal:mainEvents.signal});
 const sessionVisibility={
   get hidden(){return document.hidden||!embedVisible},
   addEventListener(type,listener){if(type==='visibilitychange')visibilityListeners.add(listener);document.addEventListener(type,listener)},
@@ -67,7 +71,7 @@ function destroyCommon(){
   if(socket){socket.onmessage=null;socket.onclose=null;socket.onerror=null;socket.close()}
   visibilityListeners.clear();
   media?.destroy();for(const track of localStream?.getTracks?.()||[])track.stop();localStream=null;
-  sharingControls?.destroy();
+  sharingControls?.destroy();chatPanel?.destroy();
   peerCanvas?.destroy();shared?.destroy();board?.destroy();
   for(const url of objectUrls)URL.revokeObjectURL(url);objectUrls.clear();
   closeModal();$('#toasts').replaceChildren();$('#app').inert=true;
@@ -115,8 +119,8 @@ const savedRooms=()=>{
 const ownParticipantId=()=>sandbox?'local':auth?.participantId;
 const saveRoom=r=>{if(disposed)return;writeStored('localStorage',appStorageKey('common.rooms'),JSON.stringify([{id:r.id,name:r.name},...savedRooms().filter(x=>x.id!==r.id)].slice(0,8)));renderRecent()};
 function toast(message,action,key){if(disposed)return;if(key)document.querySelectorAll('[data-toast-key]').forEach(el=>{if(el.dataset.toastKey===key)el.remove()});const el=document.createElement('div');el.className='toast';if(key)el.dataset.toastKey=key;el.innerHTML=icon('Check',16);el.append(document.createTextNode(message));if(action){const button=document.createElement('button');button.type='button';button.className='toast-action';button.textContent=action.label;button.onclick=()=>{el.remove();action.run()};el.append(button);el.dataset.historyAction='true'}$('#toasts').append(el);later(()=>el.remove(),4500)}
-function modal(html,onSubmit){if(disposed)return;const revision=++modalRevision,root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);later(()=>{if(modalRevision===revision)root.querySelector('input,textarea,button:not(.close-modal)')?.focus()},20)}
-function closeModal(){modalRevision++;$('#modal-root').replaceChildren()}
+function modal(html,onSubmit){if(disposed)return;modalRevision++;const root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);modalController.activate()}
+function closeModal(){modalRevision++;modalController.close({restoreFocus:!disposed});if(!disposed)chatPanel?.refreshVisibility()}
 function dialogOperation(form){const revision=modalRevision,generation=sessionGeneration;return()=>!disposed&&form.isConnected&&modalRevision===revision&&sessionGeneration===generation}
 function formError(form,msg){if(disposed)return;let e=form.querySelector('.form-error');if(!e){e=document.createElement('p');e.className='form-error';e.setAttribute('role','alert');form.append(e)}e.textContent=msg}
 async function diagnosticFetch(input,options={}){
@@ -129,7 +133,7 @@ async function diagnosticFetch(input,options={}){
   finally{activeRequests.delete(controller);options.signal?.removeEventListener('abort',abort)}
 }
 async function api(path,body){const r=await diagnosticFetch(appPath(path),{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});let data;try{data=await r.json()}catch{throw new Error([401,403].includes(r.status)?'Your application sign-in is required. Sign in again, then reopen Common.':'The server returned an unreadable response. Try again or check your connection.')}if(disposed)throw new DOMException('Common was closed.','AbortError');if(!r.ok)throw new Error(data?.error||'Something went wrong. Please try again.');return data}
-function send(message){if(disposed)return;if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));else if(!sandbox&&message.type!=='cursor'&&message.type!=='signal')toast('Reconnect to edit the shared canvas.')}
+function send(message){if(disposed)return false;if(socket?.readyState===WebSocket.OPEN){try{socket.send(JSON.stringify(message));return true}catch{return false}}if(!sandbox&&message.type!=='cursor'&&message.type!=='signal')toast(message.type==='chat'?'Reconnect to send your message.':'Reconnect to edit the shared canvas.');return false}
 const seed=()=>[
  {id:'welcome',type:'text',x:88,y:70,width:600,height:94,text:'A little room for your next idea.',fontSize:32,color:'#283f32',z:1},
  {id:'note',type:'sticky',x:91,y:220,width:258,height:190,text:'One small thought…\n\nShare a window.\nFollow a hunch.',color:'#344a30',fill:'#f0e4ad',fontSize:18,z:2},
@@ -231,6 +235,7 @@ function makeCanvasModel(){
 function receiveCanvas(action){receivingCanvas=true;try{return shared.withoutHistory(action)}finally{receivingCanvas=false}}
 
 function updateHistoryControls(){
+  if(disposed)return;
   const state=shared?.getHistoryState(),enabled=!disposed&&!board?.readOnly&&(sandbox||connected);
   const editor=board?.nodes.get(board.editingId)?.querySelector('[contenteditable="true"]');
   const pendingText=editor&&editor.innerText.slice(0,20000)!==(shared?.get(board.editingId)?.text||'');
@@ -281,14 +286,21 @@ function chooseTool(next){if(disposed)return;if(next==='image'){$('#image-input'
 document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>e.onclick=()=>chooseTool(e.dataset.tool));
 $('#tool-color').oninput=e=>{activeColor=e.target.value;board.setColor(activeColor)};
 $('#zoom-in').onclick=()=>board.setZoom(Math.min(2,board.getView().zoom+.1));$('#zoom-out').onclick=()=>board.setZoom(Math.max(.25,board.getView().zoom-.1));$('#zoom-label').onclick=()=>board.setZoom(1);$('#fit-canvas').onclick=()=>board.fit();
-function setPanelOpen(open){$('#right-panel').classList.toggle('collapsed',!open);$('#toggle-panel').setAttribute('aria-expanded',String(open))}
+function setPanelOpen(open){if(!open)chatPanel?.setVisible(false);$('#right-panel').classList.toggle('collapsed',!open);$('#toggle-panel').setAttribute('aria-expanded',String(open));if(open&&rightPanel==='chat')chatPanel?.setVisible(true)}
 $('#toggle-panel').onclick=()=>setPanelOpen($('#right-panel').classList.contains('collapsed'));
 $('#new-session').onclick=()=>createModal();$('#invite').onclick=()=>sandbox?createModal():inviteModal();$('#how-it-works').onclick=tour;$('#sessions-nav').onclick=showSessions;$('#sandbox-nav').onclick=()=>{if(sandbox)board.fit();else location.href=appPath('/')};
 $('#room-menu').onclick=roomMenu;
-document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{rightPanel=b.dataset.panel;document.querySelectorAll('[data-panel]').forEach(e=>e.classList.toggle('active',e===b));renderPanel()});
-function renderPanel(){if(rightPanel==='people')renderPeople();else renderChat()}
-function renderPeople(){if(rightPanel!=='people')return;const list=sandbox?[{id:'local',name:'You',color:'#365f4a'}]:participants;$('#panel-content').innerHTML=`<div class="people-list" role="list" aria-label="${sandbox?'On this canvas':'Session participants'}">${list.map(p=>`<div class="person" role="listitem"><span class="avatar" aria-hidden="true" style="--avatar-color:${esc(p.color)}">${esc(p.name.slice(0,1).toUpperCase())}</span><div><strong>${esc(p.name)} ${!sandbox&&p.id===auth?.participantId?'<span class="you-tag">(you)</span>':''}</strong><small>${sandbox?'This device':p.isAdmin?'Host':'Participant'}</small></div><span class="person-online" title="Online"></span></div>`).join('')}</div><button class="invite-dashed" id="panel-invite">${icon('UserPlus',15)} Invite people</button><p class="panel-invite-hint">${sandbox?'Create a session to invite your team.':'Share the session link and password to invite your team.'}</p>`;$('#panel-invite').onclick=()=>sandbox?createModal():inviteModal()}
-function renderChat(){if(rightPanel!=='chat')return;$('#panel-content').innerHTML=`<div class="chat-messages" id="chat-messages">${chat.length?chat.map(m=>`<div class="chat-message"><div><strong>${esc(m.name)}</strong><time>${new Date(m.createdAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time></div><p>${esc(m.text)}</p></div>`).join(''):`<div class="chat-empty">${icon('MessagesSquare',26)}<strong>No messages yet</strong><p>${sandbox?'Create a session to chat with your team.':'Send a message or share a useful link.'}</p></div>`}</div><form id="chat-form"><label class="sr-only" for="chat-text">Message your team</label><input id="chat-text" maxlength="2000" placeholder="Message the team" autocomplete="off" ${sandbox?'disabled':''}><button aria-label="Send message" ${sandbox?'disabled':''}>${icon('ArrowUp',17)}</button></form>`;$('#chat-form').onsubmit=e=>{e.preventDefault();const input=$('#chat-text');if(input.value.trim()){if(!connected){toast('Reconnect to send your message.');return}send({type:'chat',text:input.value.trim()});input.value=''}};const m=$('#chat-messages');m.scrollTop=m.scrollHeight}
+document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{rightPanel=b.dataset.panel;document.querySelectorAll('[data-panel]').forEach(e=>{const active=e===b;e.classList.toggle('active',active);e.setAttribute('aria-pressed',String(active))});renderPanel()});
+function ensureConversation(){
+  if(chatPanel)return chatPanel;
+  const people=document.createElement('div');people.id='people-panel';$('#panel-content').append(people);
+  const badge=document.createElement('span');badge.className='panel-unread';badge.hidden=true;$('#toggle-panel').append(badge);
+  chatPanel=new ChatPanel({container:$('#panel-content'),icon,send,visibility:sessionVisibility,onUnread:count=>{const label=count?`People and chat, ${count} unread ${count===1?'message':'messages'}`:'People and chat';$('#chat-number').hidden=!count;$('#chat-number').textContent=String(count);$('#chat-number').setAttribute('aria-label',`${count} unread ${count===1?'message':'messages'}`);badge.hidden=!count;badge.textContent=String(count);$('#toggle-panel').setAttribute('aria-label',label)}});
+  return chatPanel;
+}
+function renderPanel(){ensureConversation();$('#people-panel').hidden=rightPanel!=='people';chatPanel.setVisible(rightPanel==='chat'&&!$('#right-panel').classList.contains('collapsed'));if(rightPanel==='people')renderPeople();else renderChat()}
+function renderPeople(){ensureConversation();if(rightPanel!=='people')return;const list=sandbox?[{id:'local',name:'You',color:'#365f4a'}]:participants;$('#people-panel').innerHTML=`<div class="people-list" role="list" aria-label="${sandbox?'On this canvas':'Session participants'}">${list.map(p=>`<div class="person" role="listitem"><span class="avatar" aria-hidden="true" style="--avatar-color:${esc(p.color)}">${esc(p.name.slice(0,1).toUpperCase())}</span><div><strong>${esc(p.name)} ${!sandbox&&p.id===auth?.participantId?'<span class="you-tag">(you)</span>':''}</strong><small>${sandbox?'This device':p.isAdmin?'Host':'Participant'}</small></div><span class="person-online" title="Online"></span></div>`).join('')}</div><button class="invite-dashed" id="panel-invite">${icon('UserPlus',15)} Invite people</button><p class="panel-invite-hint">${sandbox?'Create a session to invite your team.':'Share the session link and password to invite your team.'}</p>`;$('#panel-invite').onclick=()=>sandbox?createModal():inviteModal()}
+function renderChat(){ensureConversation().setContext({sandbox,connected,participantId:auth?.participantId});chatPanel.setMessages(chat)}
 function updatePresence(){const count=sandbox?1:participants.length;$('#member-count').textContent=sandbox?'Only you':`${count} ${count===1?'person':'people'}`;$('#people-number').textContent=count;const avatar=$('#header-presence .avatar');avatar.textContent=auth?.displayName?.slice(0,1)||'Y';renderPanel();sharingControls?.updateContext()}
 function renderRecent(){$('.recent-count').textContent=savedRooms().length;$('#recent-rooms').innerHTML=savedRooms().length?savedRooms().slice(0,4).map(r=>`<a class="recent-room" href="${esc(appPath('/room/'+encodeURIComponent(r.id)))}"><span class="room-dot"></span><span>${esc(r.name)}</span>${icon('ArrowUpRight',12)}</a>`).join(''):'<p class="no-recent">No recent sessions</p>'}
 function createModal(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Plus',25)}</span><h2 id="modal-title">Create a session</h2><p>Start a private session and invite your teammates.</p><form id="create-form"><label>Session name<input name="name" placeholder="e.g. Weekly product review" maxlength="60" required value="Team workspace"></label><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" required autocomplete="given-name"></label><label>Room password<span class="field-help">Share this with your team separately.</span><input name="password" type="password" minlength="8" maxlength="128" placeholder="At least 8 characters" required autocomplete="new-password"></label><button class="primary modal-submit">Create session ${icon('ArrowRight',17)}</button><small class="form-footnote">${icon('LockKeyhole',12)} Link and password required to join.</small></form>`,async e=>{e.preventDefault();const form=e.target,current=dialogOperation(form);const b=form.querySelector('button');b.disabled=true;b.textContent='Creating…';try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms',{...vals,collaboration:'peer'});if(!current())return;result.displayName=vals.displayName;saveAuth(result);saveRoom(result.room);closeModal();await enterRoom(result,true);if(!disposed&&auth===result)inviteModal()}catch(err){if(!current())return;formError(form,err.message);b.disabled=false;b.innerHTML='Create session '+icon('ArrowRight',17)}})}
@@ -301,7 +313,7 @@ async function enterRoom(result,isNew=false){
   capture?.stop().catch(()=>{});walkthrough?.stop();
   intentionalClose=true;cancelLater(reconnectTimer);socket?.close();media?.destroy();
   auth=result;sandbox=false;intentionalClose=false;localStream=null;roomSeeded=!isNew;
-  participants=[];screenSubscriptions.reset();board.setScreenSubscriptions([],result.participantId);
+  participants=[];chat=[];ensureConversation().resetSession({sandbox:false,connected:false,participantId:result.participantId});screenSubscriptions.reset();board.setScreenSubscriptions([],result.participantId);
   makeCanvasModel();roomName=result.room.name;
   history.pushState(null,'',appPath('/room/'+encodeURIComponent(result.room.id)));
   $('#room-title').textContent=roomName;
@@ -357,6 +369,7 @@ function setConnection(status){
   if(disposed)return;
   diagnostics.record('connection',{state:status,participants:participants.length});
   connected=status==='connected';board.setReadOnly(!sandbox&&!connected);updateHistoryControls();
+  chatPanel?.setContext({sandbox,connected,participantId:auth?.participantId});
   $('#connection-status').classList.toggle('disconnected',!connected);updateCanvasStatus();
   scheduleScreenSubscriptions();
   agentTools?.refresh();
@@ -401,7 +414,7 @@ async function connect(){
       case 'init':{
         diagnostics.record('request',{requestId:m.diagnostics?.requestId});
         auth.room=m.room;saveAuth(auth);
-        setConnection('connected');participants=m.participants;chat=m.chat||[];
+        setConnection('connected');participants=m.participants;chat=m.chat||[];renderChat();
         if(!isPeerRoom())receiveCanvas(()=>{if(!shared.entities.size&&!shared.tombstones.size)shared.replaceInitial(m.entities);else{const incoming=new Set(m.entities.map(e=>e.id));for(const entity of shared.all())if(!incoming.has(entity.id))shared.deleteLocal(entity.id);for(const entity of m.entities)shared.setLocal(entity)}});
         if(!roomSeeded){
           roomSeeded=true;
@@ -413,14 +426,15 @@ async function connect(){
       case 'upsert':if(!isPeerRoom())receiveCanvas(()=>shared.setLocal(m.entity));break;
       case 'delete':if(!isPeerRoom())receiveCanvas(()=>shared.deleteLocal(m.id));break;
       case 'cursor':renderCursor(m);break;
-      case 'chat':chat.push(m.message);$('#chat-number').hidden=false;$('#chat-number').textContent=chat.length;renderChat();break;
+      case 'chat':chat.push(m.message);if(chat.length>300)chat.shift();renderChat();break;
       case 'signal':media.handleSignal(m.from,m.data);break;
       case 'ended':
+        chat=[];chatPanel?.resetSession({sandbox:false,connected:false,participantId:auth?.participantId});
         intentionalClose=true;connected=false;agentPermissions?.revoke('session-ended');webMCP?.refresh();capture?.stop().catch(()=>{});walkthrough?.stop();board.setReadOnly(true);updateHistoryControls();localStream=null;updateShareButton();forgetAuth(auth.room.id);media.destroy();peerCanvas?.destroy();$('#connection-status').textContent='Session ended';closeModal();
         toast('This session has ended. Your host closed the room.');
         modal(`<span class="modal-symbol">${icon('Sunset',25)}</span><h2 id="modal-title">Session ended</h2><p>The host has ended this session.</p><button class="primary modal-submit" id="back-home">Back to your canvas ${icon('ArrowRight',16)}</button>`);
         $('#back-home').onclick=()=>location.href=appPath('/');break;
-      case 'error':toast(m.error);break;
+      case 'error':chatPanel?.transportError();toast(m.error);break;
     }
   };
   ws.onclose=e=>{
@@ -527,8 +541,9 @@ document.addEventListener('paste',event=>{
 function tour(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Common ground.</h2><div class="tour-steps"><div>${icon('Link',21)}<span><strong>Create a session</strong>Invite your team with the session link and password.</span></div><div>${icon('MonitorUp',21)}<span><strong>Share a window</strong>Choose a window in your browser’s share picker. Use Watch window to view a teammate’s share.</span></div><div>${icon('Pencil',21)}<span><strong>Build on the canvas</strong>Add notes, images, drawings, and diagrams. Changes appear for everyone in the session.</span></div></div><p class="help-detail">Select an item, then use Edit or Enter to write. Focus (F) enlarges an item just for you; Escape returns to the canvas. Arrow keys move items; Alt + arrows resize, and Shift makes larger steps. Undo (Ctrl/⌘ Z) restores your canvas changes. Paste a screenshot or drop images where you want them. Use Pan (H) to move around. Some networks may block direct screen sharing.</p><a class="local-guide-link" href="${esc(appPath('/self-hosting.html'))}" target="_blank" rel="noopener">Run Common on your own laptop ${icon('ArrowUpRight',15)}</a><button class="primary modal-submit" id="tour-done">Got it ${icon('Check',16)}</button>`);$('#tour-done').onclick=closeModal}
 function showSessions(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Layers',25)}</span><h2 id="modal-title">Recent sessions</h2><p>Saved on this device.</p><div class="sessions-list">${savedRooms().length?savedRooms().map(r=>`<a href="${esc(appPath('/room/'+encodeURIComponent(r.id)))}">${icon('Layers',18)}<span>${esc(r.name)}</span>${icon('ArrowUpRight',17)}</a>`).join(''):'<p>No recent sessions.</p>'}</div><button class="primary modal-submit" id="sessions-create">${icon('Plus',16)} Create a session</button>`);$('#sessions-create').onclick=createModal}
 async function showConnectionDetails(){
+  const revision=modalRevision,generation=sessionGeneration;
   if(!getRuntimeConfig().available){toast('Refreshing connection settings…');await refreshRuntimeConfiguration()}
-  if(disposed)return;
+  if(disposed||modalRevision!==revision||sessionGeneration!==generation)return;
   const runtime={...getRuntimeConfig(),frontendBuildId:typeof __COMMON_BUILD_ID__==='string'?__COMMON_BUILD_ID__:'development'};
   const report=buildDiagnosticReport({runtime,connection:{sandbox,connected,participants:sandbox?1:participants.length},canvas:{objects:shared?.all().length,connectedNeighbors:peerCanvas?.peers.size},media,transport:socket,log:diagnostics,agentAccess:agentPermissions?.state()});
   const state=sandbox?'Working on this device':connected?'Connected to your session':'Reconnecting to your session';
@@ -540,17 +555,19 @@ async function showConnectionDetails(){
 }
 async function showMediaExports(){
   if(disposed)return;
+  const revision=modalRevision,generation=sessionGeneration;
   if(!capture){toast('Recording tools are still loading. Try again in a moment.');return}
   const {openMediaExportDialog,disconnectMediaExport}=await import('./media-export-tools.js');
   if(disposed){disconnectMediaExport();return}
+  if(modalRevision!==revision||sessionGeneration!==generation)return;
   disconnectExports=disconnectMediaExport;
   openMediaExportDialog({capture,modal,closeModal,onStatus:toast});
 }
 function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#connection-details').onclick=showConnectionDetails;$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
 document.addEventListener('keydown',e=>{
-  if(e.defaultPrevented||disposed)return;
+  if(e.defaultPrevented||e.isComposing||disposed)return;
   if(e.key==='Escape'){
-    if($('#modal-root').children.length){closeModal();e.preventDefault();return}
+    if(modalController.isOpen||document.activeElement?.closest('.agent-tools-panel:not([hidden])'))return;
     if(!document.querySelector('dialog[open]'))chooseTool('select');
     return;
   }

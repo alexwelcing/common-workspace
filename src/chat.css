@@ -1,0 +1,23 @@
+.chat-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: 0; }
+.chat-panel[hidden], #people-panel[hidden] { display: none; }
+#panel-content:has(> .chat-panel:not([hidden])) { overflow: hidden; padding: 16px 16px 12px; }
+.chat-panel .chat-messages { padding: 4px 3px; overscroll-behavior: contain; overflow-anchor: none; scrollbar-width: thin; scrollbar-color: #d2dac6 transparent; }
+.chat-panel .chat-messages:focus-visible { outline: 2px solid #789368; outline-offset: 3px; border-radius: 5px; }
+.chat-panel .chat-message { padding: 0 2px 20px; }
+.chat-panel .chat-message-own { border-left: 2px solid #dce6cf; margin: 0 0 0 1px; padding-left: 9px; }
+.chat-panel .chat-empty { padding-top: 40px; }
+.chat-panel .chat-empty strong { font-size: 19px; }
+.chat-panel .chat-jump { align-self: center; flex-shrink: 0; min-height: 34px; margin: 6px 0 0; padding: 5px 12px; border: 1px solid #bfcfae; border-radius: 18px; background: #edf3e3; color: #385832; font-size: 12px; box-shadow: 0 2px 5px #35472b08; }
+.chat-panel #chat-form { align-items: flex-end; margin-top: 12px; padding: 5px; }
+.chat-panel #chat-form:focus-within { border-color: #829a6f; box-shadow: 0 0 0 2px #8da4741c; }
+.chat-panel #chat-text { display: block; min-height: 60px; max-height: 180px; resize: vertical; line-height: 1.5; font: inherit; font-size: 13px; outline: none; }
+.chat-panel #chat-text:disabled { cursor: default; }
+.chat-panel #chat-form button { display: grid; place-items: center; width: 33px; height: 33px; margin-bottom: 1px; }
+.chat-panel #chat-form button:disabled { opacity: .4; cursor: default; }
+.chat-compose-meta { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-top: 7px; color: #75826d; font-size: 10px; line-height: 1.5; }
+#chat-counter { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+#chat-counter.chat-limit { color: #8b603a; }
+.chat-send-status { margin: 7px 0 0; color: #75826d; font-size: 10px; line-height: 1.5; }
+.chat-send-status.chat-unconfirmed { color: #87603d; }
+.panel-toggle .panel-unread { display: inline-grid; place-items: center; min-width: 18px; min-height: 18px; border-radius: 6px; padding: 1px 4px; background: #dce5d2; color: #426137; font-size: 10px; font-variant-numeric: tabular-nums; }
+.panel-toggle .panel-unread[hidden], .panel-tab span[hidden], .chat-panel .chat-jump[hidden], #chat-counter[hidden] { display: none; }

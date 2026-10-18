@@ -270,6 +270,7 @@ export class Board {
   }
   setReadOnly(value) {
     this.readOnly = !!value;
+    if (this.readOnly) this.closeDiagramEditor();
     this.el.classList.toggle('board-read-only', this.readOnly);
     if (this.readOnly && this.gesture && this.gesture.type !== 'pan') {
       if (this.gesture.type === 'create') this.remove(this.gesture.id);
@@ -302,6 +303,7 @@ export class Board {
     if (this.focusedId === entity.id && (!previous || ['x', 'y', 'width', 'height'].some(key => previous[key] !== normalized[key]))) this.fitFocusedEntity();
   }
   remove(id) {
+    if (this.diagramEditor?.id === id) this.closeDiagramEditor();
     if (this.editingId === id) this.finishTextEdit?.(false);
     if (this.focusedId === id) this.exitFocus();
     if (this.gesture?.id === id) this.cancelPositionGesture();
@@ -772,13 +774,32 @@ export class Board {
     content.addEventListener('paste', event => { event.preventDefault(); const text = event.clipboardData.getData('text/plain').slice(0, 20000); document.execCommand('insertText', false, text); }, { signal: editEvents.signal });
   }
   editDiagram(entity) {
+    this.closeDiagramEditor({ restoreFocus: false });
+    if (!this.mayEdit(this.entities.get(entity.id))) return;
     const dialog = document.createElement('dialog'); dialog.className = 'board-source-dialog';
     const heading = element('h2', '', 'Edit diagram'); const label = element('label', '', entity.language === 'plantuml' ? 'PlantUML source' : 'Mermaid source');
+    const headingId = `diagram-heading-${crypto.randomUUID()}`; heading.id = headingId; dialog.setAttribute('aria-labelledby', headingId);
     const source = element('textarea', ''); source.value = entity.source || ''; source.rows = 12; source.setAttribute('aria-label', label.textContent);
+    source.id = `diagram-source-${crypto.randomUUID()}`; label.htmlFor = source.id; source.maxLength = 20000;
+    const editor = { id: entity.id, dialog, opener: document.activeElement, restoreFocus: true }; this.diagramEditor = editor;
     const actions = element('div', 'board-dialog-actions');
     const cancel = element('button', '', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => dialog.close());
     const save = element('button', 'primary', 'Update diagram'); save.type = 'button'; save.addEventListener('click', () => { const current = this.entities.get(entity.id); const nextSource = source.value.slice(0, 20000); if (current) this.commit({ ...current, source: nextSource }, { source: nextSource }); dialog.close(); });
-    actions.append(cancel, save); dialog.append(heading, label, source, actions); document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal(); source.focus();
+    actions.append(cancel, save); dialog.append(heading, label, source, actions); document.body.append(dialog);
+    dialog.addEventListener('close', () => {
+      if (this.diagramEditor === editor) this.diagramEditor = null;
+      dialog.remove();
+      if (!editor.restoreFocus || this.abort.signal.aborted) return;
+      const opener = editor.opener;
+      const target = opener?.isConnected && !opener.disabled && !opener.closest('[hidden],[inert]') && opener.getClientRects().length ? opener : this.el;
+      target.focus({ preventScroll: true });
+    }, { once: true });
+    dialog.showModal(); source.focus();
+  }
+  closeDiagramEditor({ restoreFocus = true } = {}) {
+    const editor = this.diagramEditor; if (!editor) return;
+    this.diagramEditor = null; editor.restoreFocus = restoreFocus;
+    editor.dialog.close(); editor.dialog.remove();
   }
   keyDown(event) {
     const target = event.target;
@@ -866,6 +887,7 @@ export class Board {
     return new XMLSerializer().serializeToString(svg);
   }
   destroy() {
+    this.closeDiagramEditor({ restoreFocus: false });
     this.finishTextEdit?.(false);
     this.endHistoryGroup(); this.abort.abort(); this.resizeObserver.disconnect();
     this.el.classList.remove('board-is-focused', 'board-space-pan', 'board-is-dragging', 'board-read-only');

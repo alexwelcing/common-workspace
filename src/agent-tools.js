@@ -373,7 +373,10 @@ export function installAgentTools({
     const restoreFocus = panel.contains(document.activeElement);
     panel.hidden = true;
     trigger.setAttribute('aria-expanded', 'false');
-    if (restoreFocus) (opener?.isConnected ? opener : trigger).focus();
+    if (restoreFocus) {
+      const target = opener?.isConnected && !opener.disabled && !opener.closest('[hidden],[inert]') && opener.getClientRects().length ? opener : trigger;
+      target.focus({ preventScroll: true });
+    }
   }
 
   function openCapture({ source: requestedSource } = {}) {
@@ -630,6 +633,7 @@ export function installAgentTools({
   next.addEventListener('click', () => { walkthrough.next(); refresh(); });
   endTour.addEventListener('click', () => { walkthrough.stop(); refresh(); });
   const keyHandler = (event) => {
+    if (event.defaultPrevented || document.querySelector('#modal-root .modal, dialog[open]')) return;
     if (event.key === 'Escape' && !panel.hidden && panel.contains(document.activeElement)) {
       event.preventDefault();
       close();
