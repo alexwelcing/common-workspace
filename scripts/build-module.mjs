@@ -60,6 +60,7 @@ export async function buildModule() {
     for (const filename of ['client.d.ts', 'bun.d.ts']) await copyFile(path.join(root, 'sdk', filename), path.join(staging, filename));
     await copyFile(path.join(root, 'module/package.json'), path.join(staging, 'package.json'));
     await copyFile(path.join(root, 'docs/embedding.md'), path.join(staging, 'README.md'));
+    await copyFile(path.join(root, 'CHANGELOG.md'), path.join(staging, 'CHANGELOG.md'));
     for (const filename of ['README.md', 'package.json', 'server.mjs', 'public/index.html']) {
       const target = path.join(staging, 'example', filename);
       await mkdir(path.dirname(target), { recursive: true });

@@ -8,25 +8,25 @@ The host retains its own `/api/health`, `/api/counter`, and `/echo` WebSocket. O
 
 If Common is already installed in your Bun project, this example is included: run `bun node_modules/common-workspace/example/server.mjs` and open `http://127.0.0.1:3100`. You can also copy that `example/` folder into your own project.
 
-Obtain the private package tarball from its owner. It is not assumed to be published in a public registry. If you have the Common source checkout, build that tarball there first:
+Obtain `common-workspace-0.1.0.tgz` and its SHA-256 checksum from the [v1.1.0 release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.1.0), or ask its owner for both files. Release access requires read access to the private repository; installing an administrator-provided archive needs no cloud account or registry login. If you have the Common source checkout, build that tarball there first:
 
 ```sh
 bun install --frozen-lockfile
 bun run pack:module
 ```
 
-The resulting artifact is `artifacts/common-workspace-0.1.0-embed.5.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
+The resulting artifact is `artifacts/common-workspace-0.1.0.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
 
 ```sh
 cp -R /path/to/common/examples/bun-embed ./my-common-host
 cd my-common-host
-bun add /absolute/path/to/common-workspace-0.1.0-embed.5.tgz
+bun add /absolute/path/to/common-workspace-0.1.0.tgz
 bun run start
 ```
 
 Open `http://127.0.0.1:3100`. The inline canvas loads in the page. The floating canvas loads when you open its launcher. Use **Add one**, **Check host health**, and **Send** before and after opening or hiding either canvas: the original host routes remain active. A second browser tab can join a room using a Common-generated invitation link under the corresponding namespace.
 
-`PORT` changes the listen port; `HOST` changes the host bind address. The default bind is loopback. Screen sharing requires a secure browser context: localhost is permitted; non-local deployments need HTTPS. The package defaults to private networking, with no external discovery or diagram services. Supply instance-specific `env` settings to `createCommon` if your deployment needs a different network profile or TURN server.
+`PORT` changes the listen port; `HOST` changes the host bind address. The default bind is loopback. Screen sharing requires a secure browser context: localhost is permitted; non-local deployments need HTTPS. The package defaults to private networking, with no external discovery or diagram services. Browser peers connect directly by default, with no required relay service. Supply instance-specific `env` settings to `createCommon` only when choosing a different network profile, organization discovery/relay service, diagram renderer, or diagnostics.
 
 ## The integration
 

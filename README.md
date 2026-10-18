@@ -8,9 +8,9 @@ WebAssembly runs the canvas geometry kernel for grid snapping and drawing simpli
 
 ## Embed in an existing Bun tool
 
-The `feature/embeddable-common` branch adds a portable module for an inline canvas panel or a floating workspace inside your own application. This module has not been deployed to the production Common site. `createCommon` from `common-workspace/bun` attaches to your existing fetch/WebSocket server; `mountCommon` from `common-workspace/client` loads the interface in a same-origin iframe. It opens no additional port, needs no UI framework, and defaults to private networking and in-memory rooms. Your authentication can protect the mount, while Common room passwords and visible agent grants still apply.
+Common includes a portable module for an inline canvas panel or a floating workspace inside your own application. `createCommon` from `common-workspace/bun` attaches to your existing fetch/WebSocket server; `mountCommon` from `common-workspace/client` loads the interface in a same-origin iframe. It opens no additional port, needs no UI framework, and defaults to private networking and in-memory rooms. Your authentication can protect the mount, while Common room passwords and visible agent grants still apply.
 
-Install an administrator-provided package with `bun add /absolute/path/common-workspace-0.1.0-embed.5.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
+Download the package and its SHA-256 checksum from the [v1.1.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.1.0), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.1.0.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
 
 The package includes the example: run `bun node_modules/common-workspace/example/server.mjs` in a project where you installed it, then open `http://127.0.0.1:3100`.
 
@@ -83,7 +83,7 @@ Import this repository from GitHub into your Netlify team. The committed `netlif
 
 `@netlify/database` and the committed SQL migrations provision the small room database during deployment. Netlify Database requires a credit-based plan; this setup does not change your account plan. If the team's plan does not support it, enable a supported database plan before importing. No canvas objects, images, or screen recordings are stored in the database.
 
-Configure a production TURN relay under **Project configuration → Environment variables**, scoped to Functions: `TURN_URLS` plus `TURN_SECRET`, or `TURN_USERNAME` and `TURN_CREDENTIAL`. These are server secrets; never prefix them with `VITE_`. Without a relay, STUN-only connections can be used for a pilot, but some network combinations will not connect. No production relay is included in this repository.
+The default deployment connects browsers directly and requires no separate relay service. Standard mode uses public STUN to discover possible peer routes; STUN does not forward canvas content or video. Network settings are optional: keep the defaults for your team, and use **Connection details** to investigate a connection that fails on an actual device. See the runtime settings below if your organization explicitly wants to configure its own discovery or relay service.
 
 After the first deploy, open the HTTPS site in two separate browser profiles, create a room, join its invite link, and check shared objects, chat, each person's window capture, and Watch/Pause controls. Verify the operating system picker and the networks and devices your team actually uses before wider use. The absence of a participant cap does not establish a supported room size or video audience.
 
@@ -163,7 +163,9 @@ Canvas routing uses the union of three deterministic hash rings. Each browser co
 
 Video subscriptions are independent of canvas routing. The media layer's `setSubscriptions(ids)` selects the screen owners whose video this browser receives. A watched screen can require an additional direct connection even when its owner is not a canvas neighbor. Pausing remote video leaves the canvas links active. A presenter still uploads a separate stream to each actual viewer, so presenter upload and encoding work grow with the number of viewers.
 
-Direct WebRTC is the default media path; the private profile has no public STUN or media relay dependency. Restrictive firewalls and NATs can still prevent direct connections. Provide a reachable organization TURN relay where those networks require it; browser WASM cannot make an unreachable browser into a public relay. TURN credentials are returned only after room-token authentication and never appear in the public runtime configuration. Prefer `TURN_SECRET` matching your coturn `static-auth-secret` with `use-auth-secret`: the server generates expiring credentials per participant and keeps the shared secret private. With static relay credentials, use a dedicated, restricted account and rotate credentials. The browser refreshes cached ICE settings before connection restarts.
+Direct WebRTC is the default path for canvas and video; the private profile has no public STUN or media relay dependency. Firewalls, NATs, or VPN policy can prevent direct connections even when the page loads. Use connection reports and the actual network configuration to investigate such a failure. A relay is an optional deployment setting, not a requirement to run Common.
+
+If your organization chooses a TURN relay, set `TURN_URLS` plus `TURN_SECRET`, or `TURN_USERNAME` and `TURN_CREDENTIAL`, in the server environment. On Netlify, scope these to Functions and never prefix secrets with `VITE_`. Credentials are returned only after room-token authentication and never appear in public runtime configuration. With coturn REST authentication, match `TURN_SECRET` to `static-auth-secret` with `use-auth-secret` so the server generates expiring credentials; static credentials should use a dedicated, restricted account. The browser refreshes cached ICE settings before connection restarts. Common does not operate a relay service.
 
 ### Docker
 
@@ -172,7 +174,7 @@ docker build -t common .
 docker run --name common -p 3001:3001 -v common-data:/data common
 ```
 
-To configure TURN or an origin allowlist, pass the relevant environment variables with Docker's `--env-file` or `-e` options. The image sets `DATA_FILE=/data/rooms.json`; preserve that location when mounting the data volume. Terminate TLS at the hosting platform or reverse proxy.
+To customize network policy or an origin allowlist, pass the relevant environment variables with Docker's `--env-file` or `-e` options. The image sets `DATA_FILE=/data/rooms.json`; preserve that location when mounting the data volume. Terminate TLS at the hosting platform or reverse proxy.
 
 ## Scope and limits
 
@@ -182,7 +184,7 @@ Sparse routing bounds each browser's canvas neighbors, but every browser still r
 
 Larger canvases need interest regions or document/awareness sharding, so devices receive relevant content. Larger rooms need incremental roster deltas and less room-wide presence work beyond today's omission of unchanged rosters. A large audience may need a separately operated SFU to receive one upstream presenter stream and forward it. Common does not include that server or a turnkey integration. These remain further development steps.
 
-Before a public rollout, assess your deployment's capacity, access requirements, backup policy, TURN capacity, proxy rate limits, and monitoring. Test actual screen capture, network recovery, and multiple real browsers on the networks your team uses.
+Before a public rollout, assess your deployment's capacity, access requirements, backup policy, proxy rate limits, and monitoring. Check actual screen capture, network recovery, and multiple real browsers on the networks your team uses. No separate relay service is required for this release.
 
 ## Development and troubleshooting
 

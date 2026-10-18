@@ -2,14 +2,14 @@
 
 Common can run inside an existing Bun application as a canvas panel or a floating workspace. The host owns the HTTP listener, routes, WebSocket server, and authentication. Common mounts its assets and room service beneath one path; it does not start a second server or open a hidden port.
 
-This module is being developed on `feature/embeddable-common`. It has not been deployed to the production Common site. The [standalone app](https://github.com/alexwelcing/common-workspace/blob/feature/embeddable-common/README.md#run-on-your-own-laptop) remains available separately. Source links in this guide require access to the private repository.
+The portable module is included in the [v1.1.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.1.0). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
 
 ## Obtain the package
 
-An administrator can provide the built package directly. Install that file in your Bun application:
+Download `common-workspace-0.1.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.1.0), or obtain both from your administrator. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.1.0-embed.5.tgz
+bun add /absolute/path/common-workspace-0.1.0.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.1.0-embed.5.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This builds the package and writes `artifacts/common-workspace-0.1.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
 
 The runnable host example is included in the package. After installing, try it directly from your Bun project:
 
@@ -81,7 +81,7 @@ The server options are:
 
 Pass selected settings through `env` when configuring organization TURN, a diagram renderer, or diagnostics. `env: process.env` explicitly opts into the full host environment; without it, unrelated host settings do not alter Common's private defaults.
 
-For a complete host page, inline and floating mounts, and an existing WebSocket echo route, see [the Bun example](https://github.com/alexwelcing/common-workspace/blob/feature/embeddable-common/examples/bun-embed/README.md). It uses the installed tarball directly and needs no frontend build tool.
+For a complete host page, inline and floating mounts, and an existing WebSocket echo route, see [the Bun example](https://github.com/alexwelcing/common-workspace/blob/main/examples/bun-embed/README.md). It uses the installed tarball directly and needs no frontend build tool.
 
 ## Mount the browser panel
 
@@ -124,7 +124,7 @@ if (url.pathname === '/common-client.js') {
 }
 ```
 
-Then import `mountCommon` from `/common-client.js` in a browser `<script type="module">`. The [example](https://github.com/alexwelcing/common-workspace/blob/feature/embeddable-common/examples/bun-embed/README.md) shows the complete route and HTML.
+Then import `mountCommon` from `/common-client.js` in a browser `<script type="module">`. The [example](https://github.com/alexwelcing/common-workspace/blob/main/examples/bun-embed/README.md) shows the complete route and HTML.
 
 The returned controller provides:
 
@@ -185,7 +185,7 @@ Each mounted browser canvas has its own local Focus view and personal Undo/Redo 
 
 Chat drafts and reading position stay in the mounted iframe's memory through panel switches and transport reconnects. Reloading, entering a different room/session, or destroying the mount clears drafts. Draft text is not written to browser storage or sent before Send. Sending waits for this participant's server echo before clearing an unchanged draft; an uncertain send keeps it and does not retry automatically. A hidden tab or hidden Common mount retains unread messages. Dialog focus and inactive background state apply inside the iframe; the host controls focus outside that frame.
 
-The private profile uses bundled fonts and does not select public STUN or PlantUML services by default. Mermaid renders locally. Your host can explicitly configure organization STUN/TURN or a diagram renderer when needed. A reachable host page does not guarantee a WebRTC connection: restrictive networks may still need a reachable TURN relay. There is no included SFU, media relay, hosted account requirement, or automatic Cloudflare tunnel.
+The private profile uses bundled fonts and does not select public STUN or PlantUML services by default. Mermaid renders locally. Browsers connect directly by default; running the module requires no relay service or hosted account. Your host can explicitly configure organization STUN/TURN or a diagram renderer. A reachable host page does not guarantee a peer connection if firewall, NAT, or VPN policy blocks it; investigate the actual failure with Connection details before changing infrastructure. No SFU or automatic Cloudflare tunnel is included.
 
 One service instance owns one process's room state. Mounting it on multiple unrelated application replicas does not synchronize those stores. Keep a single owner for a room, or design shared admission, signaling, and presence before spreading requests across replicas. Canvas traffic uses a bounded-neighbor peer network, but every participant still holds the canvas document, and a presenter uploads video separately to each viewer. There is no promised room size or unlimited video audience.
 
