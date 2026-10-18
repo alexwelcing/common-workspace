@@ -48,6 +48,7 @@ Common brings guided team sessions, an installable Bun module, and the canvas, c
 - Guide rendering uses indexed lookups and preserves unchanged attendee rows. Non-hosts do not build the hidden host roster. This improves UI work without claiming a supported large-room media capacity.
 - Optional browser storage failures remain readable. Static assets stay confined to the mount, including symlinks. Failed module builds preserve the last usable output.
 - Lint covers production frontend, SDK, backend, scripts, and the embedding example.
+- Stable application tags build and publish the module archive, checksum, and notes through the existing GitHub Actions setup. Interrupted draft uploads can be retried; a published release is left unchanged.
 
 ### Existing platform capabilities included
 

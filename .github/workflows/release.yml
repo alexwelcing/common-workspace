@@ -1,0 +1,71 @@
+name: Release package
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing stable application tag, for example v1.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: common-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      COMMON_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Validate release tag
+        run: |
+          [[ "$COMMON_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo 'Use a stable application tag such as v1.1.0.' >&2
+            exit 1
+          }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - name: Verify application version
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const app = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (`v${app.version}` !== process.env.COMMON_RELEASE_TAG) throw new Error('The tag must match package.json.');
+          NODE
+      - run: bun run lint
+      - run: bun run pack:module
+      - name: Check generated manifest
+        run: git diff --exit-code -- public/agent-tools.json
+      - name: Publish archive and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          module_version=$(node -p "JSON.parse(require('node:fs').readFileSync('module/package.json','utf8')).version")
+          archive="artifacts/common-workspace-${module_version}.tgz"
+          (cd artifacts && sha256sum -c "common-workspace-${module_version}.tgz.sha256")
+          if gh release view "$COMMON_RELEASE_TAG" --json isDraft > "$RUNNER_TEMP/common-release.json" 2>/dev/null; then
+            if node -e "if(JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf8')).isDraft)process.exit(1)" "$RUNNER_TEMP/common-release.json"; then
+              echo 'The release is already published; existing assets are unchanged.'
+              exit 0
+            fi
+          else
+            gh release create "$COMMON_RELEASE_TAG" --verify-tag --draft \
+              --title "Common ${COMMON_RELEASE_TAG#v} — guided sessions and Bun embedding" \
+              --notes-file CHANGELOG.md
+          fi
+          gh release upload "$COMMON_RELEASE_TAG" "$archive" "$archive.sha256" --clobber
+          gh release edit "$COMMON_RELEASE_TAG" --draft=false --latest \
+            --title "Common ${COMMON_RELEASE_TAG#v} — guided sessions and Bun embedding" \
+            --notes-file CHANGELOG.md
