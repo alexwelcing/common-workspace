@@ -4,6 +4,7 @@ import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import { compareSharedEntities } from '../shared-canvas.js';
 import { restoreAppearance } from '../../lib/room-appearance.mjs';
 import { openSpatialStorage } from './storage.js';
+import { SpatialProjection, isSpatialProjection } from './projection.js';
 
 const FORMAT = 'common-spatial-archive';
 const SCHEMA = 1;
@@ -260,6 +261,48 @@ class SpatialStore {
     this.pastCache = new Map();
     this.generation = 0;
     this.measuringEdit = false;
+    this.projectionTransaction = 0;
+    this.presentation = new SpatialProjection({
+      measure: work => this.measurePerformance('state-projection', work),
+      readState: () => this.state(),
+      readRoom: () => {
+        const room = this.manifest().getMap('room').toJSON();
+        if (!room || typeof room !== 'object' || Array.isArray(room)
+          || (room.title !== undefined && (typeof room.title !== 'string' || room.title.length > 200))) {
+          throw new Error('Invalid workspace title.');
+        }
+        return { title: room.title || 'Spatial workspace', appearance: restoreAppearance(room.appearance) };
+      },
+      readBoard: id => {
+        const record = this.manifest().getMap('boards').get(id);
+        if (record === undefined) return null;
+        const raw = record instanceof LoroMap ? record.toJSON() : record;
+        if (!raw || typeof raw !== 'object') throw new Error('Invalid spatial board.');
+        const board = normalBoard({ ...raw, pose: Object.fromEntries(POSE_FIELDS.map(key => [key, raw?.[key] ?? 0])) }, id);
+        if (raw.deleted !== undefined && typeof raw.deleted !== 'boolean') throw new Error('Invalid spatial board deletion history.');
+        return raw.deleted ? null : board;
+      },
+      readObjects: id => normalBoardContents(this.documents.get(`board:${id}`)?.toJSON() || {}, id),
+      readEntity: (boardId, id) => {
+        if (!idValid(id)) throw new Error('Invalid spatial object identity.');
+        const doc = this.documents.get(`board:${boardId}`);
+        const deleted = doc?.getMap('deleted').get(id);
+        if (deleted !== undefined && deleted !== true) throw new Error('Invalid spatial object deletion history.');
+        const record = doc?.getMap('entities').get(id);
+        if (record === undefined) return null;
+        const value = record instanceof LoroMap ? record.toJSON() : record;
+        const entity = normalEntity({ ...value, id });
+        return deleted ? null : entity;
+      },
+      readBoardOrder: () => {
+        const ids = Object.keys(this.manifest().getMap('boards').toJSON());
+        if (ids.length > MAX_BOARDS) throw new Error('This workspace exceeds the 64-board beta limit.');
+        return ids;
+      },
+      compareEntities: compareSharedEntities,
+      maximumBoardBytes: MAX_BOARD_BYTES,
+      maximumEntities: MAX_ENTITIES,
+    });
   }
 
   measurePerformance(name, work, failedWhenFalse = false) {
@@ -297,6 +340,30 @@ class SpatialStore {
     } finally {
       if (edit) this.measuringEdit = false;
     }
+  }
+
+  /** Stable immutable presentation. Public state() remains a detached mutable copy. */
+  projection(revisionId = null) {
+    this.requireLive();
+    if (this.projectionTransaction) throw new Error('Presentation is unavailable while a spatial edit is being committed.');
+    if (revisionId === null) return this.presentation.snapshot();
+    if (isSpatialProjection(this.pastCache.get(revisionId))) return this.pastCache.get(revisionId);
+    return this.presentation.historical(() => {
+      // state() owns causal reconstruction and always returns a mutable copy.
+      // Freeze its cached original for presentation, avoiding a second retained
+      // workspace copy while preserving every public state's mutability.
+      if (!this.pastCache.has(revisionId)) this.state(revisionId);
+      return this.pastCache.get(revisionId);
+    });
+  }
+
+  acceptProjection(id, doc, from) {
+    this.presentation.accept(id, doc, from);
+    // Callbacks can inspect history before changed() schedules the UI. Grouped
+    // actions may extend an existing revision ID, so old historical views expire.
+    this.historyCache = null;
+    this.causalCache = null;
+    this.pastCache.clear();
   }
 
   getPerformanceState() {
@@ -459,17 +526,26 @@ class SpatialStore {
     this.pendingBytes += bytes.length;
   }
 
-  commit(ids, label, action) {
+  // Prepared local mutations have already checked identity, fields, and limits.
+  // Generic commit callers retain a conservative full presentation read.
+  commitPrepared(ids, label, action) {
+    return this.commit(ids, label, action, true);
+  }
+
+  commit(ids, label, action, prepared = false) {
     this.requireLive();
     return this.measurePerformance('spatial-edit', () => {
       const before = new Map();
+      const frontiers = new Map();
       const backups = new Map();
       const updates = [];
       const sizes = new Map();
+      this.projectionTransaction++;
       try {
         const at = Date.now();
         const message = JSON.stringify(this.group || { action: newId(), at, label, requires: this.observedActions(), ...(this.actor ? { actor: this.actor } : {}) });
         for (const id of ids) {
+          frontiers.set(id, this.documents.get(id).frontiers());
           before.set(id, this.documents.get(id).oplogVersion());
           backups.set(id, configure(this.documents.get(id).fork()));
         }
@@ -495,10 +571,13 @@ class SpatialStore {
         backups.clear();
         throw error;
       } finally {
+        this.projectionTransaction--;
         for (const vector of before.values()) vector.free();
         for (const backup of backups.values()) backup.free();
       }
       for (const [id, size] of sizes) this.documentSizes.set(id, size);
+      if (!prepared && updates.length) this.acceptProjection('manifest', this.manifest());
+      else for (const update of updates) this.acceptProjection(update.id, this.documents.get(update.id), frontiers.get(update.id));
       for (const update of updates) {
         this.dirty.add(update.id);
         this.queueUpdate(update.id, update.bytes);
@@ -645,7 +724,7 @@ class SpatialStore {
     }
     if (patch.appearance !== undefined) value.appearance = restoreAppearance(patch.appearance);
     if (!Object.keys(value).some(key => !equal(room.get(key), value[key]))) return false;
-    return this.commit(['manifest'], 'Changed workspace style', () => { for (const [key, item] of Object.entries(value)) room.set(key, item); });
+    return this.commitPrepared(['manifest'], 'Changed workspace style', () => { for (const [key, item] of Object.entries(value)) room.set(key, item); });
   }
 
   addBoard(value = {}) {
@@ -661,7 +740,7 @@ class SpatialStore {
     const doc = configure(new LoroDoc());
     this.documents.set(docId, doc);
     try {
-      this.commit(['manifest', docId], `Added ${board.name}`, () => {
+      this.commitPrepared(['manifest', docId], `Added ${board.name}`, () => {
         const record = this.manifest().getMap('boards').setContainer(id, new LoroMap());
         for (const [key, item] of Object.entries({ name: board.name, width: board.width, height: board.height, ...board.pose })) {
           record.set(key, item);
@@ -694,7 +773,7 @@ class SpatialStore {
       const board = normalBoard({ ...current, ...patch, pose: { ...current.pose, ...patch.pose } }, id);
       const changes = { name: board.name, width: board.width, height: board.height, ...board.pose };
       if (!Object.keys(changes).some(key => !equal(record.get(key), changes[key]))) return false;
-      return this.commit(['manifest'], patch.name !== undefined ? 'Renamed board' : 'Moved board in space', () => {
+      return this.commitPrepared(['manifest'], patch.name !== undefined ? 'Renamed board' : 'Moved board in space', () => {
         for (const [key, value] of Object.entries(changes)) if (!equal(record.get(key), value)) record.set(key, value);
       });
     });
@@ -703,7 +782,7 @@ class SpatialStore {
   removeBoard(id) {
     const record = this.manifest().getMap('boards').get(id);
     if (!(record instanceof LoroMap) || record.get('deleted')) return false;
-    return this.commit(['manifest'], 'Removed board', () => record.set('deleted', true));
+    return this.commitPrepared(['manifest'], 'Removed board', () => record.set('deleted', true));
   }
 
   setEntity(boardId, input, changedFields) {
@@ -721,7 +800,7 @@ class SpatialStore {
       let contents;
       if (!previous) {
         if (entities.keys().length >= MAX_ENTITIES) throw new Error('This board has reached its 1,000-object beta limit.');
-        contents = normalBoardContents(doc.toJSON(), boardId);
+        contents = this.presentation.contents(boardId) || normalBoardContents(doc.toJSON(), boardId);
         candidate.orderKey ||= generateKeyBetween(contents.objects.at(-1)?.orderKey ?? null, null);
       }
       const entity = normalEntity(candidate);
@@ -729,10 +808,10 @@ class SpatialStore {
       if (!updates.length) return false;
       // A change on one board must not materialize every other board. Reuse the
       // normalized byte total instead of serializing all objects a second time.
-      contents ||= normalBoardContents(doc.toJSON(), boardId);
+      contents ||= this.presentation.contents(boardId) || normalBoardContents(doc.toJSON(), boardId);
       const replaced = contents.objects.find(item => item.id === entity.id);
       const bytes = contents.bytes + encoder.encode(JSON.stringify(entity)).byteLength
-        - (replaced ? encoder.encode(JSON.stringify(replaced)).byteLength : 0);
+        - (replaced ? contents.sizes?.get(entity.id) ?? encoder.encode(JSON.stringify(replaced)).byteLength : 0);
       if (bytes > MAX_BOARD_BYTES) {
         throw new Error('This board is full. Move some images to another board.');
       }
@@ -740,7 +819,7 @@ class SpatialStore {
         : updates.some(field => ['text', 'source', 'title'].includes(field)) ? 'Edited writing'
           : updates.some(field => ['x', 'y', 'width', 'height', 'points'].includes(field)) ? 'Arranged objects'
             : 'Styled object';
-      return this.commit([`board:${boardId}`], label, () => {
+      return this.commitPrepared([`board:${boardId}`], label, () => {
         if (!record) record = entities.setContainer(entity.id, new LoroMap());
         for (const field of updates) if (entity[field] !== undefined) record.set(field, entity[field]);
       });
@@ -750,7 +829,7 @@ class SpatialStore {
   deleteEntity(boardId, id) {
     const doc = this.boardDocument(boardId);
     if (!doc.getMap('entities').get(id) || doc.getMap('deleted').get(id)) return false;
-    return this.commit([`board:${boardId}`], 'Removed object', () => doc.getMap('deleted').set(id, true));
+    return this.commitPrepared([`board:${boardId}`], 'Removed object', () => doc.getMap('deleted').set(id, true));
   }
 
   reorderEntity(boardId, id, position) {
@@ -1014,6 +1093,7 @@ class SpatialStore {
         if (!this.documents.has(value.id) && this.documents.size >= MAX_BOARDS + 1) return false;
         const update = unbase64(value.data);
         const original = this.documents.get(value.id);
+        const from = original?.frontiers();
         // Validate in a fork before importing into live history. Rejected packets
         // must not leave behind operations, board records, or a larger byte budget.
         const candidate = original ? original.fork() : configure(new LoroDoc());
@@ -1052,6 +1132,7 @@ class SpatialStore {
           if (!changed) return true;
         } else this.documents.set(value.id, candidate);
         this.documentSizes.set(value.id, candidateSize);
+        this.acceptProjection(value.id, this.documents.get(value.id), from);
         // A remote action can depend on the current gesture. Continuing under
         // the same action ID would create a cycle in the grouped timeline.
         if (this.group) this.group = { ...this.group, action: newId(), at: Date.now(), requires: this.observedActions() };
@@ -1077,6 +1158,10 @@ class SpatialStore {
     // also preserves edits when teardown occurs through an embedded host.
     const saving = this.flush().catch(() => {});
     this.destroyed = true;
+    this.presentation.clear();
+    this.pastCache.clear();
+    this.historyCache = null;
+    this.causalCache = null;
     saving.finally(() => {
       for (const doc of this.documents.values()) doc.free();
       this.documents.clear();

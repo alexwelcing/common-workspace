@@ -49,6 +49,8 @@ CPU profiles also identified `fitScene()` reading layout after those DOM writes.
 
 ## Remaining work exposed by the complete app
 
+These observations describe 1.5.1. The live projection bottleneck is addressed in the 1.5.2 follow-up below.
+
 Component results do not establish complete-app performance. A separate workload generated a valid archive containing **16 boards × 150 mixed objects**, imported it through the actual file picker, visibly granted agent tools, and performed 40 updates on a note in the active board.
 
 The complete app still reported index **0**: spatial-render p95 **98.1 ms**, spatial-edit p95 **5.3 ms**, canvas-render p95 **0.1 ms**, and main-thread delay p95 **394.5 ms**. Agent calls took 116.6–151 ms. This localizes the next investigation to workspace projection/orchestration around rendering and agent access, where repeated `state()` calls normalize the entire room. It does not implicate the already-fast canvas renderer or prove one specific call is solely responsible. Capture a CPU profile before designing a cache; freshness across live edits, history, imports, room changes, and rollback is essential.
@@ -56,6 +58,28 @@ The complete app still reported index **0**: spatial-render p95 **98.1 ms**, spa
 Uncached historical reconstruction of the 16-board store also remained around **131 ms p95** across ten reads. It reconstructs the whole causal workspace. Those reads were measured after the editing-phase index snapshot, so the healthy store editing score does not include their cost.
 
 No large-participant, video quality, physical-phone, or cross-network capacity result follows from these scenes. All beta peers still receive every board and its history.
+
+## Follow-up: object-level projection in 1.5.2
+
+We repeated the actual 16-board, 2,400-object archive/agent workflow against 1.5.1 (`3b07de17e5c9118c92b957141adbadc3d9a45c5f`) and the projection change. Forty frame-spaced edits used the same synthetic scene, browser, and viewport, with sources frozen and runs serialized. Timings below come from one clean paired run, without the CPU profiler. Its fresh baseline differs from the earlier 98.1 ms observation; the comparison uses its own matching before/after evidence.
+
+| Complete-app measurement | Before | After |
+| --- | ---: | ---: |
+| Spatial render p95, 41 samples | 115.9 ms | 5.2 ms |
+| Local agent command completion p95, 40 samples | 151.3 ms | 3.3 ms |
+| Spatial edit p95, 40 samples | 5.5 ms | 2.8 ms |
+| Performance index | 0 | 100 |
+| Observed long-task blocking | 7,429 ms | 0 ms |
+
+Separate CPU profiles attributed about 88% of baseline sampled time to whole-room reads: 40 edits caused **200 `state()` calls**. The after trace has 200 cheap projection reads and zero `state()` calls during those edits. Real projection rebuilds were measured 40 times, at **0.4 ms p95**. Canvas-render samples fell from the collector's capped 256 samples to 40, one per changed object; the capped before count must not be treated as a total.
+
+`store.projection()` now materializes accepted changes into an immutable display view. Native Loro diffs identify affected entities and metadata. Unchanged entities, boards, object arrays, points, and appearance retain references; the active renderer compares those references instead of serializing every entity. Byte checks reuse accepted per-entity sizes. Ordinary `state()` keeps its original validation and detached mutable-copy behavior. Space previews recognize only our branded deep-immutable values; mutable callers retain a content comparison fallback.
+
+Pending changes become visible before callbacks, and multiple edits before a read are combined. Rejected imports and failed commits preserve the accepted projection. Unknown/custom commits take a conservative full-validation path. Historical views share the existing bounded eight-entry cache and are invalidated on accepted history changes, including extensions to the same grouped revision. Imports and workspace changes construct a new owner; teardown releases its cache.
+
+Reference equality also needs a separate track for optimistic UI edits. Failed or unchanged writes restore accepted content, while status updates preserve an uncommitted shape, text editor/caret, and live video. Read-only cancellation reconciles after Board restores its gesture, preserving the personal camera. Actual-browser checks verified those cases, mutable-copy isolation, untouched object/board identity, live cross-tab changes while exploring history, same-ID import, room changes, and cleanup.
+
+These results concern this local synthetic workload, not network latency or participant capacity. Cold full materialization and uncached historical reconstruction still do real work; they are not eliminated or hidden by cache-hit samples. The earlier 700-note standard-canvas interaction result is a separate engine/workload and remains outside this change.
 
 ## Behavior verification
 

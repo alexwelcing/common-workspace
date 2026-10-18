@@ -59,6 +59,7 @@ let participants = [];
 let workspaceGeneration = 0;
 let selectionGeneration = 0;
 let renderedBoardSource = '';
+let renderedTerminal = false;
 let pendingChanges = 0;
 let renderFrame;
 let draftTimer;
@@ -72,6 +73,8 @@ let personalMedia;
 let destroyPromise;
 const imageRequests = new Set();
 const downloadUrls = new Set();
+const renderedEntities = new Map();
+const localEntityChanges = new Set();
 const $ = selector => document.querySelector(selector);
 const esc = value =>
   String(value ?? '').replace(
@@ -81,7 +84,7 @@ const esc = value =>
 const editable = () => !!store && !disposed && !terminal && !selectedRevisionId && (sandbox || connected);
 const ownId = () => (sandbox ? personalId : session?.auth?.participantId);
 const activeMedia = () => (sandbox ? personalMedia : session?.media);
-const state = () => store?.state(selectedRevisionId) || { boards: [] };
+const state = () => store?.projection(selectedRevisionId) || { boards: [] };
 const objects = () => state().boards.find(item => item.id === activeBoardId)?.objects || [];
 
 function toast(message) {
@@ -250,7 +253,8 @@ function renderWorkspace() {
     toast(error.message);
     return;
   }
-  snapshot.boards.sort((a, b) => (a.name === b.name ? (a.id < b.id ? -1 : 1) : a.name < b.name ? -1 : 1));
+  // Projection contents are immutable; sorting is a personal presentation choice.
+  snapshot = { ...snapshot, boards: [...snapshot.boards].sort((a, b) => (a.name === b.name ? (a.id < b.id ? -1 : 1) : a.name < b.name ? -1 : 1)) };
   const revisions = store.revisions();
   const fingerprint = revisions.at(-1)?.id || '';
   if (selectedRevisionId && historyFingerprint && fingerprint !== historyFingerprint) pendingChanges++;
@@ -318,26 +322,41 @@ function renderWorkspace() {
 // Update existing nodes so status renders preserve live video and text drafts.
 function renderActiveBoard(snapshot) {
   const source = `${workspaceGeneration}:${activeBoardId}:${selectedRevisionId || 'live'}`;
-  const entries = (snapshot.boards.find(item => item.id === activeBoardId)?.objects || []).map(entity =>
-    terminal && entity.type === 'screen' ? { ...entity, historical: true } : entity,
-  );
-  if (source !== renderedBoardSource) {
+  const sourceChanged = source !== renderedBoardSource;
+  const readOnlyChanged = board.readOnly !== !editable();
+  const reconcileAll = sourceChanged || readOnlyChanged || renderedTerminal !== terminal;
+  const entries = snapshot.boards.find(item => item.id === activeBoardId)?.objects || [];
+  const displayEntity = entity => terminal && entity.type === 'screen' ? { ...entity, historical: true } : entity;
+  // A read-only transition can cancel an optimistic gesture inside Board.
+  // Apply that cancellation first, then restore the accepted projection.
+  if (readOnlyChanged) board.setReadOnly(!editable());
+  if (reconcileAll) {
     board.finishTextEdit?.(false);
-    board.setEntities(entries);
-    renderedBoardSource = source;
-    board.streams.clear();
-    bindActiveBoardModel();
-    if (mode === 'work' && entries.length)
-      requestAnimationFrame(() => {
-        if (!disposed && renderedBoardSource === source) board.fit();
-      });
+    board.setEntities(entries.map(displayEntity));
+    if (sourceChanged) {
+      renderedBoardSource = source;
+      board.streams.clear();
+      bindActiveBoardModel();
+      if (mode === 'work' && entries.length)
+        requestAnimationFrame(() => {
+          if (!disposed && renderedBoardSource === source) board.fit();
+        });
+    }
   } else {
     const incoming = new Set(entries.map(item => item.id));
-    for (const id of board.entities.keys()) if (!incoming.has(id)) board.remove(id);
+    for (const id of board.entities.keys()) {
+      // A new shape is a local preview until pointer-up commits it.
+      const creating = board.gesture?.type === 'create' && board.gesture.id === id;
+      if (!incoming.has(id) && !creating) board.remove(id);
+    }
     for (const entity of entries)
-      if (JSON.stringify(board.entities.get(entity.id)) !== JSON.stringify(entity)) board.upsert(entity);
+      if (renderedEntities.get(entity.id) !== entity || localEntityChanges.has(entity.id) || !board.entities.has(entity.id))
+        board.upsert(displayEntity(entity));
   }
-  if (board.readOnly !== !editable()) board.setReadOnly(!editable());
+  renderedEntities.clear();
+  for (const entity of entries) renderedEntities.set(entity.id, entity);
+  localEntityChanges.clear();
+  renderedTerminal = terminal;
   board.setLayerOrder(entries.map(item => item.id));
   for (const [id, stream] of streams) {
     const target = selectedRevisionId || terminal ? null : stream;
@@ -352,6 +371,8 @@ async function openWorkspace(id, options = {}) {
   const previous = store;
   store = null;
   activeBoardModel = null;
+  renderedEntities.clear();
+  localEntityChanges.clear();
   board?.setEntities([]);
   if (previous) {
     await previous.flush().catch(() => {});
@@ -385,8 +406,8 @@ async function openWorkspace(id, options = {}) {
   }
   store = next;
   selectedRevisionId = null;
-  activeBoardId =
-    next.state().boards.find(item => item.name === 'Demo stage')?.id || next.state().boards[0]?.id || null;
+  const initialBoards = next.projection().boards;
+  activeBoardId = initialBoards.find(item => item.name === 'Demo stage')?.id || initialBoards[0]?.id || null;
   pendingChanges = 0;
   historyFingerprint = '';
   renderedBoardSource = '';
@@ -397,7 +418,7 @@ function stoppedSharing() {
   const id = ownId();
   streams.delete(id);
   if (!store || disposed) return;
-  for (const item of store.state().boards)
+  for (const item of store.projection().boards)
     for (const entity of item.objects)
       if (entity.type === 'screen' && entity.participantId === id) store.deleteEntity(item.id, entity.id);
   board?.setStream(id, null);
@@ -575,7 +596,7 @@ function addBoard() {
       event.preventDefault();
       if (!editable()) return;
       try {
-        const count = store.state().boards.length;
+        const count = store.projection().boards.length;
         const id = store.addBoard({
           name: new FormData(event.target).get('name'),
           pose: { x: (count % 3) * 1100 - 550, y: Math.floor(count / 3) * 820, z: -count * 60 },
@@ -839,6 +860,8 @@ function destroy() {
     await store?.flush().catch(() => {});
     store?.destroy();
     board?.destroy();
+    renderedEntities.clear();
+    localEntityChanges.clear();
     modalCleanup?.();
     modalController.destroy();
     cleanupViewport();
@@ -902,6 +925,9 @@ board = new Board({
   el: view.boardHost,
   performanceIndex,
   onChange: (entity, patch) => {
+    // Board has already applied this edit optimistically. Reconcile even when
+    // validation rejects it or the accepted document returns an unchanged result.
+    localEntityChanges.add(entity.id);
     if (editable()) {
       try {
         store.setEntity(activeBoardId, entity, patch ? Object.keys(patch) : undefined);
@@ -910,9 +936,13 @@ board = new Board({
         scheduleRender();
       }
     }
+    scheduleRender();
   },
   onDelete: id => {
-    if (editable()) store.deleteEntity(activeBoardId, id);
+    localEntityChanges.add(id);
+    try { if (editable()) store.deleteEntity(activeBoardId, id); }
+    catch (error) { toast(error.message); }
+    scheduleRender();
   },
   onLayerAction: (id, position) => {
     if (editable()) store.reorderEntity(activeBoardId, id, position);

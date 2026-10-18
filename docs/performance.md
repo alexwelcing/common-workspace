@@ -21,7 +21,9 @@ The rolling window covers the most recent 60 seconds and keeps bounded samples. 
 | Active frame stalls | ≤ 1% | ≥ 10% | Active frame intervals exceeding 50 ms; at least 30 intervals are needed. |
 | Observed slow interactions | ≤ 200 ms | ≥ 500 ms | The p95 of observed Event Timing entries. Browsers may omit short interactions; this is **not standard INP**. |
 
-Timed synchronous canvas renders, spatial renders/edits, historical reconstruction, and peer merges can also lower the index. They normally need five samples; a single measured stall of at least 250 ms is enough to count. Budgets live in [`src/performance-index.js`](../src/performance-index.js).
+Timed synchronous canvas renders, spatial renders/edits, object projection, historical reconstruction, and peer merges can also lower the index. They normally need five samples; a single measured stall of at least 250 ms is enough to count. Budgets live in [`src/performance-index.js`](../src/performance-index.js).
+
+**Object projection** (`state-projection`) measures actual beta presentation rebuilding, with 16 ms as its comfortable guide and 100 ms as its poor guide. It includes uncached historical projection work. Returning an already accepted cached projection does not add a sample; a missing sample can reflect cache reuse rather than missing instrumentation.
 
 ## Find useful clues
 
@@ -84,5 +86,9 @@ try {
 For asynchronous work, finish after the awaited operation; do not mark time spent awaiting storage as synchronous blocking. Let the original operation error reach its existing error handler. Diagnostic errors must never stop editing or replace that error.
 
 Avoid nested render samples, per-point serialization, document exports for counting, payload logging, and new idle animation loops. Reuse cached sizes and counters, and bound new collections. A sample started before reset or a visibility change must not finish in the new observation period.
+
+For beta presentation work, use `store.projection()` and the [presentation cache ownership rules](maintaining.md#keep-beta-presentation-caches-at-their-boundary). Compare changed-entity and changed-board work with whole-room work. Temporary numeric counters can reveal repeated normalization, preview rebuilding, and `Board.upsert()` calls even when the responsiveness score stays healthy. Keep whole-action measurements alongside operation timers so preflight, validation, and cache maintenance remain visible.
+
+Stable references are valid only for accepted, deeply immutable projection values. Include rejected edits, no-op writes, live updates while viewing history, imports, source switches, and mutable preview input in a focused reproduction. Skipping required reconciliation can look fast while leaving stale content on screen.
 
 Wire document visibility and embed visibility into the collector. Destroy it, unsubscribe the panel/indicator, remove the owned debug API, and cancel timers/observers/frame callbacks when the experience ends. Verify the changed flow with the existing browser journeys and a focused reproduction; no separate performance test suite is required.

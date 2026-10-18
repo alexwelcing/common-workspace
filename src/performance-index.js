@@ -11,6 +11,7 @@ const MAX_OBSERVER_SAMPLES = 256;
 const OPERATIONS = Object.freeze({
   'canvas-render': { label: 'Canvas render', good: 16, poor: 100, critical: true, suggestion: 'Reduce visible objects or split a large canvas update across frames.' },
   'spatial-render': { label: 'Spatial view render', good: 16, poor: 100, critical: true, suggestion: 'Reduce visible boards or avoid rebuilding unchanged spatial surfaces.' },
+  'state-projection': { label: 'Object projection', good: 16, poor: 100, critical: true, suggestion: 'Inspect changed object counts and reuse unchanged board and object projections.' },
   'spatial-edit': { label: 'Spatial edit', good: 16, poor: 100, critical: true, suggestion: 'Group repeated changes and reduce the amount of document work per gesture.' },
   'history-read': { label: 'History read', good: 50, poor: 250, critical: true, suggestion: 'Reduce repeated historical reconstruction and keep the selected revision cached.' },
   'peer-sync': { label: 'Peer synchronization', good: 25, poor: 150, critical: true, suggestion: 'Inspect update sizes and avoid applying a large batch of peer changes in one turn.' },
