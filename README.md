@@ -218,6 +218,8 @@ Before a public rollout, assess your deployment's capacity, access requirements,
 
 Run `bun run doctor`, then `bun run local` for a fresh build and a private local server. Use `bun run dev` while changing the source, or `bun run build` when you only need the deployable frontend. The same artifact uses `/api/config` to select its hosting transport; no transport-specific rebuild is needed.
 
+The spatial beta's compact controls use shared, framework-free [workspace UI primitives](docs/workspace-ui.md) for shape, motion, keyboard behavior, and lifecycle cleanup.
+
 Use `bun run check` for the default quality check: one build and five real desktop/phone journeys, with the failing step, readable report, and screenshots if something breaks. It starts and cleans up its own temporary local app. Existing Chrome/Chromium works; otherwise install a browser once with `bunx playwright-core install chromium`. Deeper checks are explicit, such as `bun run check:deep canvas` or `bun run check:deep hosted`. See [the validation guide](docs/validation.md) for setup, hosted checks, failure evidence, and the short real-device walkthrough. `bun run test` runs the same lean default.
 
 Follow the [two-browser walkthrough](public/self-hosting.html#smoke-test) on the devices and network you plan to use. Confirm shared edits, actual window frames, reconnect behavior, and a downloaded recording. For a problem, open **Canvas options → Connection details** and download its report, then use the guide's [troubleshooting steps](public/self-hosting.html#troubleshooting). The report includes counts, states, and generated request IDs for correlation, without room IDs, canvas content, credentials, or recordings.

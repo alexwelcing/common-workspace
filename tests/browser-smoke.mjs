@@ -93,8 +93,9 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
     await host.locator('#modal-title').filter({ hasText: 'Session ended' }).waitFor({ timeout }); ended = true;
   };
   const betaMenuAction = async (page, name) => {
-    const menu = page.locator('.beta-room-menu'); if (await menu.getAttribute('open') === null) await menu.locator('summary').click();
-    await page.locator(`[data-beta-action="${name}"]`).click();
+    const trigger = page.getByRole('button', { name: 'Room actions', exact: true });
+    if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+    await page.locator('.beta-room-menu').locator(`[data-beta-action="${name}"]`).click();
   };
   const endBetaRoom = async () => {
     if (!betaRoomUrl || betaEnded || !host || host.isClosed()) return;
@@ -270,7 +271,7 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         assert.equal(allowed.ok, true); await host.locator('.type-text').filter({ hasText: 'Approved walkthrough annotation' }).waitFor();
       });
       await checkpoint('Download a manual PNG, then revoke agent writes', async () => {
-        const download = host.waitForEvent('download'); await host.locator('#agent-snapshot').click(); const png = await download;
+        const [png] = await Promise.all([host.waitForEvent('download'), host.locator('#agent-snapshot').click()]);
         assert.match(png.suggestedFilename(), /\.png$/); const filename = 'manual-canvas.png'; await png.saveAs(path.join(artifactDir, filename)); report.screenshots.push(filename);
         const bytes = await readFile(path.join(artifactDir, filename)); assert.ok(bytes.length > 100); assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'The downloaded file must be a PNG.');
         const corner = await host.evaluate(async dataUrl => {
@@ -386,7 +387,7 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         await host.locator('.beta-workspace[data-history="live"]').waitFor(); await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'The room kept moving while history was open' }).waitFor();
       });
       await checkpoint('Export the real spatial archive and end only the beta room created here', async () => {
-        const download = host.waitForEvent('download'); await betaMenuAction(host, 'export'); const archive = await download;
+        const [archive] = await Promise.all([host.waitForEvent('download'), betaMenuAction(host, 'export')]);
         assert.match(archive.suggestedFilename(), /^common-spatial-.*\.common$/);
         const filename = 'beta-workspace.common'; await archive.saveAs(path.join(artifactDir, filename));
         // Read the exported wire format independently of the browser's codec.

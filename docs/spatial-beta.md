@@ -10,8 +10,8 @@ You start with a local workspace. Choose **Start a shared room** in the room-act
 
 ## Work in space and time
 
-- **2D · Work** opens the selected board for ordinary text, notes, drawing, images, diagrams, layers, and approved window sharing.
-- **3D · Space** steps outside the boards. Drag the open space or use the camera buttons to look around; choose a board to step inside. **Position in space** changes its shared X/Y/Z position and rotation. Your camera stays personal. Objects are flat within each board; the beta does not provide a general-purpose 3D model editor.
+- **Work** opens the selected board for ordinary text, notes, drawing, images, diagrams, layers, and approved window sharing. Select, Note, and Draw stay in the small tool dock; **More board tools** holds the remaining tools. The round share control starts or stops window sharing.
+- **Space** steps outside the boards. Drag the open space or use the camera compass to look around; choose a board to step inside. **Position in space** changes its shared X/Y/Z position and rotation. Your camera stays personal. Objects are flat within each board; the beta does not provide a general-purpose 3D model editor.
 - The timeline contains revisions recorded automatically as people work. Moving into the past makes your view read-only. Teammates continue editing live, and a counter shows new live changes. **Return to live** rejoins the present.
 - **Branch from here** creates a new local workspace from the selected past state, with fresh board and object IDs and its own automatic history. It leaves the original room running. Active screen shares are excluded from the new branch.
 

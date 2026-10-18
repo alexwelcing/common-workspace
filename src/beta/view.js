@@ -1,4 +1,5 @@
 import './style.css';
+import { attachPopover, attachRovingToolbar } from '../ui/workspace-primitives.js';
 
 const clamp = (value, low, high, fallback = 0) => Number.isFinite(Number(value)) ? Math.min(high, Math.max(low, Number(value))) : fallback;
 const element = (tag, className, text) => {
@@ -21,6 +22,21 @@ const timeOf = revision => {
   const date = new Date(raw);
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 };
+const ICONS = {
+  select: 'm5 3 5 18 3-8 8-3Z', sticky: 'M5 3h14v13l-5 5H5zM14 21v-5h5M8 8h8M8 12h6', draw: 'm4 17-1 4 4-1L20 7l-4-4ZM13 6l5 5',
+  hand: 'M8 12V5a2 2 0 0 1 4 0v6-7a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v8c0 4-3 6-7 6h-1c-3 0-4-2-6-5L3 12a2 2 0 0 1 3-2l2 2',
+  text: 'M4 5V3h16v2M12 3v18M8 21h8', rectangle: 'M4 5h16v14H4z', image: 'M3 3h18v18H3zM3 16l6-6 12 11M16 7h.01',
+  share: 'M3 4h18v13H3zM8 21h8M12 17v4M9 10l3-3 3 3M12 7v7', stop: 'M6 6h12v12H6z', more: 'M12 5v14M5 12h14',
+  room: 'M3 7h7l2-3h9v16H3zM3 7V4h7', settings: 'M4 7h16M4 17h16M8 4v6M16 14v6', diagram: 'M9 3h6v5H9zM2 16h6v5H2zM16 16h6v5h-6zM12 8v4M5 16v-4h14v4',
+  fit: 'M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5', 'zoom-in': 'M5 12h14M12 5v14', 'zoom-out': 'M5 12h14', position: 'm12 3 9 5v9l-9 5-9-5V8Zm0 9 9-4M12 12 3 8M12 12v10',
+  chevron: 'm8 10 4 4 4-4', arrow: 'M5 12h14m-5-5 5 5-5 5', branch: 'M5 20V4M5 14c7 0 6-8 14-8m-4-4 4 4-4 4',
+  left: 'm14 6-6 6 6 6', right: 'm10 6 6 6-6 6', up: 'm6 14 6-6 6 6', down: 'm6 10 6 6 6-6', reset: 'M20 8a8 8 0 1 0 0 8M20 3v5h-5',
+};
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  for (const [key, value] of Object.entries({ width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true })) svg.setAttribute(key, value);
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', ICONS[name] || ICONS.more); svg.append(path); return svg;
+}
 
 /** Separate beta shell. Camera and history selection stay personal; callbacks own shared mutations. */
 export function mountBetaView(root, handlers = {}) {
@@ -30,44 +46,37 @@ export function mountBetaView(root, handlers = {}) {
   shell.setAttribute('aria-label', 'Common Space and Time beta');
   shell.innerHTML = `
     <header class="beta-header">
-      <a class="beta-brand" href="/" aria-label="Common home">common<span aria-hidden="true">✳</span></a>
-      <span class="beta-label">Space & time <span>Beta</span></span>
-      <div class="beta-room-heading"><h1></h1><p class="beta-save-state" role="status"></p></div>
-      <details class="beta-room-menu"><summary aria-label="Room actions">•••</summary><div class="beta-room-menu-items"><button type="button" data-beta-action="workspaces">On this device</button><button type="button" data-beta-action="create-room">Start a shared room</button><button type="button" data-beta-action="invite" hidden>Invite a teammate</button><button type="button" data-beta-action="theme">Room style</button><button type="button" data-beta-action="export">Export room</button><button type="button" data-beta-action="import">Import room</button><button type="button" data-beta-action="leave" hidden>Leave room</button><button type="button" data-beta-action="end" hidden>End room for everyone</button></div></details>
-      <button type="button" class="beta-button beta-exit" data-beta-action="exit" title="Exit beta">Exit beta <span aria-hidden="true">→</span></button>
+      <a class="beta-brand" href="/" aria-label="Common home">common<span aria-hidden="true">✳</span></a><span class="beta-label">Space & time <span>Beta</span></span>
+      <div class="beta-room-heading"><h1></h1><p class="beta-save-state cw-status-bead" role="status"></p></div>
+      <button type="button" class="beta-room-trigger cw-quiet-button" aria-label="Room actions" aria-expanded="false"><span aria-hidden="true">⌑</span><span>Room</span><span class="beta-menu-chevron" aria-hidden="true">⌄</span></button>
+      <div class="beta-room-menu cw-folded-menu" role="dialog" aria-label="Room actions" hidden><p class="beta-menu-eyebrow">A little room of your own</p><button type="button" data-beta-action="create-room">Start a shared room <span aria-hidden="true"></span></button><button type="button" data-beta-action="invite" hidden>Invite a teammate</button><button type="button" data-beta-action="workspaces">On this device <span aria-hidden="true"></span></button><div class="beta-menu-rule"></div><button type="button" data-beta-action="theme">Room style</button><button type="button" data-beta-action="export">Export room</button><button type="button" data-beta-action="import">Import room</button><div class="beta-agent-tools-host"></div><div class="beta-menu-rule"></div><button type="button" data-beta-action="leave" hidden>Leave room</button><button type="button" data-beta-action="end" hidden>End room for everyone</button><button type="button" data-beta-action="exit">Back to the classic canvas <span aria-hidden="true"></span></button></div>
     </header>
     <div class="beta-body">
       <aside class="beta-sidebar" aria-label="Boards and room controls">
-        <div class="beta-sidebar-heading"><h2>Places in this room</h2><button type="button" class="beta-icon-button beta-add-board" aria-label="Add a board">+</button></div>
+        <div class="beta-sidebar-heading"><h2>Your boards</h2><button type="button" class="beta-add-board cw-round-button" aria-label="Add a board">+</button></div>
         <nav class="beta-board-list" aria-label="Room boards"></nav>
-        <details class="beta-placement"><summary>Position in space <span aria-hidden="true">→</span></summary>
-          <p>Shared placement. Your camera stays yours.</p>
-          <form class="beta-pose-form"><fieldset><legend class="beta-sr-only">Selected board position and rotation</legend>
-            <div class="beta-coordinate-fields"></div><button type="submit" class="beta-button beta-pose-apply">Apply position</button>
-          </fieldset></form>
-        </details>
-        <div class="beta-sidebar-bottom"><p><span aria-hidden="true">✿</span> A little room to see the bigger picture.</p>
-          <div class="beta-room-actions"><button type="button" class="beta-button" data-beta-action="theme">Room style</button><button type="button" class="beta-button" data-beta-action="export">Export room</button></div>
-          <p class="beta-private-note">Your view and time position are personal. Teammates can keep working live.</p>
-        </div>
+        <div class="beta-sidebar-bottom"><span aria-hidden="true">✿</span><p>A little space.<br>A bigger picture.</p><p class="beta-private-note">Your view is yours.<br>The room grows together.</p></div>
       </aside>
       <main class="beta-main">
-        <div class="beta-view-bar"><div class="beta-view-modes" role="group" aria-label="Workspace view"><button type="button" data-beta-mode="work" aria-pressed="true">2D · Work</button><button type="button" data-beta-mode="space" aria-pressed="false">3D · Space</button></div><div class="beta-current-board"><strong></strong><span></span></div></div>
+        <div class="beta-view-bar"><div class="beta-view-modes cw-capsule" role="group" aria-label="Workspace view"><button type="button" class="cw-segment" data-beta-mode="work" aria-pressed="true">Work</button><button type="button" class="cw-segment" data-beta-mode="space" aria-pressed="false">Space <span aria-hidden="true">◇</span></button></div><div class="beta-current-board"><strong></strong><span></span></div><details class="beta-placement"><summary aria-label="Position in space" title="Position in space"><span class="beta-position-icon" aria-hidden="true"></span><span class="beta-sr-only">Position in space</span></summary><div class="beta-position-panel cw-folded-menu" data-cw-disclosure-content><h2>A place in space</h2><p>Shared placement. Your camera stays yours.</p><form class="beta-pose-form"><fieldset><legend class="beta-sr-only">Selected board position and rotation</legend><div class="beta-coordinate-fields"></div><button type="submit" class="beta-button beta-pose-apply">Apply position</button></fieldset></form></div></details></div>
         <div class="beta-notice" role="status" hidden></div>
-        <div class="beta-work-tools" role="toolbar" aria-label="Board tools"></div>
         <div class="beta-viewport" data-beta-mode="work">
-          <div class="beta-past-banner" hidden><span>Exploring the past · read-only</span><button type="button" class="beta-button" data-beta-action="fork">Branch from here</button><button type="button" class="beta-button beta-banner-live">Return to live →</button></div>
+          <div class="beta-past-banner" hidden><span>Exploring the past · read-only</span></div>
           <div class="beta-board-host board-viewport"></div>
           <div class="beta-space" hidden tabindex="0" aria-label="Spatial overview. Arrow keys orbit your camera, plus and minus zoom."><div class="beta-world"></div></div>
-          <div class="beta-camera" role="group" aria-label="Your spatial camera" hidden><button type="button" class="beta-icon-button" data-beta-camera="left" aria-label="Orbit left">↶</button><button type="button" class="beta-icon-button" data-beta-camera="right" aria-label="Orbit right">↷</button><button type="button" class="beta-icon-button" data-beta-camera="up" aria-label="Tilt up">↑</button><button type="button" class="beta-icon-button" data-beta-camera="down" aria-label="Tilt down">↓</button><button type="button" class="beta-icon-button" data-beta-camera="out" aria-label="Zoom out">−</button><button type="button" class="beta-icon-button" data-beta-camera="in" aria-label="Zoom in">+</button><button type="button" class="beta-icon-button" data-beta-camera="reset" aria-label="Reset camera">⌖</button></div>
-          <p class="beta-space-hint" hidden>Choose a board to step inside. Drag the open space to look around.</p>
+          <div class="beta-work-tools cw-pebble-dock" role="toolbar" aria-label="Board tools"><div class="beta-primary-tools"></div><span class="beta-dock-divider" aria-hidden="true"></span><button type="button" class="beta-tool-palette-trigger cw-round-button" aria-label="More board tools" aria-expanded="false" title="More board tools"></button></div>
+          <div class="beta-tool-palette cw-folded-menu" role="dialog" aria-label="More board tools" hidden><p class="beta-menu-eyebrow">A little more possibility</p><div class="beta-tool-extras"></div></div>
+          <button type="button" class="beta-share-control cw-round-button" data-beta-action="share" aria-label="Share a window" aria-pressed="false" title="Share a window"></button>
+          <button type="button" class="beta-navigation-trigger cw-round-button" aria-label="View controls" aria-expanded="false" title="View controls"></button><div class="beta-navigation-panel cw-folded-menu" role="dialog" aria-label="View controls" hidden><p class="beta-menu-eyebrow">Only your view</p><div class="beta-navigation-host"></div></div>
+          <div class="beta-camera" role="group" aria-label="Your spatial camera" hidden><div class="beta-compass"><button type="button" data-beta-camera="left" aria-label="Orbit left"></button><button type="button" data-beta-camera="up" aria-label="Tilt up"></button><button type="button" data-beta-camera="reset" aria-label="Reset camera"></button><button type="button" data-beta-camera="down" aria-label="Tilt down"></button><button type="button" data-beta-camera="right" aria-label="Orbit right"></button></div><div class="beta-camera-zoom"><button type="button" data-beta-camera="in" aria-label="Zoom in">+</button><button type="button" data-beta-camera="out" aria-label="Zoom out">−</button></div></div>
+          <p class="beta-space-hint" hidden>Your camera, your curiosity. Open a board to step inside.</p>
           <div class="beta-empty" hidden><span aria-hidden="true">✳</span><h2>A little space for what comes next.</h2><p>Add a board to start growing your room.</p><button type="button" class="beta-button beta-empty-add">Add your first board</button></div>
         </div>
       </main>
       <footer class="beta-history" aria-label="Automatic room history">
-        <div class="beta-history-heading"><div><h2>A room, over time.</h2><p class="beta-history-status"></p></div><span class="beta-live-changes" hidden></span><button type="button" class="beta-button beta-return-live">You’re live</button></div>
-        <input class="beta-time-slider" type="range" min="0" max="0" step="1" value="0" aria-label="Explore automatically saved room history">
-        <div class="beta-timeline-labels"><span class="beta-history-first"></span><span class="beta-history-count"></span><span class="beta-history-last"></span></div><p class="beta-mobile-save-state" role="status"></p>
+        <div class="beta-history-heading"><span class="beta-time-pill">Live now</span><p class="beta-history-status"></p><span class="beta-live-changes" hidden></span><button type="button" class="beta-branch" data-beta-action="fork" aria-label="Branch from here" hidden><span class="beta-branch-label">Branch from here</span><span class="beta-branch-short" aria-hidden="true">Branch</span><span class="beta-branch-icon" aria-hidden="true"></span></button><button type="button" class="beta-button beta-return-live" hidden>Return to live →</button></div>
+        <div class="beta-scrubber"><span class="beta-history-first"></span><input class="beta-time-slider" type="range" min="0" max="0" step="1" value="0" aria-label="Explore automatically saved room history"><span class="beta-history-last">Now</span></div>
+        <div class="beta-timeline-labels"><span class="beta-history-count"></span><p class="beta-mobile-save-state" role="status"></p></div>
       </footer>
     </div>
     <div class="beta-announcement beta-sr-only" role="status" aria-live="polite"></div>`;
@@ -75,6 +84,9 @@ export function mountBetaView(root, handlers = {}) {
   const $ = selector => shell.querySelector(selector);
   const boardHost = $('.beta-board-host');
   const toolbarHost = $('.beta-work-tools');
+  const toolExtrasHost = $('.beta-tool-extras');
+  const navigationHost = $('.beta-navigation-host');
+  const agentToolsHost = $('.beta-agent-tools-host');
   const scene = $('.beta-space');
   const world = $('.beta-world');
   const boardList = $('.beta-board-list');
@@ -90,6 +102,29 @@ export function mountBetaView(root, handlers = {}) {
   let poseSignature = '';
   const planes = new Map();
   const boardButtons = new Map();
+  const placementDetails = $('.beta-placement');
+  const placementPanel = $('.beta-position-panel');
+  // Keep the inspector out of the canvas clipping region and in the same safe
+  // popover layer as other controls. The summary remains a native disclosure.
+  placementPanel.setAttribute('role', 'dialog'); placementPanel.setAttribute('aria-label', 'Position in space');
+  shell.append(placementPanel);
+  const popovers = [
+    attachPopover({ trigger: $('.beta-room-trigger'), panel: $('.beta-room-menu'), placement: 'bottom-end' }),
+    attachPopover({ trigger: $('.beta-tool-palette-trigger'), panel: $('.beta-tool-palette'), placement: 'top-end' }),
+    attachPopover({ trigger: $('.beta-navigation-trigger'), panel: $('.beta-navigation-panel'), placement: 'top-end' }),
+    attachPopover({ trigger: placementDetails.querySelector('summary'), panel: placementPanel, placement: 'bottom-end', onOpenChange: open => { placementDetails.open = open; } }),
+  ];
+  const toolbarCleanup = attachRovingToolbar(toolbarHost);
+  $('.beta-position-icon').append(icon('position'));
+  $('.beta-tool-palette-trigger').append(icon('more'));
+  $('.beta-navigation-trigger').append(icon('settings'));
+  $('.beta-share-control').append(icon('share'), element('span', 'beta-sr-only', 'Share a window'));
+  $('.beta-room-trigger').firstElementChild.replaceWith(icon('room'));
+  $('.beta-menu-chevron').replaceChildren(icon('chevron'));
+  for (const span of $('.beta-room-menu').querySelectorAll('[aria-hidden]')) span.append(icon('arrow'));
+  $('.beta-branch-icon').append(icon('branch'));
+  $('[data-beta-mode="space"] [aria-hidden]').replaceChildren(icon('position'));
+  for (const button of $('.beta-compass').querySelectorAll('button')) button.append(icon(button.dataset.betaCamera));
 
   const action = (name, payload) => handlers.onAction?.(name, payload);
   const announce = text => { $('.beta-announcement').textContent = text; };
@@ -106,31 +141,24 @@ export function mountBetaView(root, handlers = {}) {
     input.min = key.startsWith('rotation') ? '-360' : '-100000'; input.max = key.startsWith('rotation') ? '360' : '100000';
     labelNode.append(input); $('.beta-coordinate-fields').append(labelNode); poseFields.set(key, input);
   }
-  const tools = [['select', '↖', 'Select'], ['hand', '✋', 'Move view'], ['text', 'T', 'Text'], ['sticky', '▤', 'Note'], ['rectangle', '□', 'Box'], ['draw', '⌁', 'Draw']];
-  for (const [tool, symbol, label] of tools) {
+  const tools = [['select', 'Select'], ['sticky', 'Note'], ['draw', 'Draw'], ['text', 'Text'], ['rectangle', 'Box'], ['hand', 'Move view']];
+  for (const [tool, label] of tools) {
     const button = element('button', 'beta-tool'); button.type = 'button'; button.dataset.betaTool = tool; button.title = label; button.setAttribute('aria-label', label); button.setAttribute('aria-pressed', String(tool === 'select'));
-    const toolSymbol = element('span', 'beta-tool-symbol', symbol);
-    if (tool === 'select') toolSymbol.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="m4 3 6 18 3-8 8-3Z"/></svg>';
-    button.append(toolSymbol, element('span', 'beta-tool-label', label));
-    toolbarHost.append(button);
+    button.append(icon(tool), element('span', 'beta-tool-label', label));
+    (['select', 'sticky', 'draw'].includes(tool) ? $('.beta-primary-tools') : toolExtrasHost).append(button);
   }
-  for (const [name, label] of [['image', 'Add image'], ['share', 'Share a window']]) {
-    const button = element('button', 'beta-button beta-media-tool', label); button.type = 'button'; button.dataset.betaAction = name; toolbarHost.append(button);
-  }
+  const imageButton = element('button', 'beta-palette-action'); imageButton.type = 'button'; imageButton.dataset.betaAction = 'image'; imageButton.append(icon('image'), element('span', '', 'Add image')); toolExtrasHost.append(imageButton);
 
   shell.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button || !shell.contains(button) || button.disabled) return;
     if (button.dataset.betaMode) setMode(button.dataset.betaMode);
     else if (button.dataset.betaCamera) moveCamera(button.dataset.betaCamera);
-    else if (button.dataset.betaTool) action('tool', { tool: button.dataset.betaTool });
-    else if (button.dataset.betaAction) { $('.beta-room-menu').open = false; action(button.dataset.betaAction); }
-    else if (button.classList.contains('beta-return-live') || button.classList.contains('beta-banner-live')) live();
+    else if (button.dataset.betaTool) { for (const popover of popovers) popover.close({ restoreFocus: false }); action('tool', { tool: button.dataset.betaTool }); }
+    else if (button.dataset.betaAction) { for (const popover of popovers) popover.close({ restoreFocus: false }); action(button.dataset.betaAction); }
+    else if (button.classList.contains('beta-return-live')) live();
     else if (button.classList.contains('beta-add-board') || button.classList.contains('beta-empty-add')) handlers.onAddBoard?.();
-  }, { signal });
-  shell.addEventListener('keydown', event => {
-    const menu = $('.beta-room-menu');
-    if (event.key === 'Escape' && menu.open) { event.preventDefault(); menu.open = false; menu.querySelector('summary').focus(); }
+    else if (button.classList.contains('agent-tools-trigger')) for (const popover of popovers) popover.close({ restoreFocus: false });
   }, { signal });
   timeline.addEventListener('input', () => handlers.onTimeChange?.(Number(timeline.value)), { signal });
   poseForm.addEventListener('submit', event => {
@@ -233,11 +261,12 @@ export function mountBetaView(root, handlers = {}) {
       const id = String(board.id), active = id === String(state.activeBoardId), objects = objectList(board);
       let button = boardButtons.get(id);
       if (!button) {
-        button = element('button', 'beta-board-link'); button.type = 'button'; button.dataset.betaBoard = id;
-        button.append(element('span', 'beta-board-icon', '▱'), element('span', 'beta-board-link-text'), element('span', 'beta-board-count'));
+        button = element('button', 'beta-board-link cw-board-tab'); button.type = 'button'; button.dataset.betaBoard = id;
+        button.append(element('span', 'beta-board-icon'), element('span', 'beta-board-link-text'), element('span', 'beta-board-count'));
         button.addEventListener('click', () => select(id), { signal }); boardButtons.set(id, button);
       }
       button.querySelector('.beta-board-link-text').textContent = board.name || board.title || 'Untitled board'; button.querySelector('.beta-board-count').textContent = String(objects.length);
+      button.querySelector('.beta-board-icon').textContent = String(state.boards.indexOf(board) + 1).padStart(2, '0');
       button.setAttribute('aria-pressed', String(active));
       const index = state.boards.indexOf(board); if (boardList.children[index] !== button) boardList.insertBefore(button, boardList.children[index] || null);
       let plane = planes.get(id);
@@ -260,11 +289,12 @@ export function mountBetaView(root, handlers = {}) {
       if (!objects.length) content.append(element('span', 'beta-plane-empty', 'Room for a little thought…'));
       preview.append(content); if (world.children[index] !== plane) world.insertBefore(plane, world.children[index] || null);
     }
-    fitScene();
+    if (state.mode === 'space') fitScene();
   }
 
   function render(next) {
     if (destroyed) return;
+    const wasSpace = state.mode === 'space';
     state = { ...state, ...next };
     state.boards = Array.isArray(state.boards) ? state.boards : [];
     state.revisions = Array.isArray(state.revisions) ? state.revisions : [];
@@ -293,17 +323,33 @@ export function mountBetaView(root, handlers = {}) {
     $('.beta-past-banner').hidden = liveView;
     $('.beta-empty').hidden = !!state.boards.length;
     $('.beta-empty-add').disabled = !canEdit(); $('.beta-add-board').disabled = !canEdit();
-    toolbarHost.hidden = space || state.tools === false || !activeBoard;
+    const hideTools = space || state.tools === false || !activeBoard || !liveView;
+    if (toolbarHost.hidden !== hideTools) toolbarHost.hidden = hideTools;
+    $('.beta-share-control').hidden = (!activeBoard || space || !liveView) && !state.sharing;
+    $('.beta-navigation-trigger').hidden = space || !activeBoard;
     for (const button of shell.querySelectorAll('[data-beta-mode]')) button.setAttribute('aria-pressed', String(button.dataset.betaMode === state.mode));
-    for (const button of toolbarHost.querySelectorAll('button')) {
+    for (const button of [...toolbarHost.querySelectorAll('button'), ...toolExtrasHost.querySelectorAll('button'), ...navigationHost.querySelectorAll('button')]) {
       const navigation = ['select', 'hand'].includes(button.dataset.betaTool) || ['fit', 'zoom-in', 'zoom-out'].includes(button.dataset.betaAction);
-      button.disabled = !canEdit() && !navigation && !(button.dataset.betaAction === 'share' && state.sharing);
-      if (button.dataset.betaTool) button.setAttribute('aria-pressed', String(button.dataset.betaTool === (state.tool || 'select')));
-      if (button.dataset.betaAction === 'share') {
-        button.textContent = state.sharing ? 'Stop sharing' : 'Share a window';
-        button.setAttribute('aria-pressed', String(!!state.sharing));
+      const disabled = !canEdit() && !navigation && !button.classList.contains('beta-tool-palette-trigger');
+      if (button.disabled !== disabled) button.disabled = disabled;
+      if (button.dataset.betaTool) {
+        const pressed = String(button.dataset.betaTool === (state.tool || 'select'));
+        if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
+      }
+      if (button.dataset.betaAction && !button.dataset.betaEnhanced) {
+        const name = button.dataset.betaAction;
+        if (['diagram', 'fit', 'zoom-in', 'zoom-out'].includes(name)) {
+          const label = { diagram: 'Diagram', fit: 'Fit board', 'zoom-in': 'Zoom in', 'zoom-out': 'Zoom out' }[name];
+          button.className = 'beta-palette-action'; button.setAttribute('aria-label', label); button.replaceChildren(icon(name), element('span', '', label));
+        }
+        button.dataset.betaEnhanced = 'true';
       }
     }
+    const shareButton = $('.beta-share-control'), shareLabel = state.sharing ? 'Stop sharing' : 'Share a window';
+    shareButton.disabled = !canEdit() && !state.sharing;
+    if (shareButton.getAttribute('aria-pressed') !== String(!!state.sharing) || !shareButton.childNodes.length) shareButton.replaceChildren(icon(state.sharing ? 'stop' : 'share'), element('span', 'beta-sr-only', shareLabel));
+    shareButton.setAttribute('aria-pressed', String(!!state.sharing)); shareButton.setAttribute('aria-label', shareLabel); shareButton.title = shareLabel;
+    $('.beta-tool-palette-trigger').dataset.active = String(!['select', 'sticky', 'draw'].includes(state.tool || 'select'));
     poseForm.querySelector('fieldset').disabled = !canEdit() || !activeBoard;
     const newPoseSignature = JSON.stringify([activeBoard?.id, poseOf(activeBoard)]);
     if (newPoseSignature !== poseSignature) {
@@ -311,7 +357,7 @@ export function mountBetaView(root, handlers = {}) {
     }
     const newSignature = JSON.stringify([state.boards, state.activeBoardId, liveView]);
     if (newSignature !== contentSignature) { contentSignature = newSignature; renderBoards(); }
-    else if (space) fitScene();
+    else if (space && !wasSpace) fitScene();
     const max = Math.max(0, state.revisions.length - 1);
     const index = liveView ? max : clamp(state.revisionIndex ?? max, 0, max, max);
     timeline.max = String(max); timeline.value = String(index); timeline.disabled = !state.revisions.length;
@@ -319,18 +365,21 @@ export function mountBetaView(root, handlers = {}) {
     const currentTime = timeOf(current);
     const revisionDetail = [typeof current?.label === 'string' ? current.label : '', typeof current?.actor === 'string' ? current.actor : '', currentTime].filter(Boolean).join(' · ');
     timeline.setAttribute('aria-valuetext', `${liveView ? 'Live' : 'History'}${revisionDetail ? `, ${revisionDetail}` : ''}, change ${index + 1} of ${state.revisions.length}`);
-    $('.beta-history-status').textContent = liveView ? (['unsaved', 'error', 'saving'].includes(saveState) ? saveMessage : 'Every change is saved as you work.') : `${revisionDetail || 'Earlier in this room'} · Read-only. The live room keeps moving.`;
-    $('.beta-history-first').textContent = timeOf(state.revisions[0]) || 'Room started'; $('.beta-history-last').textContent = 'Live now';
+    $('.beta-history-status').textContent = liveView ? (['unsaved', 'error', 'saving'].includes(saveState) ? saveMessage : 'A room, quietly remembering.') : revisionDetail || 'Earlier in this room';
+    $('.beta-history-status').title = liveView ? 'Every change is saved automatically. Scrub to explore the past.' : `${revisionDetail} · Read-only. Teammates can keep working live.`;
+    $('.beta-time-pill').textContent = liveView ? 'Live now' : currentTime || 'Earlier';
+    $('.beta-history-first').textContent = timeOf(state.revisions[0]) || 'Then'; $('.beta-history-last').textContent = 'Now';
     $('.beta-history-count').textContent = `${state.revisions.length} automatic ${state.revisions.length === 1 ? 'revision' : 'revisions'}`;
     const pending = Math.max(0, Number(state.pendingChanges) || 0);
     $('.beta-live-changes').hidden = liveView || !pending; $('.beta-live-changes').textContent = `${pending} new live ${pending === 1 ? 'change' : 'changes'}`;
-    $('.beta-return-live').disabled = liveView; $('.beta-return-live').textContent = liveView ? 'You’re live' : 'Return to live →';
+    $('.beta-return-live').hidden = liveView; $('.beta-return-live').disabled = liveView;
+    $('.beta-branch').hidden = liveView;
     shell.dataset.history = liveView ? 'live' : 'past';
   }
 
   render(state);
   return {
-    boardHost, toolbarHost, element: shell, render, announce,
-    destroy() { if (destroyed) return; destroyed = true; abort.abort(); observer.disconnect(); shell.remove(); planes.clear(); boardButtons.clear(); },
+    boardHost, toolbarHost, toolExtrasHost, navigationHost, agentToolsHost, element: shell, render, announce,
+    destroy() { if (destroyed) return; destroyed = true; abort.abort(); observer.disconnect(); for (const popover of popovers) popover.destroy(); toolbarCleanup(); shell.remove(); planes.clear(); boardButtons.clear(); },
   };
 }

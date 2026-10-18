@@ -30,7 +30,7 @@ let activeBoardId = null, selectedRevisionId = null, mode = 'work';
 let sandbox = true, connected = false, terminal = false, visible = true, disposed = false;
 let storageStatus = { state: 'loading', message: 'Opening your autosaved room…' };
 let participants = [], generation = 0, viewGeneration = 0, renderedSource = '', pendingChanges = 0;
-let renderFrame, draftTimer, toastTimer, modalCleanup, modalRevision = 0, historyFingerprint = '';
+let renderFrame, draftTimer, toastTimer, modalCleanup, modalRevision = 0, historyFingerprint = '', appearanceSignature = '';
 let createSeed = null, personalMedia, destroyPromise;
 const imageRequests = new Set(), downloadUrls = new Set();
 const $ = selector => document.querySelector(selector);
@@ -74,7 +74,7 @@ function seedWorkspace(template = 'walkthrough') {
   const entity = (type, text, x, y, extras = {}) => ({ id: crypto.randomUUID(), type, text, x, y, width: 270, height: 170, color: '#34483b', fill: '#fff0b5', fontSize: 19, ...extras });
   const make = (name, pose, entries) => ({ id: crypto.randomUUID(), name, pose: { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, ...pose }, width: 1000, height: 700, objects: entries });
   return { title: template === 'review' ? 'A room for a design review' : template === 'open' ? 'A little room to explore' : 'A room for your next walkthrough', appearance: restoreAppearance(), boards: template === 'open' ? [make('Your first board', {}, [])] : [
-    make('Demo stage', { x: -560, y: -220, z: 100 }, [entity('text', template === 'review' ? 'A place for the design' : 'A place for the work', 80, 65, { width: 680, height: 85, fontSize: 34 }), entity('sticky', template === 'review' ? 'Share the design and name the decision you need from this review.\n\nNotes and changes save automatically.' : 'Share a window, add a note, or draw a little clarity.\n\nEverything is saved as you work.', 90, 200)]),
+    make('Demo stage', { x: -560, y: -220, z: 100 }, [entity('text', template === 'review' ? 'A place for the design' : 'A place for the work', 80, 65, { width: 680, height: 85, fontSize: 34 }), entity('sticky', template === 'review' ? 'Share the design and name the decision you need from this review.\n\nNotes and changes save automatically.' : 'Share a window, add a note, or draw a little clarity.\n\nEverything is saved as you work.', 90, 200, { height: 230 })]),
     make('Our flow', { x: 540, y: -220, z: -80, rotationY: -9 }, [entity('diagram', '', 90, 110, { width: 680, height: 420, language: 'mermaid', source: template === 'review' ? 'flowchart TD\n  Work[See the design] --> Questions[Explore the questions]\n  Questions --> Decision[Agree on the next revision]' : 'flowchart TD\n  Begin[Arrive together] --> Explore[Explore the work]\n  Explore --> Decide[Find the next small step]', title: 'Our flow' })]),
     make('Questions & decisions', { x: -40, y: 560, z: -260, rotationX: 5 }, [entity('sticky', template === 'review' ? 'What is working well?' : 'What would you like feedback on?', 70, 110), entity('sticky', template === 'review' ? 'What needs another look?' : 'What did we learn?', 385, 110, { fill: '#e2ecd5' }), entity('sticky', template === 'review' ? 'What decision did we make?' : 'What happens next?', 700, 110, { fill: '#f3dfd9' })]),
   ] };
@@ -135,7 +135,9 @@ function render() {
   if (selectedRevisionId && historyFingerprint && fingerprint !== historyFingerprint) pendingChanges++;
   historyFingerprint = fingerprint;
   if (!snapshot.boards.some(item => item.id === activeBoardId)) { finishView(); activeBoardId = snapshot.boards[0]?.id || null; renderedSource = ''; makeFacade(); }
-  appearanceUI.apply(!sandbox && !selectedRevisionId ? session?.auth?.room.appearance || snapshot.appearance : snapshot.appearance);
+  const roomAppearance = !sandbox && !selectedRevisionId ? session?.auth?.room.appearance || snapshot.appearance : snapshot.appearance;
+  const nextAppearanceSignature = JSON.stringify(roomAppearance);
+  if (nextAppearanceSignature !== appearanceSignature) { appearanceUI.apply(roomAppearance); appearanceSignature = nextAppearanceSignature; }
   view.render({ ...snapshot, activeBoardId, mode, live: !selectedRevisionId, revisions, selectedRevisionId,
     revisionIndex: selectedRevisionId ? revisions.findIndex(item => item.id === selectedRevisionId) : revisions.length - 1,
     pendingChanges, connection: sandbox ? 'local' : connected ? 'connected' : 'disconnected', canEdit: editable(),
@@ -318,6 +320,7 @@ async function action(name, payload) {
     else if (name === 'theme') themeDialog();
     else if (name === 'create-room') roomForm();
     else if (name === 'invite') invite();
+    else if (name === 'agents') agent?.open();
     else if (name === 'end') confirmEnd();
     else if (name === 'leave') session.leave();
     else if (name === 'import') importArchive();
@@ -372,7 +375,11 @@ board = new Board({ el: view.boardHost,
   canEdit: entity => entity.type !== 'screen' || sandbox || entity.participantId === ownId() || session?.auth?.isAdmin,
 });
 const tools = [['diagram', 'Diagram'], ['fit', 'Fit board'], ['zoom-out', '−'], ['zoom-in', '+']];
-for (const [name, text] of tools) { const button = document.createElement('button'); button.type = 'button'; button.className = 'beta-button'; button.dataset.betaAction = name; button.textContent = text; view.toolbarHost.append(button); }
+for (const [name, text] of tools) {
+  const button = document.createElement('button'); button.type = 'button'; button.className = name === 'diagram' ? 'beta-palette-item' : 'beta-hud-button';
+  button.dataset.betaAction = name; button.textContent = text; button.setAttribute('aria-label', name === 'zoom-in' ? 'Zoom in' : name === 'zoom-out' ? 'Zoom out' : text);
+  (name === 'diagram' ? view.toolExtrasHost || view.toolbarHost : view.navigationHost || view.toolbarHost).append(button);
+}
 personalMedia = new ScreenSharing({ send: () => false, onStream: streamReceived, onStopped: stoppedSharing, onStatus: toast, onCaptureState: () => { scheduleRender(); publishState(); }, fallbackIceConfig: () => getRuntimeConfig().rtc });
 const sessionOptions = {
   onAdmitted: async (auth, { isNew }) => {
@@ -396,7 +403,7 @@ agent = installBetaAgent({ getBoard: () => disposed ? null : board, getModel: ()
   getSession: () => `${generation}:${activeBoardId}:${selectedRevisionId || 'live'}`,
   getContext: () => ({ sandbox, connected, room: sandbox ? null : session.auth?.room, participantId: ownId(), participants }),
   getWindowStream: () => activeMedia()?.localStream, onStatus: toast, onChange: publishState,
-  buttonParent: view.element.querySelector('.beta-header'), onRequestWindowShare: shareWindow, getSharingState: () => activeMedia()?.getCaptureState() || {}, signal: events.signal,
+  buttonParent: view.agentToolsHost || view.element.querySelector('.beta-header'), onRequestWindowShare: shareWindow, getSharingState: () => activeMedia()?.getCaptureState() || {}, signal: events.signal,
 });
 view.boardHost.addEventListener('input', event => { if (event.target.closest('[contenteditable="true"]')) { clearTimeout(draftTimer); draftTimer = setTimeout(flushDraft, 300); } }, { signal: events.signal });
 view.boardHost.addEventListener('dragover', event => { if (event.dataTransfer.types.includes('Files') && editable()) event.preventDefault(); }, { signal: events.signal });
