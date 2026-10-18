@@ -9,7 +9,7 @@ This module is being developed on `feature/embeddable-common`. It has not been d
 An administrator can provide the built package directly. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.1.0-embed.0.tgz
+bun add /absolute/path/common-workspace-0.1.0-embed.1.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -21,7 +21,15 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.1.0-embed.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This builds the package and writes `artifacts/common-workspace-0.1.0-embed.1.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+
+The runnable host example is included in the package. After installing, try it directly from your Bun project:
+
+```sh
+bun node_modules/common-workspace/example/server.mjs
+```
+
+Open `http://127.0.0.1:3100` for inline and floating canvases beside the host's own routes and WebSocket. Use `PORT=3101` if that port is occupied. The example files under `node_modules/common-workspace/example/` can be copied into your own project; no separate source checkout is needed. Its optional `DEMO_AUTH=1` cookie toggle demonstrates integration and must be replaced with your application's real authentication.
 
 ## Choose how Common appears
 
@@ -104,7 +112,7 @@ const canvas = mountCommon({
 });
 ```
 
-Inline mode opens immediately; overlay mode starts closed and loads Common on its first opening. Calling `ready()` or an `agent` method also starts that load. Set `open: true` or `false` to choose visibility explicitly. Optional `roomId` opens an existing room's join view; it does not supply its password. `onReady(controller)`, `onError(error)`, and `onOpenChange(isOpen)` let your host reflect the panel's state. Readiness means the embedded interface is initialized, not that someone has joined a room or granted an agent access.
+Inline mode opens immediately; overlay mode starts closed and loads Common on its first opening. Calling `ready()` or an `agent` method also starts that load. Set `open: true` or `false` to choose visibility explicitly. Optional `roomId` opens an existing room's join view; it does not supply its password. Each mount has its own room identity, so two panels can join the same room without taking over each other's socket. Reloading the same iframe retains its identity; destroying and creating a new mount starts a new identity. `onReady(controller)`, `onError(error)`, and `onOpenChange(isOpen)` let your host reflect the panel's state. Readiness means the embedded interface is initialized, not that someone has joined a room or granted an agent access.
 
 If your host has no browser bundler, serve the installed client export as a JavaScript module from your existing server:
 
@@ -128,7 +136,7 @@ The returned controller provides:
 | `agent.execute(command, options?)`, `agent.batch(commands, options?)` | Call the existing command API; optional `options.signal` cancels pending work. |
 | `destroy()` | Asynchronously stop the embedded session and remove its iframe and launcher; safe to call repeatedly. |
 
-Closing the panel **does not stop sharing or recording**. The launcher continues to show their status, and reopening preserves the room. Incoming video subscriptions pause while hidden. Call `await canvas.destroy()` when your host view is removed or the person signs out; destruction stops captures, revokes agent access, and closes the embedded connections. Destroy and mount again to change the prefix or initially selected room.
+Closing the panel abandons a still-pending window choice; any late result is stopped. It **does not stop an already active share or recording**. The launcher continues to show their status, and reopening preserves the room. Incoming video subscriptions pause while hidden. Call `await canvas.destroy()` when your host view is removed or the person signs out; destruction stops captures, revokes agent access, and closes the embedded connections. Destroy and mount again to change the prefix or initially selected room.
 
 ## Host authentication and room access
 
@@ -142,7 +150,7 @@ The server's `matches(request)` checks the mount boundary. `fetch(request, serve
 
 ## Agents remain visible and opt in
 
-Embedding does not grant agent access. A person opens **Agent tools** in Common and chooses the current tab's permissions and duration. Canvas read/edit access is separate from capture and recording permissions, and grants expire or can be revoked. Your product can explain this step, but it should not silently enable access when the panel opens.
+Embedding does not grant agent access. A person opens **Agent tools** in Common, chooses the current tab's permissions and duration, and selects **Allow selected access**. Presets and edited choices take effect only when the person allows or updates access. Canvas read/edit access is separate from capture and recording permissions, and grants expire or can be revoked. Your product can explain this step, but it should not silently enable access when the panel opens.
 
 The agent command runner and agent API live inside the Common iframe. A browser agent can use the labeled controls there. A JavaScript-capable integration must follow its own browser tooling policy and the current Common grant; embedding is not a permission bypass. See the packaged `agents.md`, `agent-api.md`, and `agent-tools.json` beneath your mount path for the actual interface and command schemas.
 
@@ -153,13 +161,19 @@ const response = await canvas.agent.execute({ action: 'canvas.inspect' });
 if (!response.ok) console.error(response.error.code, response.error.message);
 ```
 
-Agent command failures use the existing `{ ok: false, error: { code, message } }` envelope. Mount, readiness, reload, and destruction failures can instead reject with `CommonEmbedError`; use its `code` and `message` in your host's error handling. A reloaded or destroyed frame cancels pending work rather than forwarding it into a new session.
+Agent command failures use the existing `{ ok: false, error: { code, message } }` envelope. Mount, readiness, reload, destruction, and caller-cancellation failures can instead reject with `CommonEmbedError`; use its `code` and `message` in your host's error handling. Aborting `options.signal` rejects promptly with `SDK_CANCELLED`, including while the iframe starts. A reloaded or destroyed frame cancels pending work rather than forwarding it into a new session. Cancellation does not undo a command that already completed.
 
 ## Screen sharing and capture
 
 Serve the host application over trusted HTTPS for team use. Browsers also permit `http://localhost` for development. The host page's Permissions Policy must permit `display-capture` for its same-origin Common frame. A parent policy that denies capture cannot be loosened by the iframe.
 
 Sharing still requires a person's click inside Common and the browser's native screen/window picker. Loading Common, mounting an iframe, opening the overlay, or granting an agent permission does not capture a window automatically. The browser decides which capture sources can be offered; Common cannot silently select your application's tab or another cross-origin page. Sharing pixels does not grant remote control of the source application.
+
+The share button opens the picker directly from the click; Common does not spend that user activation on a preflight request or a second confirmation dialog. The inline sharing strip shows a pending request, the approved surface type and audience, and Stop. Closing the picker leaves a calm retry message. **Sharing help** gives recovery steps for an insecure address, a host policy block, missing browser support, or system screen-recording access. Browser cancellation and denial can produce the same error, so the interface does not pretend to distinguish them. If a pending request is cancelled in Common, close the native picker too; any source returned by that abandoned request is stopped immediately.
+
+When your host sets a `Permissions-Policy`, its `display-capture` rule must include `self`, for example `display-capture=(self)`. Every ancestor frame must allow capture. The SDK supplies `allow="display-capture; clipboard-write"` on its same-origin iframe; it cannot override a restrictive parent policy. Common requests video only. It does not request microphone, camera, or clipboard-read access. Each new screen share requires the browser's source picker; it is not a persistent permission Common can remember.
+
+**Record** in the active sharing strip opens the manual recorder without granting agent access. Recording the canvas or an already approved shared source requires no new screen picker. The agent's capture and recording grants control its commands separately from these human controls.
 
 The same-origin iframe is an integration boundary, not a separate security origin from your host application. Cross-origin embedding is not provided by this module. The SDK supplies the iframe's capture permissions and sandbox attributes; overriding them can block scripts, storage, downloads, or capture. Keep your host's Content Security Policy compatible with same-origin frames and Common's scripts, styles, connections, and assets.
 
@@ -177,7 +191,7 @@ Call `close()` during your application's shutdown to stop Common-owned sockets a
 
 Open the integrated host in two separate browser profiles. Confirm your own pages and WebSockets still work, host authentication protects the Common mount, and both profiles can join the same password-protected room. Add text, resize and reorder an object, approve a window share, and choose **Watch window** in the other profile. Then hide and reopen the panel, revoke an agent grant, and remove the mount while sharing to confirm its visible lifecycle.
 
-Use **Canvas options → Connection details** for transport and peer states, or download its report when diagnosing a problem. Reports contain counts, states, build information, and generated request IDs, without canvas content, room IDs, credentials, or recordings. Check the host's route and upgrade handling first if assets load but a room cannot connect.
+Use **Canvas options → Connection details** for transport and peer states, or download its report when diagnosing a problem. Reports include screen-capture availability, request state and known browser error codes, plus the current agent capability names and remaining grant time. They contain no source titles, canvas content, room IDs, credentials, or recordings. Check the host's route and upgrade handling first if assets load but a room cannot connect.
 
 | Error or symptom | What to check |
 | --- | --- |

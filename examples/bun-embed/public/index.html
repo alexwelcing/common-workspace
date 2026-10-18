@@ -82,15 +82,15 @@
       return hostState;
     }
     async function destroyMounts() {
-      generation++; const old = [inline, floating].filter(Boolean); inline = floating = null;
+      const current = ++generation, old = [inline, floating].filter(Boolean); inline = floating = null;
       $('#toggle-inline').disabled = true; $('#open-floating').disabled = true; $('#reload-mounts').disabled = true;
       await Promise.all(old.map(controller => controller.destroy()));
+      return current;
     }
     async function mountBoth() {
-      await destroyMounts();
-      if (shuttingDown) return;
+      const current = await destroyMounts();
+      if (shuttingDown || current !== generation) return;
       if (hostState.authDemo && !hostState.signedIn) { $('#inline-waiting').hidden = false; $('#inline-waiting').textContent = 'Use the host sign-in toggle to load both Common canvases.'; status('#inline-status', 'Waiting for host sign-in.'); status('#floating-status', 'Waiting for host sign-in.'); return; }
-      const current = generation;
       $('#inline-waiting').hidden = true;
       status('#inline-status', 'Opening the inline canvas…'); status('#floating-status', 'Floating launcher ready. Open it when you need it.');
       try {
@@ -114,22 +114,27 @@
     function connectEcho() {
       if (echo?.readyState === WebSocket.OPEN || echo?.readyState === WebSocket.CONNECTING) return;
       const url = new URL('/echo', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      echo = new WebSocket(url);
-      echo.addEventListener('message', event => { $('#echo-output').textContent = String(event.data); });
-      echo.addEventListener('error', () => { $('#echo-output').textContent = 'The host echo connection failed. Check the Bun server, then press Send to reconnect.'; });
-      echo.addEventListener('close', () => { if (!shuttingDown) $('#echo-output').textContent = 'Host echo closed. Press Send to reconnect.'; });
+      const socket = echo = new WebSocket(url);
+      socket.addEventListener('message', event => { if (echo === socket) $('#echo-output').textContent = String(event.data); });
+      socket.addEventListener('error', () => { if (echo === socket) $('#echo-output').textContent = 'The host echo connection failed. Check the Bun server, then press Send to reconnect.'; });
+      socket.addEventListener('close', () => { if (echo === socket && !shuttingDown) $('#echo-output').textContent = 'Host echo closed. Press Send to reconnect.'; });
     }
     $('#increment').onclick = async () => { try { $('#host-count').textContent = (await json('/api/counter', { method: 'POST' })).count; } catch (error) { $('#health-output').textContent = error.message; } };
     $('#probe-host').onclick = () => { void probeHost().catch(error => { $('#health-output').textContent = error.message; }); };
     $('#toggle-inline').onclick = () => inline?.toggle(); $('#open-floating').onclick = () => floating?.toggle();
     $('#reload-mounts').onclick = () => { void mountBoth(); };
-    $('#send-echo').onclick = () => { connectEcho(); const text = $('#echo-message').value; if (echo.readyState === WebSocket.OPEN) echo.send(text); else echo.addEventListener('open', () => echo.send(text), { once: true }); };
+    $('#send-echo').onclick = () => { connectEcho(); const text = $('#echo-message').value, socket = echo; if (socket.readyState === WebSocket.OPEN) socket.send(text); else socket.addEventListener('open', () => socket.send(text), { once: true }); };
     $('#demo-auth').onchange = async event => {
       const wanted = event.target.checked; event.target.disabled = true;
       try { await destroyMounts(); await json('/api/demo-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signedIn: wanted }) }); await probeHost(); await mountBoth(); }
       catch (error) { status('#inline-status', `Host sign-in demo failed: ${error.message}`, true); event.target.disabled = false; }
     };
-    window.addEventListener('pagehide', () => { shuttingDown = true; echo?.close(); void destroyMounts(); }, { once: true });
+    window.addEventListener('pagehide', () => { shuttingDown = true; echo?.close(); void destroyMounts(); });
+    window.addEventListener('pageshow', event => {
+      if (!event.persisted) return;
+      shuttingDown = false; connectEcho();
+      probeHost().then(mountBoth).catch(error => status('#inline-status', error.message, true));
+    });
     connectEcho();
     probeHost().then(mountBoth).catch(error => { $('#health-output').textContent = error.message; status('#inline-status', 'The host app could not initialize. Check the Bun server console.', true); });
   </script>

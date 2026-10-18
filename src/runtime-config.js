@@ -40,7 +40,9 @@ export function loadRuntimeConfig({ fetch: fetcher = globalThis.fetch, timeoutMs
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const request = Promise.resolve().then(() => fetcher(appPath('/api/config'), { cache: 'no-store', signal: controller.signal })).then(async response => {
     if (!response.ok) throw new Error('Configuration unavailable');
-    current = normalizeRuntimeConfig(await response.json());
+    const value = await response.json();
+    if (controller.signal.aborted) return current;
+    current = normalizeRuntimeConfig(value);
     return current;
   }).catch(() => current).finally(() => { clearTimeout(timer); if (pending === request) { pending = null; activeController = null; } });
   pending = request;

@@ -36,7 +36,7 @@ function dom(t) {
   return { window, cleanup };
 }
 
-function setup(t, { scopedPermissions = false, now } = {}) {
+function setup(t, { scopedPermissions = true, now } = {}) {
   const { window, cleanup } = dom(t);
   document.body.innerHTML = '<header></header><main id="canvas"></main>';
   const el = document.querySelector('#canvas');
@@ -79,7 +79,7 @@ function setup(t, { scopedPermissions = false, now } = {}) {
   });
   cleanup.push(() => { permissions?.destroy(); tools.destroy(); board.destroy(); model.destroy(); });
   const query = selector => document.querySelector(selector);
-  function enable(value = true) { query('#agent-enable').checked = value; query('#agent-enable').dispatchEvent(new window.Event('change', { bubbles: true })); }
+  function enable(value = true) { query(value ? '#agent-grant-apply' : '#agent-grant-revoke').click(); }
   async function run(command) { query('#agent-command').value = typeof command === 'string' ? command : JSON.stringify(command); query('#agent-run').click(); await settle(); return query('#agent-result').textContent; }
   return { window, query, board, model, api, context, tools, capture, walkthrough, permissions, calls, statuses, enable, run };
 }
@@ -121,7 +121,7 @@ test('disconnected sessions deny UI commands and inspection does not leak existi
   await env.run({ action: 'canvas.add', entity: { id: 'retained', type: 'text', text: 'Retained content' } });
   env.context.connected = false;
   const result = JSON.parse(await env.run({ action: 'canvas.update', id: 'retained', patch: { text: 'Changed' } }));
-  assert.equal(result.error.code, 'DISCONNECTED');
+  assert.equal(result.error.code, 'AGENT_DISABLED');
   assert.equal(env.model.get('retained').text, 'Retained content');
   env.query('#agent-inspect').click(); await settle();
   const state = JSON.parse(env.query('#agent-result').textContent);
@@ -193,7 +193,6 @@ test('manual recording controls remain available with agent control disabled and
   assert.equal(env.query('#agent-record-stop').hidden, false);
   assert.equal(env.query('.agent-recording-live').hidden, false);
   assert.match(env.query('.agent-recording-live').textContent, /0:12/);
-  env.enable(); env.enable(false);
   assert.equal(env.capture.status().state, 'recording');
   env.query('#agent-record-stop').click(); await settle();
   assert.equal(env.capture.status().state, 'idle');
@@ -243,9 +242,9 @@ test('scoped grant controls keep manual capture separate and expiry stops agent 
   assert.equal(env.capture.status().state, 'recording'); assert.equal(env.walkthrough.state().active, true);
   time = 1000001; env.permissions.refresh(); await settle();
   assert.equal(env.capture.status().state, 'idle'); assert.equal(env.walkthrough.state().active, false);
-  assert.equal(env.context.enabled, false); assert.equal(env.query('#agent-enable').checked, false);
+  assert.equal(env.context.enabled, false); assert.equal(env.query('#agent-grant-revoke').hidden, true);
   assert.equal(env.api.state().entities, undefined); assert.equal(env.api.state().grants.active, false);
-  assert.match(env.query('.agent-permission-status').textContent, /expired/);
+  assert.match(env.query('.agent-permission-status').textContent, /timer ended/);
   assert.equal(env.query('#agent-run').disabled, true);
   assert.equal(env.query('#agent-record-start').disabled, false, 'manual capture remains available after agent access expires');
 });
@@ -295,9 +294,7 @@ test('the full application boots with opt-in agent control and shares a personal
   assert.equal(document.querySelector('.canvas-toolbar [data-tool="select"]').getAttribute('aria-pressed'), 'true');
   assert.equal(window.commonAgent.state().enabled, false);
   assert.equal(document.querySelector('#agent-run').disabled, true);
-  const enable = document.querySelector('#agent-enable');
-  enable.checked = true;
-  enable.dispatchEvent(new window.Event('change', { bubbles: true }));
+  document.querySelector('#agent-grant-apply').click();
   const state = window.commonAgent.state();
   assert.equal(state.enabled, true); assert.equal(state.sandbox, true);
   assert.ok(state.entities.some(entity => entity.id === 'welcome'));

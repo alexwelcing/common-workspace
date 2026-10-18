@@ -72,7 +72,10 @@ export interface CommonAgentState {
   walkthrough?: { active: boolean; index: number; total: number; current: CommonWalkthroughStep | null } | null;
   recording?: Record<string, unknown> | null;
 }
-export interface CommonAgentCallOptions { signal?: AbortSignal; }
+export interface CommonAgentCallOptions {
+  /** Cancels startup waiting or a pending call with SDK_CANCELLED. Applied changes remain. */
+  signal?: AbortSignal;
+}
 export interface CommonAgent {
   describe(): Promise<CommonAgentDescription>;
   state(options?: { includeImageData?: boolean }): Promise<CommonAgentState | CommonAgentFailure>;

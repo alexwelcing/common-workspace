@@ -6,6 +6,8 @@ The host retains its own `/api/health`, `/api/counter`, and `/echo` WebSocket. O
 
 ## Install and run
 
+If Common is already installed in your Bun project, this example is included: run `bun node_modules/common-workspace/example/server.mjs` and open `http://127.0.0.1:3100`. You can also copy that `example/` folder into your own project.
+
 Obtain the private package tarball from its owner. It is not assumed to be published in a public registry. If you have the Common source checkout, build that tarball there first:
 
 ```sh
@@ -13,12 +15,12 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-The resulting artifact is `artifacts/common-workspace-0.1.0-embed.0.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
+The resulting artifact is `artifacts/common-workspace-0.1.0-embed.1.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
 
 ```sh
 cp -R /path/to/common/examples/bun-embed ./my-common-host
 cd my-common-host
-bun add /absolute/path/to/common-workspace-0.1.0-embed.0.tgz
+bun add /absolute/path/to/common-workspace-0.1.0-embed.1.tgz
 bun run start
 ```
 

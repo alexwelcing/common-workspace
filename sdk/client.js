@@ -72,7 +72,11 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
   heading.append(title, headingIndicator, closeButton);
   const status = document.createElement('p'); status.className = 'common-embed-status'; status.setAttribute('role', 'status'); status.textContent = 'Opening Common…';
   const iframe = document.createElement('iframe'); iframe.className = 'common-embed-frame'; iframe.title = 'Common collaborative canvas';
-  iframe.setAttribute('allow', 'display-capture; clipboard-read; clipboard-write; fullscreen');
+  // Same-origin iframes share sessionStorage. Keep room admission distinct for
+  // separate mounts while allowing this iframe to reconnect after a reload.
+  const mountId = window.crypto.randomUUID?.() || [...window.crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  iframe.name = `common-embed-${mountId}`;
+  iframe.setAttribute('allow', 'display-capture; clipboard-write');
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-downloads allow-modals');
   iframe.referrerPolicy = 'same-origin';
   panel.append(heading, status, iframe); shadow.append(stylesheet, launcher, panel);
@@ -90,6 +94,10 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
     if (destroyed) return;
     const changed = isOpen !== Boolean(next); isOpen = Boolean(next);
     if (isOpen) ensureLoaded();
+    // Native hidden prevents a closed overlay flashing in the host document
+    // before its external stylesheet loads. Once styled, retain its dimensions
+    // so an explicitly-readied closed canvas can initialize at its real size.
+    panel.hidden = !isOpen && stylesheetState !== 'loaded';
     panel.inert = !isOpen; panel.setAttribute('aria-hidden', String(!isOpen)); host.dataset.open = String(isOpen); launcher.setAttribute('aria-expanded', String(isOpen));
     try { current?.lifecycle?.setVisible?.(isOpen); } catch {}
     try { updateIndicator(current?.lifecycle?.getState?.()); } catch { updateIndicator(); }
@@ -197,33 +205,39 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
   }
   async function agentCall(method, args, options = {}) {
     if (destroyed) throw error('SDK_DESTROYED', 'This Common mount has been destroyed. Create a new mount before using it.');
-    ensureLoaded();
-    const entry = current;
-    await Promise.race([entry.ready.promise, entry.cancel.promise]);
-    if (destroyed || current !== entry) throw error('SDK_FRAME_RELOADED', 'Common reloaded before this operation completed. Try again when it is ready.');
-    let childArgs;
+    const signal = options?.signal;
+    if (signal && (typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function')) throw error('SDK_INVALID_OPTIONS', 'Common agent signal must be an AbortSignal.');
+    if (signal?.aborted) throw error('SDK_CANCELLED', 'The Common operation was cancelled.');
+    const cancelled = deferred(), execution = new AbortControllerClass();
+    const abort = () => { execution.abort(); cancelled.reject(error('SDK_CANCELLED', 'The Common operation was cancelled.')); };
+    const abortGeneration = () => execution.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    let entry;
     try {
-      // JSON parsing in the child realm preserves its strict plain-object checks.
-      childArgs = args.map(value => {
-        const serialized = JSON.stringify(jsonValue(value));
-        if (serialized.length > 3 * 1024 * 1024) throw new TypeError('Arguments exceed the command size limit.');
-        return entry.window.JSON.parse(serialized);
-      });
-    } catch { return { ok: false, error: { code: 'INVALID_COMMAND', message: 'Use plain JSON agent arguments within the command limits.' } }; }
-    const execution = new AbortControllerClass(); const abort = () => execution.abort();
-    entry.abort.signal.addEventListener('abort', abort, { once: true });
-    options.signal?.addEventListener?.('abort', abort, { once: true });
-    if (options.signal?.aborted || entry.abort.signal.aborted) execution.abort();
-    try {
+      ensureLoaded(); entry = current;
+      entry.abort.signal.addEventListener('abort', abortGeneration, { once: true });
+      if (signal?.aborted) abort();
+      if (entry.abort.signal.aborted) abortGeneration();
+      await Promise.race([entry.ready.promise, entry.cancel.promise, cancelled.promise]);
+      if (destroyed || current !== entry) throw error('SDK_FRAME_RELOADED', 'Common reloaded before this operation completed. Try again when it is ready.');
+      let childArgs;
+      try {
+        // JSON parsing in the child realm preserves its strict plain-object checks.
+        childArgs = args.map(value => {
+          const serialized = JSON.stringify(jsonValue(value));
+          if (serialized.length > 3 * 1024 * 1024) throw new TypeError('Arguments exceed the command size limit.');
+          return entry.window.JSON.parse(serialized);
+        });
+      } catch { return { ok: false, error: { code: 'INVALID_COMMAND', message: 'Use plain JSON agent arguments within the command limits.' } }; }
       const invocation = Promise.resolve().then(() => {
         if (destroyed || current !== entry || execution.signal.aborted) throw error('SDK_CANCELLED', 'The Common operation was cancelled.');
         return ['execute', 'batch'].includes(method) ? entry.api[method](...childArgs, { signal: execution.signal }) : entry.api[method](...childArgs);
       });
-      const result = await Promise.race([invocation, entry.cancel.promise]);
+      const result = await Promise.race([invocation, entry.cancel.promise, cancelled.promise]);
       if (destroyed || current !== entry) throw error('SDK_FRAME_RELOADED', 'Common reloaded before this operation completed.');
       return JSON.parse(JSON.stringify(result));
     } finally {
-      entry.abort.signal.removeEventListener('abort', abort); options.signal?.removeEventListener?.('abort', abort);
+      entry?.abort.signal.removeEventListener('abort', abortGeneration); signal?.removeEventListener('abort', abort);
     }
   }
   controller = Object.freeze({
@@ -250,7 +264,7 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
   });
   launcher.addEventListener('click', () => controller.toggle()); closeButton.addEventListener('click', () => controller.close());
   shadow.addEventListener('keydown', event => { if (event.key === 'Escape' && isOpen) { event.preventDefault(); event.stopPropagation(); controller.close(); } });
-  stylesheet.onload = () => { if (!destroyed) stylesheetState = 'loaded'; };
+  stylesheet.onload = () => { if (!destroyed) { stylesheetState = 'loaded'; panel.hidden = false; } };
   stylesheet.onerror = () => {
     if (destroyed) return;
     stylesheetState = 'failed';

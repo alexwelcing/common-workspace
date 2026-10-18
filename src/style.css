@@ -103,7 +103,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 #toggle-panel { width: auto; min-height: 32px; padding: 5px 8px; color: #52664a; font-size: 12px; white-space: nowrap; }
 #toggle-panel[aria-expanded='true'] { background: var(--sage); }
 .workspace-area { position: relative; display: flex; flex: 1; min-height: 0; }
-.canvas-wrap { position: relative; flex: 1; min-width: 0; overflow: hidden; container-type: inline-size; background: var(--paper); }
+.canvas-wrap { position: relative; isolation: isolate; flex: 1; min-width: 0; overflow: hidden; container-type: inline-size; background: var(--paper); }
 #board-viewport { position: absolute; inset: 0; overflow: hidden; background-image: radial-gradient(#cfcab9 .7px, transparent .7px); background-size: 20px 20px; }
 #remote-cursors { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .remote-cursor { position: absolute; top: 0; left: 0; z-index: 100; display: flex; align-items: flex-start; transition: transform .08s, opacity .5s; pointer-events: none; }

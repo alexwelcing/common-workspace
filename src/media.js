@@ -1,4 +1,5 @@
 import { canvasNeighbors } from './peer-topology.js';
+import { displayCaptureSupport, displayCaptureFailure, displayCaptureSource } from './browser-permissions.js';
 
 const DEFAULT_ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const ICE_CACHE_MS = 5 * 60_000;
@@ -33,6 +34,7 @@ export class ScreenSharing {
     onStream = () => {},
     onStatus = () => {},
     onStopped = () => {},
+    onCaptureState = () => {},
     onData = () => {},
     onPeerOpen = () => {},
     onPeerClose = () => {},
@@ -46,6 +48,7 @@ export class ScreenSharing {
     this.onStream = onStream;
     this.onStatus = onStatus;
     this.onStopped = onStopped;
+    this.onCaptureState = onCaptureState;
     this.onData = onData;
     this.onPeerOpen = onPeerOpen;
     this.onPeerClose = onPeerClose;
@@ -67,6 +70,7 @@ export class ScreenSharing {
     this._wantedPeers = new Set();
     this._pendingPeers = new Map();
     this._captureVersion = 0;
+    this._captureState = Object.freeze({phase:'idle',requestPending:false,source:null,viewerCount:0,paused:false,code:null,title:'',detail:'',help:[]});
     this._destroyed = false;
     this._lastStatus = '';
     this._lastStatusAt = 0;
@@ -75,6 +79,17 @@ export class ScreenSharing {
   /** Open canvas transport neighbors, excluding media-only connections. */
   get dataPeerIds() {
     return [...this.desiredCanvasPeers].filter((id) => this.peers.get(id)?.dataOpen);
+  }
+
+  getCaptureState() { return this._captureState; }
+
+  _setCaptureState(state) {
+    this._captureState = Object.freeze({...this._captureState,...state,help:Object.freeze([...(state.help ?? this._captureState.help)]),viewerCount:this.viewers.size});
+    try { this.onCaptureState(this._captureState); } catch { /* UI observers must never interrupt capture cleanup. */ }
+  }
+
+  _captureAudienceChanged() {
+    if (this._captureState.viewerCount !== this.viewers.size) this._setCaptureState({});
   }
 
   /** Watch only these screen owners. This never opts the participant into capture. */
@@ -134,12 +149,17 @@ export class ScreenSharing {
   async start() {
     if (this._destroyed) return null;
     if (this._capturePending) return this._capturePending;
-    if (!this.mediaDevices?.getDisplayMedia) {
-      this._status('Screen sharing needs a supported desktop browser over HTTPS or localhost.');
+    if (this.localStream?.getVideoTracks().some(track => track.readyState === 'live')) return this.localStream;
+    const support = displayCaptureSupport({mediaDevices:this.mediaDevices});
+    if (!support.available) {
+      this._setCaptureState({...displayCaptureFailure(null,support),requestPending:false,source:null,paused:false});
       return null;
     }
 
     const version = ++this._captureVersion;
+    this._captureAbandoned = false;
+    this._setCaptureState({phase:'requesting',requestPending:true,source:null,paused:false,code:null,
+      title:'Choose a window in your browser',detail:'Select a tab, window, or screen in the browser picker. Nothing is shared until you confirm.',help:[]});
     // Invoke the browser picker before any asynchronous work consumes user activation.
     let capture;
     try {
@@ -158,24 +178,42 @@ export class ScreenSharing {
         const track = stream.getVideoTracks()[0];
         if (this._destroyed || version !== this._captureVersion || !track) {
           stream.getTracks().forEach((item) => item.stop());
+          if (!this._destroyed && version === this._captureVersion && !track) this._captureError({name:'NotFoundError'});
           return null;
         }
+        // The native picker has settled. Sender negotiation may continue, but
+        // it must not prevent a new choice after the person stops this source.
+        if (this._capturePending === pending) this._capturePending = null;
         this._releaseCapture();
         this.localStream = stream;
         try { track.contentHint = 'detail'; } catch { /* Optional browser hint. */ }
         this._captureEnded = () => {
           if (this.localStream === stream) this._stopLocal(true);
         };
+        this._captureMuted = () => {
+          if (this.localStream === stream) this._setCaptureState({paused:track.muted,source:displayCaptureSource(track)});
+        };
         track.addEventListener('ended', this._captureEnded);
+        track.addEventListener('mute', this._captureMuted);
+        track.addEventListener('unmute', this._captureMuted);
+        this._setCaptureState({phase:'sharing',requestPending:false,source:displayCaptureSource(track),paused:track.muted,code:null,
+          title:'',detail:'',help:[]});
         this.onStream('local', stream);
         await Promise.all([...this.peers.values()].map((peer) => this._updateSender(peer)));
         if (this._destroyed || version !== this._captureVersion || this.localStream !== stream) return null;
         return stream;
       } catch (error) {
-        this._captureError(error);
+        if (version === this._captureVersion) this._captureError(error);
         return null;
       } finally {
-        if (this._capturePending === pending) this._capturePending = null;
+        if (this._capturePending === pending) {
+          this._capturePending = null;
+          if (!this._destroyed && this._captureAbandoned) {
+            this._captureAbandoned = false;
+            this._setCaptureState({phase:'dismissed',requestPending:false,source:null,paused:false,code:null,
+              title:'Nothing shared',detail:'The request was cancelled. Choose a window again whenever you’re ready.',help:[]});
+          }
+        }
       }
     })();
     this._capturePending = pending;
@@ -208,6 +246,7 @@ export class ScreenSharing {
     try {
       if (typeof data.subscribe === 'boolean') {
         if (data.subscribe) this.viewers.add(from); else this.viewers.delete(from);
+        this._captureAudienceChanged();
         await this._reconcileRoles();
       }
       if (!this._wantedPeers.has(from)) return;
@@ -316,6 +355,7 @@ export class ScreenSharing {
       else if (this.members.has(id)) { this.viewers.add(id); this._earlySubscriptions.delete(id); }
     }
     for (const id of this.subscriptions) this._sendSubscription(id, true, reconnect);
+    this._captureAudienceChanged();
     return this._reconcileRoles();
   }
 
@@ -343,27 +383,38 @@ export class ScreenSharing {
 
   _captureError(error) {
     if (this._destroyed) return;
-    const message = error?.name === 'NotAllowedError'
-      ? 'Screen sharing was canceled or blocked by your browser.'
-      : error?.name === 'NotReadableError'
-        ? 'Your browser could not read that window. Check screen recording permissions and try again.'
-        : `Could not share this screen: ${error?.message || 'please try again'}`;
-    this._status(message);
+    this._setCaptureState({...displayCaptureFailure(error,displayCaptureSupport({mediaDevices:this.mediaDevices})),
+      requestPending:false,source:null,paused:false});
   }
 
   _releaseCapture() {
     if (!this.localStream) return;
     for (const track of this.localStream.getTracks()) {
       if (this._captureEnded) track.removeEventListener('ended', this._captureEnded);
+      if (this._captureMuted) {
+        track.removeEventListener('mute',this._captureMuted);
+        track.removeEventListener('unmute',this._captureMuted);
+      }
       track.stop();
     }
     this._captureEnded = null;
+    this._captureMuted = null;
     this.localStream = null;
   }
 
   _stopLocal(notifyStopped) {
     const wasSharing = Boolean(this.localStream);
     this._releaseCapture();
+    if (!this._destroyed) {
+      // getDisplayMedia cannot be aborted. Keep the pending marker until its
+      // picker settles, and stop every track if an abandoned choice arrives.
+      if (this._capturePending && this._captureState.requestPending) {
+        this._captureAbandoned = true;
+        this._setCaptureState({phase:'abandoning',requestPending:true,source:null,paused:false,code:null,
+          title:'Close the browser picker',detail:'This request is cancelled here. Close or cancel the browser picker before choosing again. Any late choice will be stopped.',help:[]});
+      } else if (wasSharing) this._setCaptureState({phase:'stopped',requestPending:false,source:null,paused:false,code:null,
+        title:'Sharing stopped',detail:'Your window is no longer shared. You can choose another whenever you’re ready.',help:[]});
+    }
     if (wasSharing) this.onStream('local', null);
     const updates = Promise.all([...this.peers.values()].map((peer) => this._updateSender(peer)));
     if (wasSharing && notifyStopped) this.onStopped();

@@ -9,8 +9,8 @@ When Common is embedded, its controls and `window.commonAgent` live inside the s
 ## Begin in the user's tab
 
 1. Join the user's room through the normal link and password flow, or use the personal canvas. Do not copy session tokens or passwords into commands, generated images, or walkthrough text.
-2. Open **Agent tools**. **Inspect canvas** shows safe connection and enablement status before agent control is enabled.
-3. For authorized use, select **Agent permissions** and **Access duration**, then choose **Apply permissions** or enable **Enable agent control**. The default grants reading and editing for 15 minutes; capture and recording are separate choices. Grants last at most 60 minutes and end on reload, disconnection, or session change. The API cannot grant itself access.
+2. Open **Agent tools**. **Connection status** shows safe status before access is allowed; the same button becomes **Inspect canvas** afterward.
+3. For authorized use, select **Agent permissions** and **Access duration**, then choose **Allow selected access**. Changing a preset or checkbox only stages a choice; **Update access** applies later changes. The default grants reading and editing for 15 minutes; capture and recording are separate choices. Grants last at most 60 minutes and end on reload, disconnection, or session change. The API cannot grant itself access.
 4. Choose **Inspect canvas** to read object IDs, content, geometry, and layer information. Inline image data is omitted by default. Enter a JSON command, or an array of commands, in **Agent command**, choose **Run command**, and read the result. Check `ok` and use returned object IDs for later changes. An array is not an atomic transaction; inspect results before retrying.
 
 Stable interface selectors:
@@ -18,12 +18,11 @@ Stable interface selectors:
 | Control | Selector |
 | --- | --- |
 | Agent tools button | `[aria-label="Agent tools"]` |
-| Enable editing | `#agent-enable` |
 | Read / edit permissions | `#agent-grant-inspect` / `#agent-grant-canvas-write` |
 | Capture / recording permissions | `#agent-grant-media-capture` / `#agent-grant-recording` |
 | Access duration | `#agent-grant-duration` |
-| Apply / revoke access | `#agent-grant-apply` / `#agent-grant-revoke` |
-| Inspect canvas | `#agent-inspect` |
+| Allow, update / revoke access | `#agent-grant-apply` / `#agent-grant-revoke` |
+| Connection status / inspect canvas | `#agent-inspect` |
 | JSON input | `#agent-command` |
 | Execute input | `#agent-run` |
 | Result | `#agent-result` |

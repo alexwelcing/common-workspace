@@ -1,6 +1,7 @@
 node_modules/
 dist/
 module-dist/
+.common-module-*/
 *.tgz
 data/
 .env

@@ -13,7 +13,8 @@ try {
   process.env.VITE_SESSION_TRANSPORT = 'websocket';
   process.env.COMMON_SESSION_TRANSPORT = 'websocket';
   await writeAgentManifest();
-  await import('./build-wasm.mjs');
+  const { buildGeometry } = await import('./build-wasm.mjs');
+  await buildGeometry();
   const backend = services.spawn(process.execPath, ['server.mjs'], {
     cwd: projectRoot, stdio: 'inherit', env: standaloneEnv(process.env, { PORT: String(apiPort), HOST: host }),
   }, 'Backend');

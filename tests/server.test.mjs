@@ -181,7 +181,7 @@ test('standalone storage failures log only fixed categories and safe codes', asy
   console.error = (...values) => logs.push(values.join(' '));
   try {
     const result = await f.create('PRIVATE_CANVAS_ROOM');
-    assert.equal(result.status, 500);
+    assert.equal(result.status, 503);
     assert.ok(logs.length > 0);
     for (const line of logs) assert.match(line, /^(Session persistence failed:|Common request failed:) [A-Z0-9_]{1,40}$/);
     for (const secret of [f.directory, 'PRIVATE_CANVAS_ROOM', PASSWORD, 'Error:', ' at ']) assert.equal(logs.join('').includes(secret), false);

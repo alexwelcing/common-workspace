@@ -1,0 +1,30 @@
+.sharing-strip { display:flex; flex:none; align-items:flex-start; gap:11px; margin:0 28px 14px; padding:12px 14px; border:1px solid #d8e2cf; border-radius:12px; background:#f0f4e9; color:var(--ink); font-size:12px; line-height:1.55; }
+.sharing-strip-mark { display:grid; place-items:center; flex:none; width:28px; height:28px; border-radius:10px 10px 10px 3px; background:#e0e9d5; color:#52704b; }
+.sharing-strip-body { min-width:0; flex:1; }
+.sharing-strip-copy { display:grid; gap:1px; }
+.sharing-strip-copy strong { font-weight:600; color:#36523b; }
+.sharing-strip-copy > span { color:var(--muted); overflow-wrap:anywhere; }
+.sharing-strip-actions { display:flex; align-items:center; flex:none; gap:4px; }
+.sharing-strip-actions .button { min-height:30px; padding:4px 10px; font-size:11px; }
+.sharing-strip-actions .icon-button { width:28px; height:30px; }
+.sharing-help { margin-top:5px; max-width:720px; color:var(--muted); font-size:11px; }
+.sharing-help summary { width:fit-content; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+.sharing-help ul { padding-left:18px; margin:8px 0; }
+.sharing-help li + li { margin-top:5px; }
+.sharing-help a { display:block; width:fit-content; margin-top:7px; color:var(--green); text-decoration:underline; text-underline-offset:3px; }
+.sharing-code { display:block; margin-top:7px; color:var(--muted); font-size:10px; }
+.sharing-strip[data-phase='requesting'] { border-color:#e4d8b1; background:#fcf6e3; }
+.sharing-strip[data-phase='requesting'] .sharing-strip-mark { background:#efe4bd; color:#806c3b; }
+.sharing-strip[data-phase='abandoning'] { background:#f6f3e9; border-color:var(--border); }
+.sharing-strip[data-phase='error'], .sharing-strip[data-phase='blocked'] { background:#faf0e6; border-color:#e8d3bd; }
+.sharing-strip[data-phase='error'] .sharing-strip-mark, .sharing-strip[data-phase='blocked'] .sharing-strip-mark { background:#f0e1cc; color:#876443; }
+.share-button.is-requesting { border-color:#7c6e44; background:#7c6e44; }
+.share-button.is-requesting:hover { border-color:#6c5f38; background:#6c5f38; }
+@media (max-width:1100px) { .sharing-strip { margin-left:23px; margin-right:23px; } }
+@media (max-width:700px) { .sharing-strip { margin:0 18px 10px; gap:8px; padding:10px; } }
+@media (max-width:600px) {
+  .sharing-strip { margin-left:10px; margin-right:10px; flex-wrap:wrap; }
+  .sharing-strip-actions { margin-left:36px; }
+  .sharing-strip-body { flex-basis:calc(100% - 40px); }
+  .sharing-help[open] { max-height:140px; overflow-y:auto; }
+}

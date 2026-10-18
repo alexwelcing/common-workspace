@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { Readable } from 'node:stream';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
@@ -53,16 +53,24 @@ export async function createApp(options = {}) {
       if (!['GET', 'HEAD'].includes(req.method)) throw httpError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
       let requested;
       try { requested = decodeURIComponent(url.pathname); } catch { throw httpError(400, 'INVALID_PATH', 'Invalid path.'); }
+      if (requested.includes('\\') || requested.includes('\0') || requested.split('/').some(segment => segment === '.' || segment === '..')) throw httpError(403, 'FORBIDDEN', 'Invalid path.');
       const filename = path.resolve(staticDir, `.${requested}`);
       if (!filename.startsWith(`${path.resolve(staticDir)}${path.sep}`) && filename !== path.resolve(staticDir)) throw httpError(403, 'FORBIDDEN', 'Invalid path.');
+      async function readStatic(asset) {
+        const root = await realpath(staticDir);
+        const resolved = await realpath(asset);
+        if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) throw httpError(403, 'FORBIDDEN', 'Invalid path.');
+        return readFile(resolved);
+      }
       const extensions = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.wasm': 'application/wasm', '.json': 'application/json', '.woff2': 'font/woff2' };
       let asset = filename;
       let content;
-      try { content = await readFile(asset); }
-      catch {
+      try { content = await readStatic(asset); }
+      catch (error) {
+        if (error.status) throw error;
         if (path.extname(requested) && requested !== '/') throw httpError(404, 'NOT_FOUND', 'File not found.');
         asset = path.join(staticDir, 'index.html');
-        try { content = await readFile(asset); } catch { throw httpError(503, 'NOT_BUILT', 'Build the app first with bun run build, or use bun run dev.'); }
+        try { content = await readStatic(asset); } catch (failure) { if (failure.status) throw failure; throw httpError(503, 'NOT_BUILT', 'Build the app first with bun run build, or use bun run dev.'); }
       }
       res.writeHead(200, { 'Content-Type': extensions[path.extname(asset)] || 'application/octet-stream', 'Cache-Control': asset.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : content);
@@ -103,21 +111,23 @@ export async function createApp(options = {}) {
       socket.destroy();
     }
   });
-  let closed = false;
+  let closing;
   return {
     server,
     async listen(port = Number(envValue('PORT')) || 3001, host = envValue('HOST') || '0.0.0.0') {
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       return server.address();
     },
-    async close() {
-      if (closed) return;
-      closed = true;
-      try { await engine.closeEngine(); }
-      finally {
-        await new Promise(resolve => wss.close(resolve));
-        await new Promise(resolve => server.close(resolve));
-      }
+    close() {
+      if (closing) return closing;
+      closing = (async () => {
+        try { await engine.closeEngine(); }
+        finally {
+          await new Promise(resolve => wss.close(resolve));
+          await new Promise(resolve => server.close(resolve));
+        }
+      })();
+      return closing;
     },
   };
 }
