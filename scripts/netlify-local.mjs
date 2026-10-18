@@ -18,27 +18,58 @@ if (!databaseUrl) throw new Error('Set COMMON_TEST_DATABASE_URL to a disposable 
 
 const schema = `common_local_${randomUUID().replaceAll('-', '')}`;
 const admin = new pg.Pool({ connectionString: databaseUrl, max: 1 });
-await admin.query(`CREATE SCHEMA ${schema}`);
 const pool = new pg.Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 12 });
-let server;
-let closing = false;
-async function close() {
-  if (closing) return;
-  closing = true;
-  if (server) await new Promise(resolve => server.close(resolve));
-  await pool.end();
-  await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
-  await admin.end();
+let server, startup, closing, shutdownSignal;
+let stopping = false;
+const requireStarting = () => {
+  if (stopping) throw new Error('Local Netlify startup was interrupted.');
+};
+function close() {
+  if (closing) return closing;
+  stopping = true;
+  closing = (async () => {
+    // A CREATE or migration already in flight must settle before cleanup can
+    // drop this schema. Startup checks stopping before starting another step.
+    await startup?.catch(() => {});
+    try {
+      if (server) await new Promise(resolve => server.close(resolve));
+    } finally {
+      try { await pool.end(); }
+      finally {
+        // The schema name belongs only to this process. Try the drop even if
+        // CREATE failed after the database may already have committed it.
+        try { await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); }
+        finally { await admin.end(); }
+      }
+    }
+  })();
+  return closing;
 }
 
-try {
+// Register before the first database operation, including CREATE SCHEMA.
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
+  shutdownSignal = signal;
+  void close().then(() => process.exit(0), error => {
+    console.error('Local Netlify harness cleanup failed:', error.message);
+    process.exit(1);
+  });
+});
+
+startup = (async () => {
+  requireStarting();
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  requireStarting();
   const migrationDir = path.join(root, 'netlify/database/migrations');
   for (const filename of (await readdir(migrationDir)).filter(name => name.endsWith('.sql')).sort()) {
-    await pool.query(await readFile(path.join(migrationDir, filename), 'utf8'));
+    const sql = await readFile(path.join(migrationDir, filename), 'utf8');
+    requireStarting();
+    await pool.query(sql);
   }
+  requireStarting();
   const api = createApiHandler({ pool, env: key => process.env[key] });
   const dist = path.join(root, 'dist');
   await stat(path.join(dist, 'index.html'));
+  requireStarting();
   const types = {
     '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8', '.json': 'application/json',
@@ -111,10 +142,13 @@ try {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', resolve);
   });
+  requireStarting();
   console.log(`Local Netlify app: http://127.0.0.1:${server.address().port}`);
-  process.once('SIGINT', () => close().then(() => process.exit(0)));
-  process.once('SIGTERM', () => close().then(() => process.exit(0)));
+})();
+
+try {
+  await startup;
 } catch (error) {
   await close();
-  throw error;
+  if (!shutdownSignal) throw error;
 }

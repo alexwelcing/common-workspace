@@ -15,12 +15,10 @@
     "build:module": "bun scripts/build-module.mjs",
     "pack:module": "bun scripts/pack-module.mjs",
     "start": "bun server.mjs",
-    "lint": "oxlint src sdk lib netlify scripts examples/bun-embed server.mjs vite.config.js",
-    "test": "bun test ./tests/*.test.mjs",
-    "test:local": "bun tests/dev-built-smoke.mjs",
-    "test:browser": "bun tests/browser-smoke.mjs",
-    "test:layers": "bun tests/browser-layers.mjs",
-    "test:netlify-browser": "bun tests/browser-netlify.mjs"
+    "lint": "oxlint src sdk lib netlify scripts examples/bun-embed server.mjs vite.config.js tests/browser-smoke.mjs",
+    "test": "bun scripts/check.mjs",
+    "check": "bun scripts/check.mjs",
+    "check:deep": "bun scripts/check-deep.mjs"
   },
   "dependencies": {
     "@netlify/database": "^2.0.1",
@@ -36,6 +34,7 @@
     "happy-dom": "^21.0.3",
     "oxlint": "^1.88.0",
     "pg": "^8.23.1",
+    "playwright-core": "1.64.1",
     "vite": "^6.3.6",
     "wabt": "^1.0.38"
   },

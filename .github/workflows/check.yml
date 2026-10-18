@@ -2,14 +2,27 @@ name: Check
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Five user journeys, or investigate one area explicitly
+        type: choice
+        default: journeys
+        options: [journeys, canvas, sessions, hosted, media, agents, runtime, all]
 
 permissions:
   contents: read
 
+concurrency:
+  group: check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,25 +37,32 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+    env:
+      COMMON_TEST_DATABASE_URL: postgres://common:common-ci-only@127.0.0.1:5432/common_checks
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
-      - run: bun run lint
-      - run: bun run test
+      - name: Five journeys through the Bun and Netlify adapters
+        if: github.event_name != 'workflow_dispatch' || inputs.scope == 'journeys'
+        run: bun run check --all-adapters
         env:
-          COMMON_TEST_DATABASE_URL: postgres://common:common-ci-only@127.0.0.1:5432/common_checks
-      - name: Build hosted frontend
-        run: bun run build
+          # GitHub's Ubuntu image includes Chrome; use it without a download.
+          CHROMIUM_PATH: /usr/bin/google-chrome
+      - name: Investigate the selected area
+        if: github.event_name == 'workflow_dispatch' && inputs.scope != 'journeys'
         env:
-          VITE_SESSION_TRANSPORT: polling
-      - name: Check generated agent manifest
-        run: git diff --exit-code -- public/agent-tools.json
-      - name: Build standalone frontend with inherited hosted setting
-        run: bun run build:local
-        env:
-          VITE_SESSION_TRANSPORT: polling
-      - name: Smoke test standalone assets and WebSocket rooms
-        run: bun run test:local
+          COMMON_CHECK_SCOPE: ${{ inputs.scope }}
+        run: |
+          bun run lint
+          bun run check:deep "$COMMON_CHECK_SCOPE"
+      - name: Keep readable failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-failure-${{ github.run_id }}
+          path: artifacts/check/
+          retention-days: 7
+          if-no-files-found: ignore
