@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { normalizeRoomCreation, normalizeJoin, normalizeSignal, normalizeChat, normalizeCursor, normalizeEnvelope, protocolCapabilities } from '../../lib/session-protocol.mjs';
+import { workshopChecklist, workshopSnapshot, workshopUpdate } from '../../lib/session-workshop.mjs';
 import { stunServersFromEnv, iceTransportPolicyFromEnv } from '../../lib/runtime-config.mjs';
 
 const scrypt = promisify(scryptCallback);
@@ -17,7 +18,8 @@ const roomMissing = () => error(404, 'ROOM_NOT_FOUND', 'This session has ended o
 const sessionExpired = () => error(401, 'SESSION_EXPIRED', 'Please enter the room password again.');
 const resync = () => error(409, 'RESYNC_REQUIRED', 'Reconnect to refresh the session.');
 const publicRoom = room => ({ id: room.id, name: room.name, createdAt: timestamp(room.created_at), collaboration: 'peer', transport: 'poll' });
-const publicMember = member => ({ id: member.id, name: member.name, color: member.color, isAdmin: member.is_admin });
+const publicMember = (member, room) => ({ id: member.id, name: member.name, color: member.color, isAdmin: member.is_admin, ...(room.workshop ? { checklist: workshopChecklist(room.workshop, member.checklist) } : {}) });
+const guidedState = room => room.workshop ? { workshop: workshopSnapshot(room.workshop) } : {};
 const defaultEnv = key => globalThis.Netlify?.env?.get(key) ?? process.env[key];
 
 function json(value, status = 200, headers = {}) {
@@ -36,9 +38,9 @@ const edgeCached = seconds => ({
   'Netlify-CDN-Cache-Control': `public, s-maxage=${seconds}, stale-while-revalidate=${seconds * 4}`,
 });
 
-async function body(request) {
+async function body(request, maxBytes = MAX_BODY) {
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) throw error(415, 'JSON_REQUIRED', 'Send JSON content.');
-  if (Number(request.headers.get('content-length')) > MAX_BODY) throw error(413, 'TOO_LARGE', 'Request is too large.');
+  if (Number(request.headers.get('content-length')) > maxBytes) throw error(413, 'TOO_LARGE', 'Request is too large.');
   const reader = request.body?.getReader();
   const chunks = [];
   let size = 0;
@@ -48,7 +50,7 @@ async function body(request) {
         const chunk = await reader.read();
         if (chunk.done) break;
         size += chunk.value.byteLength;
-        if (size > MAX_BODY) { await reader.cancel(); throw error(413, 'TOO_LARGE', 'Request is too large.'); }
+        if (size > maxBytes) { await reader.cancel(); throw error(413, 'TOO_LARGE', 'Request is too large.'); }
         chunks.push(chunk.value);
       }
     } finally { reader.releaseLock(); }
@@ -144,7 +146,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
       ORDER BY joined_at, id`, [room.id, new Date(time)]);
     let deadline = timestamp(room.expires_at);
     for (const member of rows) deadline = Math.min(deadline, timestamp(member.lease_until), timestamp(member.expires_at));
-    return { participants: rows.filter(member => member.id !== except).map(publicMember), checkAt: new Date(deadline) };
+    return { participants: rows.filter(member => member.id !== except).map(member => publicMember(member, room)), checkAt: new Date(deadline) };
   }
   async function active(client, room, time, except) { return (await roster(client, room, time, except)).participants; }
 
@@ -163,6 +165,16 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     room.roster_version = String(updated.roster_version);
     room.roster_check_at = snapshot.checkAt;
     await append(client, room, { type: 'participants', participants: snapshot.participants, rosterVersion: room.roster_version }, time);
+  }
+
+  async function clearUnavailableFeature(client, room, time) {
+    if (!room.workshop?.featuredParticipantId) return;
+    const { rows } = await client.query(`SELECT id FROM common_members WHERE room_id = $1 AND id = $2
+      AND connection_id IS NOT NULL AND lease_until > $3 AND expires_at > $3`, [room.id, room.workshop.featuredParticipantId, new Date(time)]);
+    if (rows.length) return;
+    room.workshop = { ...room.workshop, featuredParticipantId: null };
+    await client.query('UPDATE common_rooms SET workshop = $2::jsonb WHERE id = $1', [room.id, JSON.stringify(room.workshop)]);
+    await append(client, room, { type: 'workshop', workshop: workshopSnapshot(room.workshop) }, time);
   }
 
   async function refreshRosterDeadline(client, room, time) {
@@ -195,6 +207,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
       WHERE room_id = $1 AND connection_id IS NOT NULL AND (lease_until <= $2 OR expires_at <= $2)
       RETURNING id`, [room.id, new Date(time)]);
     if (expired.rowCount) await presence(client, room, time);
+    await clearUnavailableFeature(client, room, time);
   }
 
   async function addMember(client, room, displayName, isAdmin, time) {
@@ -205,7 +218,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
       (id, room_id, token_hash, name, color, is_admin, expires_at, lease_until, joined_at, rate_start)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
     [member.id, room.id, hash(token), member.name, member.color, isAdmin, new Date(time + sessionTtlMs), new Date(time + reservationMs), new Date(time)]);
-    return { room: publicRoom(room), token, participantId: member.id, isAdmin };
+    return { room: publicRoom(room), token, participantId: member.id, isAdmin, ...guidedState(room) };
   }
 
   async function handle(request, context) {
@@ -249,7 +262,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
 
     if (url.pathname === '/api/rooms' && method === 'POST') {
       await limit(context, 'create', 15, time);
-      const input = normalizeRoomCreation(await body(request));
+      const input = normalizeRoomCreation(await body(request, 64 * 1024));
       const { name: roomName, displayName } = input;
       const salt = randomBytes(16).toString('hex');
       const passwordHash = (await scrypt(input.password, salt, 64)).toString('hex');
@@ -260,9 +273,9 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         if (rateLimits) await client.query('DELETE FROM common_auth_limits WHERE expires_at <= $1', [new Date(time)]);
         const count = await client.query('SELECT COUNT(*)::integer AS count FROM common_rooms');
         if (count.rows[0].count >= 1000) throw error(503, 'CAPACITY', 'This service has reached its session capacity.');
-        const room = { id: randomId(), name: roomName, created_at: new Date(time), expires_at: new Date(time + roomTtlMs) };
-        await client.query(`INSERT INTO common_rooms (id, name, password_hash, password_salt, created_at, expires_at)
-          VALUES ($1, $2, $3, $4, $5, $6)`, [room.id, room.name, passwordHash, salt, room.created_at, room.expires_at]);
+        const room = { id: randomId(), name: roomName, created_at: new Date(time), expires_at: new Date(time + roomTtlMs), workshop: input.workshop ?? null };
+        await client.query(`INSERT INTO common_rooms (id, name, password_hash, password_salt, created_at, expires_at, workshop)
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`, [room.id, room.name, passwordHash, salt, room.created_at, room.expires_at, room.workshop ? JSON.stringify(room.workshop) : null]);
         return addMember(client, room, displayName, true, time);
       });
       return json(result, 201);
@@ -293,7 +306,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     if (method === 'GET' && action === 'session') return json(await transaction(async client => {
       const room = await roomRow(client, id, time);
       const member = await memberRow(client, room, request, time);
-      return { room: publicRoom(room), participantId: member.id, isAdmin: member.is_admin, displayName: member.name };
+      return { room: publicRoom(room), participantId: member.id, isAdmin: member.is_admin, displayName: member.name, ...guidedState(room) };
     }));
 
     if (method === 'POST' && action === 'connect') {
@@ -310,7 +323,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         [member.id, connectionId, new Date(time + leaseMs), new Date(time + sessionTtlMs), new Date(time)]);
         await presence(client, room, time);
         const people = await active(client, room, time);
-        return { init: { type: 'init', room: publicRoom(room), self: publicMember(member), participants: people, entities: [], chat: room.chat }, cursor: String(room.event_seq), connectionId,
+        return { init: { type: 'init', capabilities: protocolCapabilities('poll'), room: publicRoom(room), self: publicMember(member, room), ...guidedState(room), participants: people, entities: [], chat: room.chat }, cursor: String(room.event_seq), connectionId,
           rosterVersion: String(room.roster_version), capabilities: { ...protocolCapabilities('poll'), targetedEvents: true, signalIdempotency: true } };
       }));
     }
@@ -374,7 +387,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         // A catch-up page can contain older presence snapshots. Restore the
         // current roster after delivering those snapshots even if its version was
         // already supplied on a previous partial page.
-        const historicalRoster = events.some(event => event.message.type === 'participants' && String(event.message.rosterVersion) !== version);
+        const historicalRoster = events.some(event => ['participants', 'checklist'].includes(event.message.type) && String(event.message.rosterVersion) !== version);
         const unchanged = url.searchParams.get('rosterVersion') === version && !historicalRoster;
         return { events, cursor, hasMore, rosterVersion: version, ...(!unchanged ? { participants: await active(client, room, now()) } : {}) };
       }));
@@ -389,6 +402,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         if (action === 'leave' || input.type === 'leave') {
           await client.query('DELETE FROM common_members WHERE id = $1', [member.id]);
           await presence(client, room, time);
+          await clearUnavailableFeature(client, room, time);
           return { ok: true };
         }
         const bytes = Buffer.byteLength(JSON.stringify(input));
@@ -425,6 +439,31 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
           if (!target.rows.length) throw error(400, 'INVALID_SIGNAL', 'Signal recipient is unavailable.');
           await append(client, room, { type: 'signal', from: member.id, data: input.data }, time, { target: input.to,
             sender: member.id, connection: member.connection_id, requestId: input.requestId ?? null, requestHash });
+        } else if (input.type === 'workshop') {
+          // Lock only the actor and relevant claimants/feature target. These locks
+          // fence polling lease renewals without blocking every connected member.
+          const targetId = input.action === 'feature' && typeof input.participantId === 'string' ? input.participantId : null;
+          const slotId = input.action === 'claim' && typeof input.slotId === 'string' ? input.slotId : null;
+          const { rows } = await client.query(`SELECT id, checklist, connection_id, lease_until, expires_at
+            FROM common_members WHERE room_id = $1 AND (id = $2 OR id = $3 OR checklist->>'slotId' = $4)
+            ORDER BY id FOR UPDATE`, [room.id, member.id, targetId, slotId]);
+          const observedAt = now();
+          const people = rows.map(person => ({ id: person.id, checklist: person.checklist,
+            active: Boolean(person.connection_id) && timestamp(person.lease_until) > observedAt && timestamp(person.expires_at) > observedAt }));
+          const changes = workshopUpdate(room.workshop, people, { id: member.id, isAdmin: member.is_admin }, input);
+          if (changes.workshop) {
+            room.workshop = changes.workshop;
+            await client.query('UPDATE common_rooms SET workshop = $2::jsonb WHERE id = $1', [room.id, JSON.stringify(room.workshop)]);
+            await append(client, room, { type: 'workshop', workshop: workshopSnapshot(room.workshop) }, observedAt);
+          }
+          if (changes.members.length) {
+            const { rows: [updated] } = await client.query('UPDATE common_rooms SET roster_version = roster_version + 1 WHERE id = $1 RETURNING roster_version', [room.id]);
+            room.roster_version = String(updated.roster_version);
+            for (const change of changes.members) {
+              await client.query('UPDATE common_members SET checklist = $2::jsonb WHERE room_id = $1 AND id = $3', [room.id, JSON.stringify(change.checklist), change.id]);
+              await append(client, room, { type: 'checklist', id: change.id, checklist: change.checklist, rosterVersion: room.roster_version }, observedAt);
+            }
+          }
         } else if (input.type === 'cursor') {
           normalizeCursor(input);
           await append(client, room, { type: 'cursor', participantId: member.id, x: input.x, y: input.y }, time, { except: member.id });

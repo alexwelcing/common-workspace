@@ -9,7 +9,7 @@ This module is being developed on `feature/embeddable-common`. It has not been d
 An administrator can provide the built package directly. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.1.0-embed.3.tgz
+bun add /absolute/path/common-workspace-0.1.0-embed.4.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.1.0-embed.3.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This builds the package and writes `artifacts/common-workspace-0.1.0-embed.4.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
 
 The runnable host example is included in the package. After installing, try it directly from your Bun project:
 
@@ -190,6 +190,14 @@ The private profile uses bundled fonts and does not select public STUN or PlantU
 One service instance owns one process's room state. Mounting it on multiple unrelated application replicas does not synchronize those stores. Keep a single owner for a room, or design shared admission, signaling, and presence before spreading requests across replicas. Canvas traffic uses a bounded-neighbor peer network, but every participant still holds the canvas document, and a presenter uploads video separately to each viewer. There is no promised room size or unlimited video audience.
 
 Call `close()` during your application's shutdown to stop Common-owned sockets and state. It leaves your host listener under your control. Remove the browser mount when its host view is destroyed, so captures and connections do not survive an abandoned panel.
+
+## Guided sessions
+
+Create a room with a template inside the Common frame to enable the Session guide, optional expected-name list, personal checklists, and host-controlled featured window. Team walkthrough, Weekly check-in, and Design review seed the new canvas with prompts. Open canvas retains the freeform experience.
+
+The host's first approved window is featured automatically; Feature and Next window choose later presenters. Each browser can follow or explore independently. Following updates a local view, keeps chat/caret focus, and respects paused video. It neither grants screen capture nor changes shared geometry. Each person must approve their own share through the browser picker. A shared canvas recording includes the focused view when following.
+
+Guided metadata uses the same server instance as admission and chat. It adds no external service dependency to the Bun module. With an explicit dataFile, room plans and checklist state are included in that file; with the default in-memory service they end on restart. Reloading/reconnecting obtains the current plan, progress, and featured participant from the server, while canvas/video still require connected peers. Planned-name claims are self-selected room labels, not verified accounts or an admission limit. Only the authenticated host can feature a person, and participants can update only their own checklist. Current browser agent command schemas are unchanged.
 
 ## Check it in your tool
 

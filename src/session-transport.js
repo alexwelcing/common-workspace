@@ -100,6 +100,11 @@ export class PollingSessionTransport {
       if (message.type === 'participants') {
         this._participants = JSON.stringify(message.participants || []);
         if (message.rosterVersion !== undefined) this._rosterVersion = String(message.rosterVersion);
+      } else if (message.type === 'checklist') {
+        // Reflect every delivered delta in the dedupe cache. A historical page
+        // can then be corrected by the server's current canonical roster.
+        const people = JSON.parse(this._participants || '[]');
+        this._participants = JSON.stringify(people.map(person => person.id === message.id ? { ...person, checklist: message.checklist } : person));
       }
       this._emit('message', { data: JSON.stringify(message) });
       if (message.type === 'ended') this._finish(1000, 'Session ended');
@@ -201,7 +206,7 @@ export class PollingSessionTransport {
       catch (error) {
         // A departed signal recipient or a rejected activity is a message
         // error, matching the WebSocket server. Keep the other peers alive.
-        if ([400, 403, 422, 429].includes(error.status) || error.code === 'PEER_CANVAS') this._message({ type: 'error', error: error.message, code: error.code });
+        if ([400, 403, 422, 429].includes(error.status) || ['PEER_CANVAS', 'NO_WORKSHOP', 'WORKSHOP_SLOT_TAKEN', 'WORKSHOP_MEMBER_UNAVAILABLE'].includes(error.code)) this._message({ type: 'error', error: error.message, code: error.code });
         else this._errorClose(error);
       }
     }).finally(() => { this._queued--; this._queueTimes.shift(); this._diagnose(); });

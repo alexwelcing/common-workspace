@@ -115,7 +115,8 @@ export class Board {
     this.backButton = button('Back to canvas (Esc)', 'backToCanvas', () => this.exitFocus());
     this.backButton.classList.add('board-focus-back'); this.backButton.append(element('span', '', 'Back to canvas'));
     const focusDetail = element('div', 'board-focus-detail'); this.focusTitle = element('strong');
-    focusDetail.append(this.focusTitle, element('span', '', 'Only your view · Shared layout stays the same'));
+    this.focusHint = element('span', '', 'Only your view · Shared layout stays the same');
+    focusDetail.append(this.focusTitle, this.focusHint);
     this.focusActions = element('div', 'board-focus-actions');
     this.focusBar.append(this.backButton, focusDetail, this.focusActions); this.el.append(this.focusBar);
     this.layersControl = element('div', 'board-layers-control');
@@ -382,19 +383,21 @@ export class Board {
     this.updateView(); return true;
   }
   /** Reading view: no geometry writes, capture requests, or subscription changes. */
-  focusEntity(id = this.selectedId) {
+  focusEntity(id = this.selectedId, { hint = null, focusControls = true } = {}) {
     const entity = this.entities.get(id); if (!entity || this.gesture || this.editingId) return false;
+    this.focusHintText = hint;
     if (!this.focusedId) this.previousFocusView = this.getView();
     this.focusedId = id; this.tool = 'select'; this.el.dataset.tool = 'select'; this.onToolChange('select');
     this.select(id); this.layersPanel.hidden = true; this.layersToggle.setAttribute('aria-expanded', 'false');
     this.el.classList.add('board-is-focused');
     for (const [entityId, node] of this.nodes) node.classList.toggle('is-focused', entityId === id);
     this.focusBar.hidden = false; this.updateFocusBar();
-    this.fitFocusedEntity(); this.backButton.focus({ preventScroll: true }); return true;
+    this.fitFocusedEntity(); if (focusControls) this.backButton.focus({ preventScroll: true }); return true;
   }
   focusSelected() { return this.focusEntity(this.selectedId); }
   updateFocusBar() {
     const entity = this.entities.get(this.focusedId); if (!entity) return;
+    this.focusHint.textContent = this.focusHintText || 'Only your view · Shared layout stays the same';
     this.focusTitle.textContent = entity.title || (entity.type === 'screen' ? 'Shared window' : 'Focused object');
     const view = entity.type === 'screen' ? this.screenView(entity) : null;
     const next = JSON.stringify([entity.id, view]); if (next === this.focusActionsSignature) return;
@@ -412,7 +415,7 @@ export class Board {
     this.pan = { x: this.el.clientWidth / 2 - (entity.x + entity.width / 2) * this.zoom, y: top + height / 2 - (entity.y + entity.height / 2) * this.zoom };
     this.updateView();
   }
-  exitFocus({ restoreFocus = true } = {}) {
+  exitFocus({ restoreFocus = this.el.contains(document.activeElement) } = {}) {
     if (!this.focusedId) return false;
     const previous = this.previousFocusView; this.focusedId = null; this.previousFocusView = null;
     this.el.classList.remove('board-is-focused'); this.focusBar.hidden = true;

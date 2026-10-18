@@ -10,7 +10,7 @@ WebAssembly runs the canvas geometry kernel for grid snapping and drawing simpli
 
 The `feature/embeddable-common` branch adds a portable module for an inline canvas panel or a floating workspace inside your own application. This module has not been deployed to the production Common site. `createCommon` from `common-workspace/bun` attaches to your existing fetch/WebSocket server; `mountCommon` from `common-workspace/client` loads the interface in a same-origin iframe. It opens no additional port, needs no UI framework, and defaults to private networking and in-memory rooms. Your authentication can protect the mount, while Common room passwords and visible agent grants still apply.
 
-Install an administrator-provided package with `bun add /absolute/path/common-workspace-0.1.0-embed.3.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
+Install an administrator-provided package with `bun add /absolute/path/common-workspace-0.1.0-embed.4.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
 
 The package includes the example: run `bun node_modules/common-workspace/example/server.mjs` in a project where you installed it, then open `http://127.0.0.1:3100`.
 
@@ -88,6 +88,17 @@ Configure a production TURN relay under **Project configuration → Environment 
 After the first deploy, open the HTTPS site in two separate browser profiles, create a room, join its invite link, and check shared objects, chat, each person's window capture, and Watch/Pause controls. Verify the operating system picker and the networks and devices your team actually uses before wider use. The absence of a participant cap does not establish a supported room size or video audience.
 
 For local Netlify development, authenticate the Netlify CLI, link the project, run `bun run dev:netlify`, then apply local migrations in a second terminal with `bunx netlify-cli@26.0.0 database migrations apply`. Netlify applies the committed migrations automatically on hosted deploys. The regular `bun run dev` uses the standalone Bun/WebSocket backend.
+
+## Guided team sessions
+
+Choose **Team walkthrough**, **Weekly check-in**, or **Design review** when creating a session. Each preset starts a canvas with prompts and a **Session guide**. Add expected names and edit the checklist before starting, or choose **Open canvas** for a freeform room.
+
+1. The host shares the session link and password, then approves their main window with **Share a window**. The first host window is featured automatically.
+2. Each person joins, chooses their name in the plan (or joins as an additional participant), approves their own window, and completes their checklist. The host sees waiting names, joined people, shared-window status, and progress.
+3. The host chooses **Feature** beside a person or **Next window** to rotate through sharing teammates in planned order. **Feature my window** returns to the main presentation.
+4. **Follow featured** shows the host's selection in this browser. **Explore canvas** or Back/Escape leaves that view so you can write and draw. Following never starts screen capture or resumes a window you paused; **Resume watching** does that explicitly.
+
+The planning list is not an identity check or invitation restriction. Everyone still needs the room link and password. Checkboxes belong to the signed-in room participant; only the host can choose the shared featured person. The planning list is bounded to 200 names and the checklist to 12 items to keep setup manageable; additional people can still join. Session metadata and checklist state use the existing room service and expire with the room. Canvas content remains ephemeral and lives in the participating browsers. The app does not send invitations for you.
 
 ## Sharing and collaboration
 

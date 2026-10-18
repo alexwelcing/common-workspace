@@ -17,6 +17,10 @@ import {DiagnosticLog, buildDiagnosticReport} from './diagnostics.js';
 import {appBasePath, appPath, appURL, appWebSocketURL, appRoute, appStorageKey} from './app-path.js';
 import {prepareImage, clipboardImages, MAX_IMAGE_BATCH} from './image-import.js';
 import {ModalController} from './modal-controller.js';
+import {SessionGuide} from './session-guide.js';
+import {FeaturedSession} from './featured-session.js';
+import {renderSessionTemplates,bindSessionTemplates,readWorkshop,templateCanvas} from './session-templates.js';
+import './session-templates.css';
 
 const diagnostics=new DiagnosticLog();
 async function refreshRuntimeConfiguration(){
@@ -38,6 +42,7 @@ let shared=null, peerCanvas=null, receivingCanvas=false;
 let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null, sharingControls=null;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
 let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor='#305e48', chatPanel=null;
+let workshop=null,sessionGuide=null,featuredSession=null;
 const screenSubscriptions=new ScreenSubscriptions();
 let subscriptionTimer, disposed=false, embedVisible=true, sessionGeneration=0, roomLookupGeneration=0, modalRevision=0, destroyPromise=null, disconnectExports=null, initialFitNeeded=false;
 const mainEvents=new AbortController(), appTimers=new Set(), appFrames=new Set(), activeRequests=new Set(), objectUrls=new Set(), embedListeners=new Set(), visibilityListeners=new Set();
@@ -71,7 +76,7 @@ function destroyCommon(){
   if(socket){socket.onmessage=null;socket.onclose=null;socket.onerror=null;socket.close()}
   visibilityListeners.clear();
   media?.destroy();for(const track of localStream?.getTracks?.()||[])track.stop();localStream=null;
-  sharingControls?.destroy();chatPanel?.destroy();
+  sharingControls?.destroy();chatPanel?.destroy();sessionGuide?.destroy();featuredSession?.destroy();
   peerCanvas?.destroy();shared?.destroy();board?.destroy();
   for(const url of objectUrls)URL.revokeObjectURL(url);objectUrls.clear();
   closeModal();$('#toasts').replaceChildren();$('#app').inert=true;
@@ -108,7 +113,7 @@ function savedAuth(id){
   if(saved&&saved.room?.id===id&&typeof saved.room.name==='string'&&typeof saved.token==='string'&&saved.token&&typeof saved.participantId==='string'&&saved.participantId)return saved;
   writeStored('sessionStorage',authStorageKey(id),null);return null;
 }
-const saveAuth=value=>writeStored('sessionStorage',authStorageKey(value.room.id),JSON.stringify(value));
+const saveAuth=value=>{const {workshop:_plan,...access}=value;return writeStored('sessionStorage',authStorageKey(value.room.id),JSON.stringify(access))};
 const forgetAuth=id=>writeStored('sessionStorage',authStorageKey(id),null);
 const savedRooms=()=>{
   const data=readStoredJSON('localStorage',appStorageKey('common.rooms'));
@@ -152,6 +157,7 @@ $('#app').innerHTML=`
 <main class="main">
  <header class="topbar"><div class="session-heading"><span class="eyebrow" id="session-kind">PERSONAL</span><div class="title-row"><h1 id="room-title">Your canvas</h1><button class="icon-button" id="room-menu" aria-label="Canvas options">${icon('Ellipsis',21)}</button></div><p id="room-subtitle">Notes, diagrams, and shared windows.</p></div><div class="top-actions"><span class="privacy-label">${icon('LockKeyhole',13)} <span id="privacy-status">Only you</span></span><button class="button invite-button" id="invite" aria-label="Invite people">${icon('UserPlus',16)} Invite people</button><button class="primary share-button" id="share-screen" aria-label="Share a window" aria-pressed="false">${icon('MonitorUp',17)} Share a window</button></div></header>
  <div class="canvas-bar"><div class="canvas-heading"><span class="canvas-label">Canvas</span><div class="canvas-history" role="toolbar" aria-label="Your canvas history"><button class="icon-button" id="undo-canvas" aria-label="Undo your last canvas change" aria-keyshortcuts="Control+Z Meta+Z" title="Undo (Ctrl/⌘ Z)" disabled>${icon('Undo2',17)}</button><button class="icon-button" id="redo-canvas" aria-label="Redo your last canvas change" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y" title="Redo (Ctrl/⌘ Shift Z)" disabled>${icon('Redo2',17)}</button></div></div><div class="canvas-status"><span id="connection-status">${icon('CloudUpload',15)} Saved on this device</span><div class="presence" id="header-presence"><span class="avatar avatar-small" aria-hidden="true">Y</span><span id="member-count">Only you</span></div><button class="button panel-toggle" id="toggle-panel" aria-label="People and chat" aria-expanded="false" aria-controls="right-panel">${icon('PanelRight',17)}<span>People &amp; chat</span></button></div></div>
+ <div id="session-guide-root"></div>
  <section class="workspace-area">
  <div class="canvas-wrap"><div id="board-viewport" aria-label="Collaborative canvas"></div><div id="remote-cursors"></div>
  <div class="canvas-top-hint"><span class="hint-icon">${icon('MousePointer2',13)}</span><span id="canvas-hint">Drag to move · Enter to edit · Paste a screenshot</span></div>
@@ -180,10 +186,24 @@ board=new Board({
   onLockChange:(id,locked)=>shared?.patch(id,{locked}),
   onCursor:({x,y})=>{if(!sandbox&&connected)send({type:'cursor',x,y})},
   onSelect:()=>{agentTools?.refresh();scheduleScreenSubscriptions()},
-  onWatchScreen:id=>{screenSubscriptions.toggle(id);syncScreenSubscriptions()},
+  onWatchScreen:id=>{screenSubscriptions.toggle(id);syncScreenSubscriptions();refreshSessionGuide()},
   onStatus:toast,onToolChange:next=>chooseTool(next),
-  onViewChange:view=>{$('#zoom-label').textContent=Math.round(view.zoom*100)+'%';scheduleScreenSubscriptions()}
+  onViewChange:view=>{if(disposed)return;$('#zoom-label').textContent=Math.round(view.zoom*100)+'%';featuredSession?.viewChanged();scheduleScreenSubscriptions()}
 });
+featuredSession=new FeaturedSession({board,onChange:()=>{sessionGuide?.update();scheduleScreenSubscriptions()},onStatus:toast});
+sessionGuide=new SessionGuide({el:$('#session-guide-root'),getContext:guideContext,
+  onShare:()=>$('#share-screen').click(),onSend:message=>{const sent=send(message);if(sent&&message.action==='feature')sessionGuide?.setOpen(false);return sent},
+  onFollowChange:following=>featuredSession.setFollowing(following),
+  onWatchFeatured:()=>{const id=workshop?.featuredParticipantId;if(id&&screenSubscriptions.paused.has(id)){screenSubscriptions.toggle(id);syncScreenSubscriptions();refreshSessionGuide()}},onStatus:toast
+});
+function guideScreens(){const active=new Set(participants.map(person=>person.id));return shared?.all().filter(entity=>entity.type==='screen'&&active.has(entity.participantId))||[]}
+function guideContext(){return {workshop,participants,screens:guideScreens(),participantId:auth?.participantId,isAdmin:!!auth?.isAdmin,connected:!sandbox&&connected,following:featuredSession?.following!==false,featuredStatus:featuredSession?.status(),featuredPaused:screenSubscriptions.paused.has(workshop?.featuredParticipantId),sharePending:media?.getCaptureState().requestPending}}
+function refreshSessionGuide(){
+  if(disposed)return;
+  if(!sandbox&&workshop)$('#room-subtitle').textContent='Follow the Session guide, share a window, and take a turn.';
+  featuredSession?.update({workshop,connected:!sandbox&&connected,screens:guideScreens(),participants,participantId:auth?.participantId,paused:screenSubscriptions.paused.has(workshop?.featuredParticipantId)});
+  sessionGuide?.update();
+}
 function positionCanvasOverlays(){
   if(disposed)return;
   const toolbar=$('.canvas-toolbar').getBoundingClientRect();
@@ -202,7 +222,7 @@ function syncScreenSubscriptions(){
   const screens=shared.all().filter(entity=>entity.type==='screen'&&(sandbox||active.has(entity.participantId)));
   const ids=screenSubscriptions.plan(screens,{participantId:ownParticipantId(),selectedId:board.selectedId,focusedId:board.focusedId,view:board.getView(),width:el.clientWidth,height:el.clientHeight,hidden:document.hidden||!embedVisible||(!sandbox&&!connected)});
   board.setScreenSubscriptions(ids,ownParticipantId());
-  media.setSubscriptions(ids);
+  media.setSubscriptions(ids);sessionGuide?.update();
 }
 document.addEventListener('visibilitychange',()=>{syncScreenSubscriptions();publishEmbedState()},{signal:mainEvents.signal});
 window.addEventListener('resize',scheduleScreenSubscriptions,{signal:mainEvents.signal});
@@ -217,11 +237,11 @@ function makeCanvasModel(){
   shared=new SharedCanvas({
     onChange:entity=>{
       board.upsert(entity);board.setLayerOrder(shared.getOrder());
-      if(entity.type==='screen')scheduleScreenSubscriptions();
+      if(entity.type==='screen'){scheduleScreenSubscriptions();refreshSessionGuide()}
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'upsert',entity});
     },
     onDelete:id=>{
-      board.remove(id);board.setLayerOrder(shared.getOrder());stopDeletedLocalScreen();
+      if(featuredSession)featuredSession.duringModelUpdate(()=>board.remove(id));else board.remove(id);board.setLayerOrder(shared.getOrder());stopDeletedLocalScreen();refreshSessionGuide();
       scheduleScreenSubscriptions();
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'delete',id});
     },
@@ -303,7 +323,19 @@ function renderPeople(){ensureConversation();if(rightPanel!=='people')return;con
 function renderChat(){ensureConversation().setContext({sandbox,connected,participantId:auth?.participantId});chatPanel.setMessages(chat)}
 function updatePresence(){const count=sandbox?1:participants.length;$('#member-count').textContent=sandbox?'Only you':`${count} ${count===1?'person':'people'}`;$('#people-number').textContent=count;const avatar=$('#header-presence .avatar');avatar.textContent=auth?.displayName?.slice(0,1)||'Y';renderPanel();sharingControls?.updateContext()}
 function renderRecent(){$('.recent-count').textContent=savedRooms().length;$('#recent-rooms').innerHTML=savedRooms().length?savedRooms().slice(0,4).map(r=>`<a class="recent-room" href="${esc(appPath('/room/'+encodeURIComponent(r.id)))}"><span class="room-dot"></span><span>${esc(r.name)}</span>${icon('ArrowUpRight',12)}</a>`).join(''):'<p class="no-recent">No recent sessions</p>'}
-function createModal(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Plus',25)}</span><h2 id="modal-title">Create a session</h2><p>Start a private session and invite your teammates.</p><form id="create-form"><label>Session name<input name="name" placeholder="e.g. Weekly product review" maxlength="60" required value="Team workspace"></label><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" required autocomplete="given-name"></label><label>Room password<span class="field-help">Share this with your team separately.</span><input name="password" type="password" minlength="8" maxlength="128" placeholder="At least 8 characters" required autocomplete="new-password"></label><button class="primary modal-submit">Create session ${icon('ArrowRight',17)}</button><small class="form-footnote">${icon('LockKeyhole',12)} Link and password required to join.</small></form>`,async e=>{e.preventDefault();const form=e.target,current=dialogOperation(form);const b=form.querySelector('button');b.disabled=true;b.textContent='Creating…';try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms',{...vals,collaboration:'peer'});if(!current())return;result.displayName=vals.displayName;saveAuth(result);saveRoom(result.room);closeModal();await enterRoom(result,true);if(!disposed&&auth===result)inviteModal()}catch(err){if(!current())return;formError(form,err.message);b.disabled=false;b.innerHTML='Create session '+icon('ArrowRight',17)}})}
+function createModal(){
+  if(disposed)return;
+  modal(`<span class="modal-symbol">${icon('Plus',25)}</span><h2 id="modal-title">Create a session</h2><p>Give your team a place to begin.</p><form id="create-form"><label>Session name<input name="name" placeholder="e.g. Weekly product review" maxlength="60" required value="Team workspace"></label><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" required autocomplete="given-name"></label><label>Room password<span class="field-help">Share this with your team separately.</span><input name="password" type="password" minlength="8" maxlength="128" placeholder="At least 8 characters" required autocomplete="new-password"></label>${renderSessionTemplates()}<button class="primary modal-submit">Create session ${icon('ArrowRight',17)}</button><small class="form-footnote">${icon('LockKeyhole',12)} Link and password required to join.</small></form>`,async e=>{
+    e.preventDefault();const form=e.target,current=dialogOperation(form),button=form.querySelector('button');
+    button.disabled=true;button.textContent='Creating…';
+    try{
+      const values=Object.fromEntries(new FormData(form)),plan=readWorkshop(form);
+      const result=await api('/api/rooms',{name:values.name,displayName:values.displayName,password:values.password,collaboration:'peer',...(plan?{workshop:plan}:{})});
+      if(!current())return;result.displayName=values.displayName;saveAuth(result);saveRoom(result.room);closeModal();await enterRoom(result,true);if(!disposed&&auth===result)inviteModal();
+    }catch(error){if(!current())return;formError(form,error.message);button.disabled=false;button.innerHTML='Create session '+icon('ArrowRight',17)}
+  });
+  bindSessionTemplates($('#create-form'));
+}
 function inviteModal(){if(disposed||!auth)return;const url=appURL('/room/'+encodeURIComponent(auth.room.id));modal(`<span class="modal-symbol">${icon('UserPlus',25)}</span><h2 id="modal-title">Invite your team</h2><p>Anyone with this link and the session password can join. Windows load when you watch them.</p><label class="link-label">SESSION LINK<div class="copy-field"><input id="invite-link" readonly value="${esc(url)}"><button class="button" id="copy-link">${icon('Copy',16)} Copy</button></div></label><div class="invite-password">${icon('LockKeyhole',17)}<div><strong>Share the password separately.</strong><span>Your password is never included in the link.</span></div></div><button class="primary modal-submit" id="done-invite">Done ${icon('ArrowRight',16)}</button>`);const copyButton=$('#copy-link'),linkInput=$('#invite-link'),revision=modalRevision;copyButton.onclick=async()=>{const current=()=>!disposed&&modalRevision===revision&&copyButton.isConnected;try{await navigator.clipboard.writeText(url);if(!current())return;copyButton.innerHTML=icon('Check',16)+' Copied';toast('Session link copied')}catch{if(!current())return;linkInput.select();toast('Select and copy the session link')}};$('#done-invite').onclick=closeModal}
 async function joinFromPath(id){if(disposed)return;const lookup=++roomLookupGeneration,generation=sessionGeneration,revision=modalRevision,current=()=>!disposed&&lookup===roomLookupGeneration&&generation===sessionGeneration&&revision===modalRevision;const saved=savedAuth(id);if(saved){await enterRoom(saved);return}let room;try{({room}=await api('/api/rooms/'+encodeURIComponent(id)));if(!current())return}catch(err){if(!current())return;toast(err.message);if(!sandbox){location.replace(appPath('/'));return}history.replaceState(null,'',appPath('/'));return}modal(`<span class="modal-symbol">${icon('DoorOpen',26)}</span><h2 id="modal-title">${esc(room.name)}</h2><p>Enter your name and the session password.</p><form><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" autocomplete="given-name" required></label><label>Room password<input name="password" type="password" required autocomplete="current-password" placeholder="The password from your host"></label><button class="primary modal-submit">Join session ${icon('ArrowRight',17)}</button></form>`,async e=>{e.preventDefault();const form=e.target,b=form.querySelector('button'),current=dialogOperation(form);b.disabled=true;try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms/'+encodeURIComponent(id)+'/join',vals);if(!current())return;result.displayName=vals.displayName;saveAuth(result);saveRoom(result.room);closeModal();await enterRoom(result)}catch(err){if(!current())return;formError(form,err.message);b.disabled=false}})}
 async function enterRoom(result,isNew=false){
@@ -312,13 +344,14 @@ async function enterRoom(result,isNew=false){
   agentPermissions?.revoke('session-changed');webMCP?.refresh();
   capture?.stop().catch(()=>{});walkthrough?.stop();
   intentionalClose=true;cancelLater(reconnectTimer);socket?.close();media?.destroy();
-  auth=result;sandbox=false;intentionalClose=false;localStream=null;roomSeeded=!isNew;
+  featuredSession?.reset();sessionGuide?.reset();workshop=result.workshop||null;
+  auth=result;sandbox=false;connected=false;intentionalClose=false;localStream=null;roomSeeded=!isNew;
   participants=[];chat=[];ensureConversation().resetSession({sandbox:false,connected:false,participantId:result.participantId});screenSubscriptions.reset();board.setScreenSubscriptions([],result.participantId);
   makeCanvasModel();roomName=result.room.name;
   history.pushState(null,'',appPath('/room/'+encodeURIComponent(result.room.id)));
   $('#room-title').textContent=roomName;
   $('#session-kind').textContent='LIVE SESSION';$('#privacy-status').textContent='Password protected';
-  $('#room-subtitle').textContent='Share windows and work on the canvas together.';
+  $('#room-subtitle').textContent=workshop?'Follow the Session guide, share a window, and take a turn.':'Share windows and work on the canvas together.';
   $('#footer-access').textContent=isPeerRoom()?'Shared directly between browsers':'Password-protected room';
   document.title=roomName+' — Common';$('#sandbox-nav').classList.remove('active');$('#sessions-nav').classList.add('active');
   setPanelOpen(innerWidth>=1100);
@@ -334,7 +367,7 @@ function setupMedia(){
   const current=()=>!disposed&&generation===sessionGeneration&&media===instance;
   const instance=new ScreenSharing({
     send:message=>{if(current())send(message)},
-    onStream:(id,stream)=>{if(!current())return;board.setStream(id==='local'?ownParticipantId():id,stream);if(id==='local'){localStream=stream;updateShareButton()}},
+    onStream:(id,stream)=>{if(!current())return;board.setStream(id==='local'?ownParticipantId():id,stream);if(id==='local'){localStream=stream;updateShareButton()}refreshSessionGuide()},
     onData:(id,bytes)=>{if(current())peerCanvas?.receive(id,bytes)},
     onPeerOpen:id=>{if(current()){peerCanvas?.open(id);updateCanvasStatus()}},
     onPeerClose:id=>{if(current()){peerCanvas?.close(id);updateCanvasStatus()}},
@@ -375,7 +408,7 @@ function setConnection(status){
   agentTools?.refresh();
   agentPermissions?.state();webMCP?.refresh();
   publishEmbedState();
-  sharingControls?.updateContext();
+  sharingControls?.updateContext();refreshSessionGuide();
 }
 function syncPeople(){
   if(disposed||!media)return;
@@ -384,6 +417,7 @@ function syncPeople(){
   const active=new Set(participants.map(p=>p.id));
   document.querySelectorAll('.remote-cursor').forEach(el=>{if(!active.has(el.dataset.person))el.remove()});
   if(isPeerRoom())for(const entity of shared.all())if(entity.type==='screen'&&!active.has(entity.participantId))shared.deleteLocal(entity.id);
+  refreshSessionGuide();
 }
 async function connect(){
   if(disposed||!auth)return;
@@ -414,21 +448,24 @@ async function connect(){
       case 'init':{
         diagnostics.record('request',{requestId:m.diagnostics?.requestId});
         auth.room=m.room;saveAuth(auth);
-        setConnection('connected');participants=m.participants;chat=m.chat||[];renderChat();
+        workshop=m.workshop||null;participants=m.participants;auth.isAdmin=!!m.self?.isAdmin;saveAuth(auth);setConnection('connected');chat=m.chat||[];renderChat();
         if(!isPeerRoom())receiveCanvas(()=>{if(!shared.entities.size&&!shared.tombstones.size)shared.replaceInitial(m.entities);else{const incoming=new Set(m.entities.map(e=>e.id));for(const entity of shared.all())if(!incoming.has(entity.id))shared.deleteLocal(entity.id);for(const entity of m.entities)shared.setLocal(entity)}});
         if(!roomSeeded){
           roomSeeded=true;
-          shared.replaceInitial([{id:uid(),type:'text',x:120,y:85,width:600,height:110,text:'Team workspace',fontSize:34,color:'#2b4936',z:1},{id:uid(),type:'sticky',x:125,y:252,width:270,height:210,text:'Add a note, share a window,\nor sketch an idea.\n\nChanges appear for everyone\nin this session.',fontSize:18,color:'#364c31',fill:'#edf1cb',z:2}]);
+          shared.replaceInitial(workshop?templateCanvas(workshop.template):[{id:uid(),type:'text',x:120,y:85,width:600,height:110,text:'Team workspace',fontSize:34,color:'#2b4936',z:1},{id:uid(),type:'sticky',x:125,y:252,width:270,height:210,text:'Add a note, share a window,\nor sketch an idea.\n\nChanges appear for everyone\nin this session.',fontSize:18,color:'#364c31',fill:'#edf1cb',z:2}]);
         }
         refreshCanvas();syncPeople();break;
       }
       case 'participants':participants=m.participants;syncPeople();break;
+      case 'workshop':workshop=m.workshop||null;refreshSessionGuide();break;
+      case 'checklist':participants=participants.map(person=>person.id===m.id?{...person,checklist:m.checklist}:person);refreshSessionGuide();break;
       case 'upsert':if(!isPeerRoom())receiveCanvas(()=>shared.setLocal(m.entity));break;
       case 'delete':if(!isPeerRoom())receiveCanvas(()=>shared.deleteLocal(m.id));break;
       case 'cursor':renderCursor(m);break;
       case 'chat':chat.push(m.message);if(chat.length>300)chat.shift();renderChat();break;
       case 'signal':media.handleSignal(m.from,m.data);break;
       case 'ended':
+        workshop=null;featuredSession?.reset();sessionGuide?.reset();
         chat=[];chatPanel?.resetSession({sandbox:false,connected:false,participantId:auth?.participantId});
         intentionalClose=true;connected=false;agentPermissions?.revoke('session-ended');webMCP?.refresh();capture?.stop().catch(()=>{});walkthrough?.stop();board.setReadOnly(true);updateHistoryControls();localStream=null;updateShareButton();forgetAuth(auth.room.id);media.destroy();peerCanvas?.destroy();$('#connection-status').textContent='Session ended';closeModal();
         toast('This session has ended. Your host closed the room.');
@@ -471,9 +508,11 @@ async function requestWindowShare(event){
     if(!current()||(!sandbox&&!connected)){for(const track of stream?.getTracks?.()||[])track.stop();if(stream&&targetMedia.localStream===stream)targetMedia.stop();return}
     if(stream){
       localStream=stream;
-      const entity={id:uid(),type:'screen',participantId:ownParticipantId(),streamId:stream.id,x:130+Math.random()*100,y:150+Math.random()*100,width:620,height:390,title:sandbox?'Your window':auth.displayName+"’s window",z:20};
+      const entity={id:uid(),type:'screen',participantId:ownParticipantId(),streamId:stream.id,x:workshop?400:130+Math.random()*100,y:workshop?200:150+Math.random()*100,width:workshop?540:620,height:workshop?330:390,title:sandbox?'Your window':auth.displayName+"’s window",z:20};
       if(!targetModel.setLocal(entity)){const stopping=targetMedia.stop();toast('There is no room for this shared window on the canvas.');await stopping;return null}
       board.setStream(ownParticipantId(),stream);
+      if(workshop&&auth?.isAdmin&&!workshop.featuredParticipantId&&send({type:'workshop',action:'feature',participantId:auth.participantId}))sessionGuide?.setOpen(false);
+      refreshSessionGuide();
       toast(sandbox?'Window added to your canvas.':'Window shared with the session.');
       return stream;
     }
@@ -485,7 +524,7 @@ $('#share-screen').onclick=requestWindowShare;
 function updateShareButton(){
   if(disposed)return;
   sharingControls?.updateContext();
-  capture?.syncSource();agentTools?.refresh();
+  capture?.syncSource();agentTools?.refresh();refreshSessionGuide();
   publishEmbedState();
 }
 function diagramModal(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Workflow',25)}</span><h2 id="modal-title">Add a diagram</h2><p>Use Mermaid or PlantUML syntax.</p><form><label>Diagram language<select name="language" id="diagram-language"><option value="mermaid">Mermaid · renders in your browser</option><option value="plantuml" ${getRuntimeConfig().plantUml.enabled?'':'disabled'}>PlantUML · ${getRuntimeConfig().plantUml.enabled?'configured renderer':'disabled here'}</option></select></label><label>Diagram source<textarea name="source" rows="8" spellcheck="false" required>flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]</textarea></label><label class="consent-label" id="plant-consent" hidden><input type="checkbox" name="consent">Allow sending this diagram to ${esc(getRuntimeConfig().plantUml.endpoint?new URL(getRuntimeConfig().plantUml.endpoint).host:'the configured renderer')} for rendering. Everyone in this room can see the result.</label><button class="primary modal-submit">Add to canvas ${icon('Plus',17)}</button></form>`,e=>{e.preventDefault();const vals=Object.fromEntries(new FormData(e.target));if(vals.language==='plantuml'&&(!getRuntimeConfig().plantUml.enabled||!vals.consent)){formError(e.target,'Allow external rendering to use PlantUML.');return}board.add('diagram',{source:vals.source,language:vals.language,externalConsent:vals.language==='plantuml',title:vals.language==='mermaid'?'Mermaid diagram':'PlantUML diagram',width:500,height:300});closeModal();chooseTool('select')});$('#diagram-language').onchange=e=>{$('#plant-consent').hidden=e.target.value!=='plantuml';const input=$('textarea[name=source]');input.value=e.target.value==='plantuml'?'@startuml\nAlice -> Bob: An idea\nBob --> Alice: Let’s build it\n@enduml':'flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]'}}
@@ -538,7 +577,7 @@ document.addEventListener('paste',event=>{
   const files=clipboardImages(event.clipboardData);if(!files.length)return;
   event.preventDefault();void addImages(files);
 },{signal:mainEvents.signal});
-function tour(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Common ground.</h2><div class="tour-steps"><div>${icon('Link',21)}<span><strong>Create a session</strong>Invite your team with the session link and password.</span></div><div>${icon('MonitorUp',21)}<span><strong>Share a window</strong>Choose a window in your browser’s share picker. Use Watch window to view a teammate’s share.</span></div><div>${icon('Pencil',21)}<span><strong>Build on the canvas</strong>Add notes, images, drawings, and diagrams. Changes appear for everyone in the session.</span></div></div><p class="help-detail">Select an item, then use Edit or Enter to write. Focus (F) enlarges an item just for you; Escape returns to the canvas. Arrow keys move items; Alt + arrows resize, and Shift makes larger steps. Undo (Ctrl/⌘ Z) restores your canvas changes. Paste a screenshot or drop images where you want them. Use Pan (H) to move around. Some networks may block direct screen sharing.</p><a class="local-guide-link" href="${esc(appPath('/self-hosting.html'))}" target="_blank" rel="noopener">Run Common on your own laptop ${icon('ArrowUpRight',15)}</a><button class="primary modal-submit" id="tour-done">Got it ${icon('Check',16)}</button>`);$('#tour-done').onclick=closeModal}
+function tour(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Common ground.</h2><div class="tour-steps"><div>${icon('Link',21)}<span><strong>Create a session</strong>Choose a template, then invite your team with the session link and password.</span></div><div>${icon('MonitorUp',21)}<span><strong>Share a window</strong>Complete your Session guide and approve your own window. The host can feature windows as you take turns.</span></div><div>${icon('Pencil',21)}<span><strong>Build on the canvas</strong>Add notes, images, drawings, and diagrams. Changes appear for everyone in the session.</span></div></div><p class="help-detail">Select an item, then use Edit or Enter to write. Focus (F) enlarges an item just for you; Escape returns to the canvas. Arrow keys move items; Alt + arrows resize, and Shift makes larger steps. Undo (Ctrl/⌘ Z) restores your canvas changes. Paste a screenshot or drop images where you want them. Use Pan (H) to move around. Some networks may block direct screen sharing.</p><a class="local-guide-link" href="${esc(appPath('/self-hosting.html'))}" target="_blank" rel="noopener">Run Common on your own laptop ${icon('ArrowUpRight',15)}</a><button class="primary modal-submit" id="tour-done">Got it ${icon('Check',16)}</button>`);$('#tour-done').onclick=closeModal}
 function showSessions(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Layers',25)}</span><h2 id="modal-title">Recent sessions</h2><p>Saved on this device.</p><div class="sessions-list">${savedRooms().length?savedRooms().map(r=>`<a href="${esc(appPath('/room/'+encodeURIComponent(r.id)))}">${icon('Layers',18)}<span>${esc(r.name)}</span>${icon('ArrowUpRight',17)}</a>`).join(''):'<p>No recent sessions.</p>'}</div><button class="primary modal-submit" id="sessions-create">${icon('Plus',16)} Create a session</button>`);$('#sessions-create').onclick=createModal}
 async function showConnectionDetails(){
   const revision=modalRevision,generation=sessionGeneration;

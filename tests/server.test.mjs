@@ -162,7 +162,7 @@ test('standalone admission and activity boundaries conform to the portable room 
     }
   }
   const client = await f.connect(host);
-  assert.deepEqual(client.init.capabilities, { protocolVersion: 1, transport: 'websocket' });
+  assert.deepEqual(client.init.capabilities, { protocolVersion: 1, transport: 'websocket', guidedSessions: 1 });
   for (const sample of activityCases) {
     client.send(sample.message);
     assert.equal((await client.next('error')).code, sample.code, sample.label);

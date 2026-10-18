@@ -1,0 +1,12 @@
+.session-template-picker { margin: 20px 0; }
+.session-template-picker > label { margin-bottom: 9px; }
+.session-template-summary { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.session-template-plan { min-width: 0; padding: 0 14px 13px; margin: 20px 0 0; border: 1px solid var(--border); border-radius: 12px; background: #f7f6ec; }
+.session-template-plan legend { padding: 0 7px; color: #52674a; font-family: Georgia, serif; font-size: 17px; }
+.session-template-plan label { margin: 13px 0; }
+.session-template-plan textarea { min-height: 90px; max-height: 220px; font-family: inherit; font-size: 13px; line-height: 1.6; }
+.session-template-optional { color: var(--muted); font-size: 11px; font-weight: 400; }
+.session-plan-privacy { margin: 13px 0 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+@media (max-width: 500px) {
+  .session-template-plan { padding-right: 10px; padding-left: 10px; }
+}
