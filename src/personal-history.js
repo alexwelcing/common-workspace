@@ -1,3 +1,5 @@
+import { generateKeyBetween } from 'fractional-indexing';
+
 const copy = value => value === undefined ? undefined : structuredClone(value);
 const same = (a, b) => a === b || (a != null && b != null && typeof a === 'object' && typeof b === 'object' && JSON.stringify(a) === JSON.stringify(b));
 const own = (object, key) => Object.hasOwn(object, key);
@@ -236,5 +238,3 @@ export class PersonalHistory {
     return { ok: changed > 0, changed, conflicts, restoredIds, message };
   }
 }
-import { generateKeyBetween } from 'fractional-indexing';
-

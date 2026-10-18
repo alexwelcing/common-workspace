@@ -243,7 +243,7 @@ export class CanvasCapture {
     this.assets.clear();
     for (const timer of this.downloadTimers) this.clearTimeout(timer);
     this.downloadTimers.clear();
-    for (const url of [...this.urls]) this._revoke(url);
+    for (const url of this.urls) this._revoke(url);
     this._changed();
   }
 
@@ -252,7 +252,8 @@ export class CanvasCapture {
     const copy = svg.cloneNode(true);
     copy.querySelectorAll('script, foreignObject, iframe, object, embed, image, animate, animateTransform, set').forEach(node => node.remove());
     for (const node of [copy, ...copy.querySelectorAll('*')]) {
-      for (const attribute of [...node.attributes]) {
+      // Attribute removal mutates the live NamedNodeMap, so retain a snapshot.
+      for (const attribute of Array.from(node.attributes)) {
         const name = attribute.name.toLowerCase(), value = attribute.value;
         if (name.startsWith('on') || ((name === 'href' || name.endsWith(':href')) && !value.startsWith('#')) || hasExternalUrl(value)) node.removeAttribute(attribute.name);
       }

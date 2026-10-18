@@ -14,6 +14,7 @@ const make=(tag,className,text)=>{
 };
 const button=(className,text)=>{const el=make('button',className,text);el.type='button';return el};
 const checkedTasks=person=>new Set(person?.checklist?.completed||[]);
+const setText=(node,text)=>{if(node.textContent!==text)node.textContent=text};
 
 /** Guided sessions display authenticated roster state; the canvas view stays local. */
 export class SessionGuide {
@@ -138,7 +139,13 @@ export class SessionGuide {
     if(!workshop)return;
     const sharing=new Set((context.screens||[]).map(screen=>screen.participantId));
     const participants=(context.participants||[]).filter(person=>person.id!==context.participantId&&sharing.has(person.id));
-    const planned=(workshop.attendees||[]).flatMap(slot=>participants.filter(person=>person.checklist?.slotId===slot.id));
+    const bySlot=new Map();
+    for(const person of participants){
+      const slotId=person.checklist?.slotId;
+      if(!bySlot.has(slotId))bySlot.set(slotId,[]);
+      bySlot.get(slotId).push(person);
+    }
+    const planned=(workshop.attendees||[]).flatMap(slot=>bySlot.get(slot.id)||[]);
     const plannedIds=new Set(planned.map(person=>person.id));
     const queue=[...planned,...participants.filter(person=>!plannedIds.has(person.id))];
     if(!queue.length)return;
@@ -191,7 +198,8 @@ export class SessionGuide {
     this.claimLabel.hidden=!slots.length;this.claimHelp.hidden=!slots.length;
     this.updateClaim(slots,people,own,connected);
     this.updateTasks(tasks,completed,connected);
-    this.updateRoster(slots,people,screens,tasks,workshop.featuredParticipantId,context);
+    if(context.isAdmin)this.updateRoster(slots,people,screens,tasks,workshop.featuredParticipantId,context);
+    else if(this.roster.size){this.roster.clear();this.rosterList.replaceChildren();this.rosterCount.textContent=''}
     this.connection.hidden=connected;
     this.connection.textContent='Your progress is readable while reconnecting. Sharing, checkboxes, and featured-window changes resume when connected.';
     this.fitPanel();
@@ -199,8 +207,9 @@ export class SessionGuide {
 
   updateClaim(slots,people,own,connected) {
     const slotId=own?.checklist?.slotId||null,pending=this.pendingValue('claim',slotId);
+    const occupiedSlots=new Set(people.filter(person=>person.id!==own?.id).map(person=>person.checklist?.slotId));
     const choices=[{id:'',name:'Additional participant',disabled:false},...slots.map(slot=>({
-      ...slot,disabled:people.some(person=>person.id!==own?.id&&person.checklist?.slotId===slot.id),
+      ...slot,disabled:occupiedSlots.has(slot.id),
     }))];
     const signature=JSON.stringify(choices);
     if(signature!==this.claimSignature){
@@ -244,13 +253,20 @@ export class SessionGuide {
   updateRoster(slots,people,screens,tasks,featuredId,context) {
     const sharing=new Set(screens.map(screen=>screen.participantId));
     const plannedIds=new Set(slots.map(slot=>slot.id));
-    const entries=slots.map(slot=>({key:`slot:${slot.id}`,slot,person:people.find(person=>person.checklist?.slotId===slot.id)}));
+    const bySlot=new Map(),completionCounts=new Map();
+    for(const person of people){
+      const slotId=person.checklist?.slotId;
+      if(!bySlot.has(slotId))bySlot.set(slotId,person);
+      const completed=checkedTasks(person);
+      completionCounts.set(person.id,tasks.filter(task=>completed.has(task.id)).length);
+    }
+    const entries=slots.map(slot=>({key:`slot:${slot.id}`,slot,person:bySlot.get(slot.id)}));
     for(const person of people)if(!plannedIds.has(person.checklist?.slotId))entries.push({key:`person:${person.id}`,person});
     const keys=new Set(entries.map(entry=>entry.key));
     for(const [key,item] of this.roster)if(!keys.has(key)){item.node.remove();this.roster.delete(key)}
-    const ready=people.filter(person=>sharing.has(person.id)&&tasks.every(task=>checkedTasks(person).has(task.id))).length;
+    const ready=people.filter(person=>sharing.has(person.id)&&completionCounts.get(person.id)===tasks.length).length;
     const joinedPlanned=entries.filter(entry=>entry.slot&&entry.person).length;
-    this.rosterCount.textContent=slots.length?`${joinedPlanned}/${slots.length} planned here · ${ready} ready`:`${people.length} here · ${ready} ready`;
+    setText(this.rosterCount,slots.length?`${joinedPlanned}/${slots.length} planned here · ${ready} ready`:`${people.length} here · ${ready} ready`);
     for(let index=0;index<entries.length;index++){
       const entry=entries[index];let item=this.roster.get(entry.key);
       if(!item){
@@ -261,18 +277,24 @@ export class SessionGuide {
         node.append(dot,copy,feature);item={node,name,detail,feature};this.roster.set(entry.key,item);
       }
       const person=entry.person,hasScreen=Boolean(person&&sharing.has(person.id));
-      item.name.textContent=entry.slot?.name||person?.name||'Participant';
-      if(person?.id===context.participantId)item.name.append(make('span','session-guide-you',' (you)'));
-      const complete=person?tasks.filter(task=>checkedTasks(person).has(task.id)).length:0;
-      const extra=!entry.slot?'Additional participant · ':'';
-      const actualName=entry.slot&&person&&person.name!==entry.slot.name?`Joined as ${person.name} · `:'';
-      item.detail.textContent=person?`${extra}${actualName}${hasScreen?'Window shared':'Window not shared'} · ${complete}/${tasks.length} tasks`:'Not here yet';
-      item.node.classList.toggle('is-waiting',!person);item.node.classList.toggle('is-sharing',hasScreen);
-      item.node.classList.toggle('is-featured',Boolean(person&&person.id===featuredId));
-      item.feature.hidden=!hasScreen;item.feature.disabled=!context.connected||person?.id===featuredId;
-      item.feature.textContent=person?.id===featuredId?'Featured':'Feature';
-      item.feature.setAttribute('aria-label',`Feature ${person?.name||entry.slot?.name||'participant'}’s window`);
-      item.feature.onclick=()=>{if(person)this.send('feature',{participantId:person.id})};
+      const complete=person?completionCounts.get(person.id):0;
+      const signature=JSON.stringify([entry.slot?.name,person?.id,person?.name,person?.id===context.participantId,hasScreen,complete,tasks.length,person?.id===featuredId,Boolean(context.connected)]);
+      // Roster/video updates also refresh this panel. Keep unchanged rows intact
+      // so larger sessions do not rebuild every name and button on each tick.
+      if(item.signature!==signature){
+        item.signature=signature;
+        item.name.textContent=entry.slot?.name||person?.name||'Participant';
+        if(person?.id===context.participantId)item.name.append(make('span','session-guide-you',' (you)'));
+        const extra=!entry.slot?'Additional participant · ':'';
+        const actualName=entry.slot&&person&&person.name!==entry.slot.name?`Joined as ${person.name} · `:'';
+        item.detail.textContent=person?`${extra}${actualName}${hasScreen?'Window shared':'Window not shared'} · ${complete}/${tasks.length} tasks`:'Not here yet';
+        item.node.classList.toggle('is-waiting',!person);item.node.classList.toggle('is-sharing',hasScreen);
+        item.node.classList.toggle('is-featured',Boolean(person&&person.id===featuredId));
+        item.feature.hidden=!hasScreen;item.feature.disabled=!context.connected||person?.id===featuredId;
+        item.feature.textContent=person?.id===featuredId?'Featured':'Feature';
+        item.feature.setAttribute('aria-label',`Feature ${person?.name||entry.slot?.name||'participant'}’s window`);
+        item.feature.onclick=()=>{if(person)this.send('feature',{participantId:person.id})};
+      }
       const position=this.rosterList.children[index];if(position!==item.node)this.rosterList.insertBefore(item.node,position||null);
     }
   }

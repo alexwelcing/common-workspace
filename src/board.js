@@ -61,7 +61,8 @@ function button(label, iconName, action) {
   return node;
 }
 function signature(entity) {
-  const { x, y, width, height, z, orderKey, locked, updatedAt, updatedBy, ...content } = entity;
+  // Geometry and collaboration metadata update the existing node in place.
+  const { x: _x, y: _y, width: _width, height: _height, z: _z, orderKey: _orderKey, locked: _locked, updatedAt: _updatedAt, updatedBy: _updatedBy, ...content } = entity;
   return JSON.stringify(content);
 }
 function finite(value, fallback = 0) { return Number.isFinite(Number(value)) ? Number(value) : fallback; }
@@ -142,6 +143,7 @@ export class Board {
     this.el.addEventListener('pointermove', e => this.pointerMove(e), { signal });
     this.el.addEventListener('pointerup', e => this.pointerUp(e), { signal });
     this.el.addEventListener('pointercancel', e => this.pointerUp(e, true), { signal });
+    this.el.addEventListener('lostpointercapture', e => this.pointerUp(e, true), { signal });
     this.el.addEventListener('wheel', e => this.wheel(e), { passive: false, signal });
     this.el.addEventListener('dblclick', e => this.doubleClick(e), { signal });
     document.addEventListener('keydown', e => this.keyDown(e), { signal });
@@ -647,6 +649,7 @@ export class Board {
   }
 
   pointerDown(event) {
+    if (this.gesture) return;
     if (event.button !== 0 && event.button !== 1) return;
     if (event.target.closest('button:not([data-resize]),input,textarea,select,[contenteditable="true"]')) return;
     const point = this.worldPoint(event); const targetNode = event.target.closest('[data-entity-id]');
@@ -677,6 +680,7 @@ export class Board {
     if (this.gesture) { if (this.gesture.type !== 'pan') this.beginHistoryGroup(this.gesture.type); this.activePointerId = event.pointerId; this.el.setPointerCapture(event.pointerId); this.el.classList.add('board-is-dragging'); this.updateSelectionTools(); }
   }
   pointerMove(event) {
+    if (this.gesture && event.pointerId !== this.activePointerId) return;
     const point = this.worldPoint(event);
     if (performance.now() - this.lastCursor > 60) { this.lastCursor = performance.now(); this.onCursor({ x: Math.round(point.x), y: Math.round(point.y) }); }
     const gesture = this.gesture; if (!gesture) return;
@@ -709,7 +713,7 @@ export class Board {
     }
   }
   pointerUp(event, cancelled = false) {
-    const gesture = this.gesture; if (!gesture) return;
+    const gesture = this.gesture; if (!gesture || event.pointerId !== this.activePointerId) return;
     this.gesture = null; this.el.classList.remove('board-is-dragging');
     if (this.el.hasPointerCapture(event.pointerId)) this.el.releasePointerCapture(event.pointerId);
     this.activePointerId = null;
@@ -762,13 +766,20 @@ export class Board {
     this.beginHistoryGroup('edit text');
     this.editingId = id; this.select(id); this.updateSelectionTools();
     content.contentEditable = 'true'; node.classList.add('is-editing'); content.focus();
+    const originalText = content.innerText.slice(0, 20000);
     const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(content); range.collapse(false); selection.removeAllRanges(); selection.addRange(range);
     const editEvents = new AbortController();
     const finish = (save = true) => {
       if (this.editingId !== id) return;
       editEvents.abort(); content.removeEventListener('blur', onBlur); content.contentEditable = 'false'; node.classList.remove('is-editing');
       const text = content.innerText.slice(0, 20000); this.editingId = null; this.finishTextEdit = null;
-      const current = this.entities.get(id); if (save && current) this.commit({ ...current, text }, { text });
+      const current = this.entities.get(id);
+      if (save && current && text !== originalText) this.commit({ ...current, text }, { text });
+      else if (current) {
+        // Remote content is deferred while this editor owns the DOM. Merely
+        // opening and leaving it must not overwrite a teammate's latest text.
+        node._signature = null; this.renderEntity(current);
+      }
       this.endHistoryGroup(); this.updateSelectionTools();
     };
     const onBlur = () => finish(); this.finishTextEdit = finish;
@@ -782,12 +793,13 @@ export class Board {
     const dialog = document.createElement('dialog'); dialog.className = 'board-source-dialog';
     const heading = element('h2', '', 'Edit diagram'); const label = element('label', '', entity.language === 'plantuml' ? 'PlantUML source' : 'Mermaid source');
     const headingId = `diagram-heading-${crypto.randomUUID()}`; heading.id = headingId; dialog.setAttribute('aria-labelledby', headingId);
-    const source = element('textarea', ''); source.value = entity.source || ''; source.rows = 12; source.setAttribute('aria-label', label.textContent);
+    const originalSource = entity.source || '';
+    const source = element('textarea', ''); source.value = originalSource; source.rows = 12; source.setAttribute('aria-label', label.textContent);
     source.id = `diagram-source-${crypto.randomUUID()}`; label.htmlFor = source.id; source.maxLength = 20000;
     const editor = { id: entity.id, dialog, opener: document.activeElement, restoreFocus: true }; this.diagramEditor = editor;
     const actions = element('div', 'board-dialog-actions');
     const cancel = element('button', '', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => dialog.close());
-    const save = element('button', 'primary', 'Update diagram'); save.type = 'button'; save.addEventListener('click', () => { const current = this.entities.get(entity.id); const nextSource = source.value.slice(0, 20000); if (current) this.commit({ ...current, source: nextSource }, { source: nextSource }); dialog.close(); });
+    const save = element('button', 'primary', 'Update diagram'); save.type = 'button'; save.addEventListener('click', () => { const current = this.entities.get(entity.id); const nextSource = source.value.slice(0, 20000); if (current && nextSource !== originalSource) this.commit({ ...current, source: nextSource }, { source: nextSource }); dialog.close(); });
     actions.append(cancel, save); dialog.append(heading, label, source, actions); document.body.append(dialog);
     dialog.addEventListener('close', () => {
       if (this.diagramEditor === editor) this.diagramEditor = null;
@@ -872,7 +884,7 @@ export class Board {
           const text = svgElement('text', { x: entity.width / 2, y: entity.height / 2, 'text-anchor': 'middle', 'dominant-baseline': 'middle', fill: '#435b43', 'font-family': 'sans-serif', 'font-size': entity.fontSize || 14 });
           text.textContent = entity.text; group.append(text);
         }
-      } else if (entity.type === 'image' && /^data:image\//.test(entity.url || '')) {
+      } else if (entity.type === 'image' && (entity.url || '').startsWith('data:image/')) {
         group.append(svgElement('image', { href: entity.url, width: entity.width, height: entity.height, preserveAspectRatio: 'xMidYMid meet' }));
       } else if (entity.type === 'diagram') {
         group.append(svgElement('rect', { width: entity.width, height: entity.height, rx: 10, fill: '#fff', stroke: '#dfe4de' }));

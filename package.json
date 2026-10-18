@@ -15,7 +15,7 @@
     "build:module": "bun scripts/build-module.mjs",
     "pack:module": "bun scripts/pack-module.mjs",
     "start": "bun server.mjs",
-    "lint": "oxlint scripts vite.config.js",
+    "lint": "oxlint src sdk lib netlify scripts examples/bun-embed server.mjs vite.config.js",
     "test": "bun test ./tests/*.test.mjs",
     "test:local": "bun tests/dev-built-smoke.mjs",
     "test:browser": "bun tests/browser-smoke.mjs",

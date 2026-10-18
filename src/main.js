@@ -130,14 +130,44 @@ function dialogOperation(form){const revision=modalRevision,generation=sessionGe
 function formError(form,msg){if(disposed)return;let e=form.querySelector('.form-error');if(!e){e=document.createElement('p');e.className='form-error';e.setAttribute('role','alert');form.append(e)}e.textContent=msg}
 async function diagnosticFetch(input,options={}){
   if(disposed)throw new DOMException('Common was closed.','AbortError');
-  const controller=new AbortController();activeRequests.add(controller);
-  const abort=()=>controller.abort();options.signal?.addEventListener('abort',abort,{once:true});if(options.signal?.aborted)controller.abort();
+  // Each caller owns its controller through body consumption: api(), runtime
+  // configuration, or the polling transport. Observe without replacing that
+  // signal, so cancellation still reaches JSON streaming after headers arrive.
   const started=Date.now();
-  try{const response=await fetch(input,{...options,signal:controller.signal});diagnostics.record('request',{durationMs:Date.now()-started,status:response.status,requestId:response.headers.get('x-common-request-id')});return response}
+  try{const response=await fetch(input,options);diagnostics.record('request',{durationMs:Date.now()-started,status:response.status,requestId:response.headers.get('x-common-request-id')});return response}
   catch(error){diagnostics.record('request',{durationMs:Date.now()-started,state:'failed'});throw error}
-  finally{activeRequests.delete(controller);options.signal?.removeEventListener('abort',abort)}
 }
-async function api(path,body){const r=await diagnosticFetch(appPath(path),{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});let data;try{data=await r.json()}catch{throw new Error([401,403].includes(r.status)?'Your application sign-in is required. Sign in again, then reopen Common.':'The server returned an unreadable response. Try again or check your connection.')}if(disposed)throw new DOMException('Common was closed.','AbortError');if(!r.ok)throw new Error(data?.error||'Something went wrong. Please try again.');return data}
+async function api(path,body,{headers={},timeoutMs=20000}={}){
+  const controller=new AbortController();
+  activeRequests.add(controller);
+  const deadline=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const hasBody=body!==undefined;
+    const response=await diagnosticFetch(appPath(path),{
+      method:hasBody?'POST':'GET',signal:controller.signal,
+      headers:{...headers,...(hasBody?{'Content-Type':'application/json'}:{})},
+      ...(hasBody?{body:JSON.stringify(body)}:{})
+    });
+    let data;
+    try{data=await response.json()}
+    catch(error){
+      if(controller.signal.aborted)throw error;
+      throw Object.assign(new Error([401,403].includes(response.status)
+        ?'Your application sign-in is required. Sign in again, then reopen Common.'
+        :'The server returned an unreadable response. Try again or check your connection.'),{status:response.status});
+    }
+    if(disposed)throw new DOMException('Common was closed.','AbortError');
+    if(!response.ok)throw Object.assign(new Error(data?.error||'Something went wrong. Please try again.'),{status:response.status,code:data?.code});
+    return data;
+  }catch(error){
+    if(disposed)throw new DOMException('Common was closed.','AbortError');
+    if(controller.signal.aborted)throw new Error('The server took too long to respond. Check your connection and try again.');
+    if(error instanceof TypeError)throw new Error('The server could not be reached. Check your connection and try again.');
+    throw error;
+  }finally{
+    clearTimeout(deadline);activeRequests.delete(controller);
+  }
+}
 function send(message){if(disposed)return false;if(socket?.readyState===WebSocket.OPEN){try{socket.send(JSON.stringify(message));return true}catch{return false}}if(!sandbox&&message.type!=='cursor'&&message.type!=='signal')toast(message.type==='chat'?'Reconnect to send your message.':'Reconnect to edit the shared canvas.');return false}
 const seed=()=>[
  {id:'welcome',type:'text',x:88,y:70,width:600,height:94,text:'A little room for your next idea.',fontSize:32,color:'#283f32',z:1},
@@ -379,11 +409,7 @@ function setupMedia(){
       const entity=shared.all().find(e=>e.type==='screen'&&e.participantId===ownParticipantId());
       if(entity)shared.deleteLocal(entity.id);
     },
-    getIceConfig:async()=>{
-      if(isSandbox){const r=await diagnosticFetch(appPath('/api/ice'));if(!r.ok)throw new Error('ICE configuration unavailable');return r.json()}
-      const r=await diagnosticFetch(appPath('/api/ice?room='+encodeURIComponent(roomAuth.room.id)),{headers:{Authorization:'Bearer '+roomAuth.token}});
-      if(!r.ok)throw new Error('ICE configuration unavailable');return r.json();
-    },
+    getIceConfig:()=>isSandbox?api('/api/ice'):api('/api/ice?room='+encodeURIComponent(roomAuth.room.id),undefined,{headers:{Authorization:'Bearer '+roomAuth.token}}),
     fallbackIceConfig:()=>({iceServers:getRuntimeConfig().rtc.iceServers,iceTransportPolicy:getRuntimeConfig().rtc.iceTransportPolicy})
   });
   media=instance;
@@ -429,14 +455,15 @@ async function connect(){
   const runtime=getRuntimeConfig().available?getRuntimeConfig():await refreshRuntimeConfiguration();
   if(!current())return;
   try{
-    const response=await diagnosticFetch(appPath('/api/rooms/'+encodeURIComponent(auth.room.id)+'/session'),{headers:{Authorization:'Bearer '+auth.token}});
+    await api('/api/rooms/'+encodeURIComponent(roomAuth.room.id)+'/session',undefined,{headers:{Authorization:'Bearer '+roomAuth.token}});
+  }catch(error){
     if(!current())return;
-    if(response.status===401||response.status===404){
-      forgetAuth(auth.room.id);localStream=null;media?.destroy();updateShareButton();intentionalClose=true;
-      toast(response.status===404?'This room has ended.':'Please enter the password to rejoin.');await joinFromPath(auth.room.id);return;
+    if(error.status===401||error.status===404){
+      forgetAuth(roomAuth.room.id);localStream=null;media?.destroy();updateShareButton();intentionalClose=true;
+      toast(error.status===404?'This room has ended.':'Please enter the password to rejoin.');await joinFromPath(roomAuth.room.id);return;
     }
-    if(!response.ok)throw new Error('unavailable');
-  }catch{if(current())reconnectTimer=later(connect,2500);return}
+    reconnectTimer=later(connect,2500);return;
+  }
   if(!current()||intentionalClose)return;
   const ws=(runtime.transport||(import.meta.env.VITE_SESSION_TRANSPORT==='polling'?'polling':'websocket'))==='polling'
     ?new PollingSessionTransport({room:auth.room.id,token:auth.token,basePath:appPath('/api/rooms'),documentImpl:sessionVisibility,fetchImpl:diagnosticFetch,onDiagnostic:(type,values)=>diagnostics.record(type,values)})

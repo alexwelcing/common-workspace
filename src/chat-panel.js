@@ -30,7 +30,7 @@ export class ChatPanel {
   atBottom(){return this.log.scrollHeight-this.log.clientHeight-this.log.scrollTop<36}
 
   resetSession(context={}){
-    this.clearPending();this.submissions=[];this.messages.clear();this.unread.clear();this.initialized=false;this.pinned=true;this.scrollPosition=0;this.resumeComposer=false;this.composing=false;this.revision++;this.input.value='';this.notice='';this.log.replaceChildren();this.context={sandbox:true,connected:false,participantId:null,...context};this.renderEmpty();this.updateComposer();this.updateUnread();
+    this.clearPending();for(const submission of this.submissions)clearTimeout(submission.timer);this.submissions=[];this.messages.clear();this.unread.clear();this.initialized=false;this.pinned=true;this.scrollPosition=0;this.resumeComposer=false;this.composing=false;this.revision++;this.input.value='';this.notice='';this.log.replaceChildren();this.context={sandbox:true,connected:false,participantId:null,...context};this.renderEmpty();this.updateComposer();this.updateUnread();
   }
 
   setContext(context){
@@ -106,10 +106,17 @@ export class ChatPanel {
   }
 
   confirm(message){
-    const index=this.submissions.findIndex(submission=>submission.text===message.text);if(index<0)return;
+    // A retry may have the same text as an earlier, unconfirmed attempt. Once
+    // our own text is visible, resolve the current attempt before stale ones.
+    const current=this.pending?.text===message.text?this.pending:null;
+    const index=current?this.submissions.indexOf(current):this.submissions.findIndex(submission=>submission.text===message.text);if(index<0)return;
     const [submission]=this.submissions.splice(index,1);clearTimeout(submission.timer);
     if(!submission.active||this.pending!==submission){if(!this.pending){this.notice='Your earlier message arrived. Your current draft is kept.';this.updateComposer()}return}
     this.pending=null;submission.active=false;
+    this.submissions=this.submissions.filter(previous=>{
+      if(previous.text!==message.text)return true;
+      clearTimeout(previous.timer);return false;
+    });
     if(this.revision===submission.revision&&this.input.value===submission.raw){this.input.value='';this.revision++}
     this.notice='';this.updateComposer();
   }

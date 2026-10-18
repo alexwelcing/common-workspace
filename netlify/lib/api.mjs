@@ -112,7 +112,9 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
   async function roomRow(client, id, time, allowEnded = false, lock = true) {
     const { rows } = await client.query(`SELECT * FROM common_rooms WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id]);
     const room = rows[0];
-    if (!room || timestamp(room.expires_at) <= time || (!allowEnded && room.ended_at)) throw roomMissing();
+    // A request can wait for a room lock across an expiry boundary. Admission
+    // must use the time after that wait, rather than when the HTTP call began.
+    if (!room || timestamp(room.expires_at) <= Math.max(time, now()) || (!allowEnded && room.ended_at)) throw roomMissing();
     return room;
   }
 
@@ -122,7 +124,9 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
     if (!token || token.length > 128) throw sessionExpired();
     const { rows } = await client.query('SELECT * FROM common_members WHERE room_id = $1 AND token_hash = $2', [room.id, hash(token)]);
     const member = rows[0];
-    if (!member || timestamp(member.expires_at) <= time) throw sessionExpired();
+    const observedAt = Math.max(time, now());
+    if (timestamp(room.expires_at) <= observedAt) throw roomMissing();
+    if (!member || timestamp(member.expires_at) <= observedAt) throw sessionExpired();
     return member;
   }
 
@@ -400,6 +404,9 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         const member = await memberRow(client, room, request, time);
         checkConnection(member, request, time);
         if (action === 'leave' || input.type === 'leave') {
+          // Leave skips the lease-renewal fence used by other messages below.
+          // Recheck after asynchronous reads before revoking the identity.
+          checkConnection(member, request, Math.max(time, now()));
           await client.query('DELETE FROM common_members WHERE id = $1', [member.id]);
           await presence(client, room, time);
           await clearUnavailableFeature(client, room, time);
