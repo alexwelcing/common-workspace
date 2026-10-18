@@ -2,14 +2,14 @@
 
 Common can run inside an existing Bun application as a canvas panel or a floating workspace. The host owns the HTTP listener, routes, WebSocket server, and authentication. Common mounts its assets and room service beneath one path; it does not start a second server or open a hidden port.
 
-The portable module is included in the [v1.2.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.2.0). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
+The portable module is included in the [v1.3.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.3.0). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
 
 ## Obtain the package
 
-Download `common-workspace-0.2.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.2.0), or obtain both from your administrator. Install that file in your Bun application:
+Download `common-workspace-0.3.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.3.0), or obtain both from your administrator. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.2.0.tgz
+bun add /absolute/path/common-workspace-0.3.0.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.2.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This builds the package and writes `artifacts/common-workspace-0.3.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
 
 The runnable host example is included in the package. After installing, try it directly from your Bun project:
 
@@ -214,3 +214,9 @@ Use **Canvas options → Connection details** for transport and peer states, or 
 | `SDK_FRAME_RELOADED` or `SDK_DESTROYED` | Await the current frame's readiness, or create a new mount after destruction. Reconsider an interrupted command before retrying. |
 | `PERMISSION_DENIED` or `GRANT_EXPIRED` | Let the person review and grant the required agent permissions in Common. |
 | Page and room work, but no live window appears | Approve sharing, select **Watch window**, and check browser/OS capture permissions, trusted HTTPS, host Permissions Policy, and peer connectivity. |
+
+## Shared room appearance
+
+The embedded app includes **Room style** during session creation and under **Canvas options**. Hosts can apply Meadow, Rose, Lagoon, or Lavender presets, custom accent/canvas colors, and dots/grid/plain patterns. The same appearance synchronizes across the room and survives reconnects; it is stored in the existing local room state. Inline and floating mounts style their own iframe document and leave the host application's colors unchanged. Destroying a mount restores its owned theme variables.
+
+Personal **Canvas style** stays in that Common mount's browser storage. Existing object colors are retained; snapshots, canvas recordings, and SVG export use the room background. Styles are bounded color/pattern data, with no custom CSS, remote fonts, or image URLs. Existing room files remain compatible and fall back to Meadow.

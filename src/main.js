@@ -3,8 +3,8 @@ import './board.css';
 import './chat.css';
 import './mobile.css';
 import {ChatPanel} from './chat-panel.js';
-import {createElement, Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, X} from 'lucide';
-const icons={Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, X};
+import {createElement, Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, Palette, X} from 'lucide';
+const icons={Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, Palette, X};
 import {Board} from './board.js';
 import {ScreenSharing} from './media.js';
 import {ScreenShareControls} from './sharing-controls.js';
@@ -22,6 +22,8 @@ import {SessionGuide} from './session-guide.js';
 import {FeaturedSession} from './featured-session.js';
 import {displayCaptureSupport} from './browser-permissions.js';
 import {installMobileViewport} from './mobile-viewport.js';
+import {RoomAppearance,renderAppearancePicker,bindAppearancePicker,readAppearancePicker} from './room-appearance.js';
+import {restoreAppearance} from '../lib/room-appearance.mjs';
 import {renderSessionTemplates,bindSessionTemplates,readWorkshop,templateCanvas} from './session-templates.js';
 import './session-templates.css';
 
@@ -46,6 +48,8 @@ let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, 
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
 let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor='#305e48', chatPanel=null;
 let workshop=null,sessionGuide=null,featuredSession=null,sessionCapabilities={},cleanupViewport=null;
+const appearanceUI=new RoomAppearance();
+let appearance=restoreAppearance(),appearanceDialog=null,pendingAppearance=null,modalCleanup=null;
 const screenSubscriptions=new ScreenSubscriptions();
 let subscriptionTimer, disposed=false, embedVisible=true, sessionGeneration=0, roomLookupGeneration=0, modalRevision=0, destroyPromise=null, disconnectExports=null, initialFitNeeded=false;
 const mainEvents=new AbortController(), appTimers=new Set(), appFrames=new Set(), activeRequests=new Set(), objectUrls=new Set(), embedListeners=new Set(), visibilityListeners=new Set();
@@ -75,6 +79,7 @@ function destroyCommon(){
   for(const request of activeRequests)request.abort();activeRequests.clear();
   subscriptionResizeObserver.disconnect();
   cleanupViewport?.();cleanupViewport=null;
+  appearanceUI.destroy();
   webMCP?.destroy();agentPermissions?.destroy();agentTools?.destroy();walkthrough?.stop();capture?.destroy();
   disconnectExports?.();
   if(socket){socket.onmessage=null;socket.onclose=null;socket.onerror=null;socket.close()}
@@ -128,10 +133,53 @@ const savedRooms=()=>{
 const ownParticipantId=()=>sandbox?'local':auth?.participantId;
 const saveRoom=r=>{if(disposed)return;writeStored('localStorage',appStorageKey('common.rooms'),JSON.stringify([{id:r.id,name:r.name},...savedRooms().filter(x=>x.id!==r.id)].slice(0,8)));renderRecent()};
 function toast(message,action,key){if(disposed)return;if(key)document.querySelectorAll('[data-toast-key]').forEach(el=>{if(el.dataset.toastKey===key)el.remove()});const el=document.createElement('div');el.className='toast';if(key)el.dataset.toastKey=key;el.innerHTML=icon('Check',16);el.append(document.createTextNode(message));if(action){const button=document.createElement('button');button.type='button';button.className='toast-action';button.textContent=action.label;button.onclick=()=>{el.remove();action.run()};el.append(button);el.dataset.historyAction='true'}$('#toasts').append(el);later(()=>el.remove(),4500)}
-function modal(html,onSubmit){if(disposed)return;modalRevision++;const root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);modalController.activate()}
-function closeModal(){modalRevision++;modalController.close({restoreFocus:!disposed});if(!disposed)chatPanel?.refreshVisibility()}
+function modal(html,onSubmit){if(disposed)return;modalCleanup?.();modalCleanup=null;appearanceDialog=null;clearPendingAppearance();modalRevision++;const root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);modalController.activate()}
+function closeModal(){modalCleanup?.();modalCleanup=null;appearanceDialog=null;clearPendingAppearance();modalRevision++;modalController.close({restoreFocus:!disposed});if(!disposed)chatPanel?.refreshVisibility()}
 function dialogOperation(form){const revision=modalRevision,generation=sessionGeneration;return()=>!disposed&&form.isConnected&&modalRevision===revision&&sessionGeneration===generation}
 function formError(form,msg){if(disposed)return;let e=form.querySelector('.form-error');if(!e){e=document.createElement('p');e.className='form-error';e.setAttribute('role','alert');form.append(e)}e.textContent=msg}
+function clearPendingAppearance(){if(pendingAppearance)cancelLater(pendingAppearance.timer);pendingAppearance=null}
+function canStyleRoom(){return sandbox||connected&&!!auth?.isAdmin&&sessionCapabilities.roomStyling===1}
+function refreshAppearanceDialog(){
+  const dialog=appearanceDialog;if(!dialog||!dialog.form.isConnected)return;
+  const allowed=canStyleRoom(),pending=!!pendingAppearance;
+  dialog.form.querySelector('.room-appearance-picker').disabled=!allowed||pending;
+  dialog.button.disabled=!allowed||pending;
+  dialog.button.textContent=pending?'Applying…':sandbox?'Save canvas style':'Apply to room';
+  if(!allowed)dialog.status.textContent=!auth?.isAdmin&&!sandbox?'Only the host can change the room style.':!connected?'Reconnect to change the room style.':'This server needs an update to support room styling.';
+  else if(dialog.blocked)dialog.status.textContent='';
+  dialog.blocked=!allowed;
+}
+function applyRoomAppearance(value){
+  appearance=restoreAppearance(value);appearanceUI.apply(appearance);
+  if(!sandbox&&auth){auth.room={...auth.room,appearance};saveAuth(auth)}
+  const pending=pendingAppearance;
+  if(pending&&pending.generation===sessionGeneration&&pending.signature===JSON.stringify(appearance)){
+    const isCurrent=appearanceDialog&&pending.revision===modalRevision;
+    clearPendingAppearance();
+    if(isCurrent){closeModal();toast('Room style updated for everyone.')}
+  }
+}
+function roomAppearanceModal(){
+  if(disposed)return;
+  modal(`<span class="modal-symbol">${icon('Palette',25)}</span><h2 id="modal-title">${sandbox?'Canvas style':'Room style'}</h2><p>${sandbox?'Give your little space a different feel. Saved on this device.':'Colors and canvas pattern are shared with everyone in this room.'}</p><form id="room-appearance-form">${renderAppearancePicker(appearance)}<p id="appearance-save-status" class="field-help" role="status" aria-live="polite"></p><button class="primary modal-submit" type="submit">${sandbox?'Save canvas style':'Apply to room'}</button></form>`,event=>{
+    event.preventDefault();if(!canStyleRoom()||pendingAppearance)return;
+    const form=event.target,current=dialogOperation(form);
+    try{
+      const next=readAppearancePicker(form);
+      if(sandbox){applyRoomAppearance(next);const saved=writeStored('localStorage',appStorageKey('common.appearance'),JSON.stringify(next));closeModal();toast(saved?'Canvas style saved.':'Canvas style applied. Browser storage is unavailable, so it could not be saved on this device.');return}
+      if(JSON.stringify(next)===JSON.stringify(appearance)){closeModal();return}
+      if(!send({type:'appearance',appearance:next})){formError(form,'Reconnect to apply the room style.');return}
+      pendingAppearance={signature:JSON.stringify(next),generation:sessionGeneration,revision:modalRevision,timer:later(()=>{
+        clearPendingAppearance();if(!current())return;
+        appearanceDialog.status.textContent='The style update is still unconfirmed. Reconnect or try again.';refreshAppearanceDialog();
+      },8000)};
+      appearanceDialog.status.textContent='Applying the style to the room…';refreshAppearanceDialog();
+    }catch(error){if(current())formError(form,error.message)}
+  });
+  const form=$('#room-appearance-form');
+  appearanceDialog={form,button:form.querySelector('.modal-submit'),status:$('#appearance-save-status'),};modalCleanup=bindAppearancePicker(form);
+  refreshAppearanceDialog();
+}
 async function diagnosticFetch(input,options={}){
   if(disposed)throw new DOMException('Common was closed.','AbortError');
   // Each caller owns its controller through body consumption: api(), runtime
@@ -333,7 +381,7 @@ for(const type of ['input','focusin','focusout'])board.el.addEventListener(type,
 
 let warnedCanvasStorage=false;
 function saveSandbox(){if(disposed)return;const saved=writeStored('localStorage',appStorageKey('common.canvas'),JSON.stringify([...board.entities.values()].filter(e=>e.type!=='screen')));if(!saved&&!warnedCanvasStorage){warnedCanvasStorage=true;toast('This browser cannot save the canvas on this device. Export it to keep your changes.')}}
-function loadSandbox(){const stored=readStoredJSON('localStorage',appStorageKey('common.canvas')),data=Array.isArray(stored)?stored:null;makeCanvasModel();shared.replaceInitial(data||seed());renderPeople();renderRecent();setPanelOpen(false);if(!data||appBasePath!=='/'){initialFitNeeded=true;nextFrame(fitInitialCanvas)}}
+function loadSandbox(){applyRoomAppearance(readStoredJSON('localStorage',appStorageKey('common.appearance')));const stored=readStoredJSON('localStorage',appStorageKey('common.canvas')),data=Array.isArray(stored)?stored:null;makeCanvasModel();shared.replaceInitial(data||seed());renderPeople();renderRecent();setPanelOpen(false);if(!data||appBasePath!=='/'){initialFitNeeded=true;nextFrame(fitInitialCanvas)}}
 loadSandbox();
 setupMedia();
 initGeometry().then(()=>{if(!disposed){$('#engine-label').textContent='Canvas ready';$('#engine-label').title=geometryBackend()}});
@@ -364,16 +412,16 @@ function updatePresence(){const count=sandbox?1:participants.length;$('#member-c
 function renderRecent(){$('.recent-count').textContent=savedRooms().length;$('#recent-rooms').innerHTML=savedRooms().length?savedRooms().slice(0,4).map(r=>`<a class="recent-room" href="${esc(appPath('/room/'+encodeURIComponent(r.id)))}"><span class="room-dot"></span><span>${esc(r.name)}</span>${icon('ArrowUpRight',12)}</a>`).join(''):'<p class="no-recent">No recent sessions</p>'}
 function createModal(){
   if(disposed)return;
-  modal(`<span class="modal-symbol">${icon('Plus',25)}</span><h2 id="modal-title">Create a session</h2><p>Give your team a place to begin.</p><form id="create-form"><label>Session name<input name="name" placeholder="e.g. Weekly product review" maxlength="60" required value="Team workspace"></label><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" required autocomplete="given-name"></label><label>Room password<span class="field-help">Share this with your team separately.</span><input name="password" type="password" minlength="8" maxlength="128" placeholder="At least 8 characters" required autocomplete="new-password"></label>${renderSessionTemplates()}<button class="primary modal-submit">Create session ${icon('ArrowRight',17)}</button><small class="form-footnote">${icon('LockKeyhole',12)} Link and password required to join.</small></form>`,async e=>{
-    e.preventDefault();const form=e.target,current=dialogOperation(form),button=form.querySelector('button');
+  modal(`<span class="modal-symbol">${icon('Plus',25)}</span><h2 id="modal-title">Create a session</h2><p>Give your team a place to begin.</p><form id="create-form"><label>Session name<input name="name" placeholder="e.g. Weekly product review" maxlength="60" required value="Team workspace"></label><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" required autocomplete="given-name"></label><label>Room password<span class="field-help">Share this with your team separately.</span><input name="password" type="password" minlength="8" maxlength="128" placeholder="At least 8 characters" required autocomplete="new-password"></label>${renderAppearancePicker(appearance,{compact:true})}${renderSessionTemplates()}<button class="primary modal-submit">Create session ${icon('ArrowRight',17)}</button><small class="form-footnote">${icon('LockKeyhole',12)} Link and password required to join.</small></form>`,async e=>{
+    e.preventDefault();const form=e.target,current=dialogOperation(form),button=form.querySelector('.modal-submit');
     button.disabled=true;button.textContent='Creating…';
     try{
-      const values=Object.fromEntries(new FormData(form)),plan=readWorkshop(form);
-      const result=await api('/api/rooms',{name:values.name,displayName:values.displayName,password:values.password,collaboration:'peer',...(plan?{workshop:plan}:{})});
+      const values=Object.fromEntries(new FormData(form)),plan=readWorkshop(form),style=readAppearancePicker(form);
+      const result=await api('/api/rooms',{name:values.name,displayName:values.displayName,password:values.password,collaboration:'peer',appearance:style,...(plan?{workshop:plan}:{})});
       if(!current())return;result.displayName=values.displayName;saveAuth(result);saveRoom(result.room);closeModal();await enterRoom(result,true);if(!disposed&&auth===result)inviteModal();
     }catch(error){if(!current())return;formError(form,error.message);button.disabled=false;button.innerHTML='Create session '+icon('ArrowRight',17)}
   });
-  bindSessionTemplates($('#create-form'));
+  const unbindTemplate=bindSessionTemplates($('#create-form')),unbindStyle=bindAppearancePicker($('#create-form'));modalCleanup=()=>{unbindTemplate();unbindStyle()};
 }
 function inviteModal(){if(disposed||!auth)return;const url=appURL('/room/'+encodeURIComponent(auth.room.id));modal(`<span class="modal-symbol">${icon('UserPlus',25)}</span><h2 id="modal-title">Invite your team</h2><p>Anyone with this link and the session password can join. Windows load when you watch them.</p><label class="link-label">SESSION LINK<div class="copy-field"><input id="invite-link" readonly value="${esc(url)}"><button class="button" id="copy-link">${icon('Copy',16)} Copy</button></div></label><div class="invite-password">${icon('LockKeyhole',17)}<div><strong>Share the password separately.</strong><span>Your password is never included in the link.</span></div></div><button class="primary modal-submit" id="done-invite">Done ${icon('ArrowRight',16)}</button>`);const copyButton=$('#copy-link'),linkInput=$('#invite-link'),revision=modalRevision;copyButton.onclick=async()=>{const current=()=>!disposed&&modalRevision===revision&&copyButton.isConnected;try{await navigator.clipboard.writeText(url);if(!current())return;copyButton.innerHTML=icon('Check',16)+' Copied';toast('Session link copied')}catch{if(!current())return;linkInput.select();toast('Select and copy the session link')}};$('#done-invite').onclick=closeModal}
 async function joinFromPath(id){if(disposed)return;const lookup=++roomLookupGeneration,generation=sessionGeneration,revision=modalRevision,current=()=>!disposed&&lookup===roomLookupGeneration&&generation===sessionGeneration&&revision===modalRevision;const saved=savedAuth(id);if(saved){await enterRoom(saved);return}let room;try{({room}=await api('/api/rooms/'+encodeURIComponent(id)));if(!current())return}catch(err){if(!current())return;toast(err.message);if(!sandbox){location.replace(appPath('/'));return}history.replaceState(null,'',appPath('/'));return}modal(`<span class="modal-symbol">${icon('DoorOpen',26)}</span><h2 id="modal-title">${esc(room.name)}</h2><p>Enter your name and the session password.</p><form><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" autocomplete="given-name" required></label><label>Room password<input name="password" type="password" required autocomplete="current-password" placeholder="The password from your host"></label><button class="primary modal-submit">Join session ${icon('ArrowRight',17)}</button></form>`,async e=>{e.preventDefault();const form=e.target,b=form.querySelector('button'),current=dialogOperation(form);b.disabled=true;try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms/'+encodeURIComponent(id)+'/join',vals);if(!current())return;result.displayName=vals.displayName;saveAuth(result);saveRoom(result.room);closeModal();await enterRoom(result)}catch(err){if(!current())return;formError(form,err.message);b.disabled=false}})}
@@ -384,7 +432,7 @@ async function enterRoom(result,isNew=false){
   capture?.stop().catch(()=>{});walkthrough?.stop();
   intentionalClose=true;cancelLater(reconnectTimer);socket?.close();media?.destroy();
   featuredSession?.reset();sessionGuide?.reset();workshop=result.workshop||null;sessionCapabilities={};
-  auth=result;sandbox=false;connected=false;intentionalClose=false;localStream=null;roomSeeded=!isNew;
+  auth=result;sandbox=false;connected=false;intentionalClose=false;localStream=null;roomSeeded=!isNew;clearPendingAppearance();applyRoomAppearance(result.room.appearance);
   participants=[];chat=[];ensureConversation().resetSession({sandbox:false,connected:false,participantId:result.participantId});screenSubscriptions.reset();board.setScreenSubscriptions([],result.participantId);
   makeCanvasModel();roomName=result.room.name;
   history.pushState(null,'',appPath('/room/'+encodeURIComponent(result.room.id)));
@@ -443,7 +491,7 @@ function setConnection(status){
   agentTools?.refresh();
   agentPermissions?.state();webMCP?.refresh();
   publishEmbedState();
-  sharingControls?.updateContext();refreshSessionGuide();
+  sharingControls?.updateContext();refreshSessionGuide();refreshAppearanceDialog();
 }
 function syncPeople(){
   if(disposed||!media)return;
@@ -483,7 +531,7 @@ async function connect(){
     switch(m.type){
       case 'init':{
         diagnostics.record('request',{requestId:m.diagnostics?.requestId});
-        auth.room=m.room;saveAuth(auth);
+        auth.room=m.room;applyRoomAppearance(m.room.appearance);saveAuth(auth);
         sessionCapabilities=m.capabilities||{};workshop=m.workshop||null;participants=m.participants;auth.isAdmin=!!m.self?.isAdmin;saveAuth(auth);setConnection('connected');chat=m.chat||[];renderChat();
         if(!isPeerRoom())receiveCanvas(()=>{if(!shared.entities.size&&!shared.tombstones.size)shared.replaceInitial(m.entities);else{const incoming=new Set(m.entities.map(e=>e.id));for(const entity of shared.all())if(!incoming.has(entity.id))shared.deleteLocal(entity.id);for(const entity of m.entities)shared.setLocal(entity)}});
         if(!roomSeeded){
@@ -493,6 +541,7 @@ async function connect(){
         refreshCanvas();syncPeople();break;
       }
       case 'participants':participants=m.participants;syncPeople();break;
+      case 'appearance':applyRoomAppearance(m.appearance);break;
       case 'workshop':workshop=m.workshop||null;refreshSessionGuide();break;
       case 'checklist':participants=participants.map(person=>person.id===m.id?{...person,checklist:m.checklist}:person);refreshSessionGuide();break;
       case 'upsert':if(!isPeerRoom())receiveCanvas(()=>shared.setLocal(m.entity));break;
@@ -507,7 +556,7 @@ async function connect(){
         toast('This session has ended. Your host closed the room.');
         modal(`<span class="modal-symbol">${icon('Sunset',25)}</span><h2 id="modal-title">Session ended</h2><p>The host has ended this session.</p><button class="primary modal-submit" id="back-home">Back to your canvas ${icon('ArrowRight',16)}</button>`);
         $('#back-home').onclick=()=>location.href=appPath('/');break;
-      case 'error':chatPanel?.transportError();toast(m.error);break;
+      case 'error':if(pendingAppearance&&['INVALID_ROOM_APPEARANCE','FORBIDDEN'].includes(m.code)){clearPendingAppearance();if(appearanceDialog){formError(appearanceDialog.form,m.error);refreshAppearanceDialog()}}chatPanel?.transportError();toast(m.error);break;
     }
   };
   ws.onclose=e=>{
@@ -638,7 +687,7 @@ async function showMediaExports(){
   disconnectExports=disconnectMediaExport;
   openMediaExportDialog({capture,modal,closeModal,onStatus:toast});
 }
-function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#connection-details').onclick=showConnectionDetails;$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
+function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented||e.isComposing||disposed)return;
   if(e.key==='Escape'){

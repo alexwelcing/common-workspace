@@ -1,5 +1,18 @@
 # Common releases
 
+## 1.3.0 — 2026-10-18
+
+Room styling is shared by the hosted app, local Bun rooms, and portable module **0.3.0**.
+
+- Choose **Meadow**, **Rose**, **Lagoon**, or **Lavender** while creating a session, or use **Canvas options → Room style** afterward. Custom accent and canvas colors pair with dots, grid, or plain backgrounds; the editor previews changes before applying them.
+- The host owns the room style. Authenticated updates synchronize to participants, late joins, and reloads through both WebSocket and hosted polling. Catch-up pages apply their canonical style once instead of replaying obsolete colors. Existing rooms default to Meadow, and personal Canvas style stays in browser-local storage.
+- Interface colors remain readable when custom accents are very light or bright. Styling preserves existing object colors and never requests capture, changes agent grants, or edits canvas history.
+- PNG snapshots, canvas recordings, and SVG exports reflect the room background. Floating and inline embeds keep their theme inside their own document and restore owned variables during teardown.
+- Styles accept bounded preset/hex-color/pattern data rather than custom CSS or remote assets. An additive nullable `appearance` JSONB migration supports hosted persistence; local room files remain compatible. Handshakes advertise `roomStyling:1` for compatible controls.
+- The development workflow now defaults to five real browser journeys with one build, readable step reports, screenshots, and native peer verification. Deeper concurrency/auth/cancellation checks remain explicit by scope. Redundant runners/builds were removed, and partial harness startup cleans up its disposable database schema.
+
+Verification extends the existing five journeys for style creation, shared updates, host-only controls, reload persistence, and PNG background pixels. No new checked-in test cases or suites. Temporary color/contrast, export rasterization, persistence, authorization, and paged-polling probes supplement the relevant scoped checks.
+
 ## 1.2.0 — 2026-10-18
 
 Mobile participation, touch navigation, and keyboard-aware layouts are included in the hosted app and portable Bun module **0.2.0**.

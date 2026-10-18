@@ -10,7 +10,7 @@ WebAssembly runs the canvas geometry kernel for grid snapping and drawing simpli
 
 Common includes a portable module for an inline canvas panel or a floating workspace inside your own application. `createCommon` from `common-workspace/bun` attaches to your existing fetch/WebSocket server; `mountCommon` from `common-workspace/client` loads the interface in a same-origin iframe. It opens no additional port, needs no UI framework, and defaults to private networking and in-memory rooms. Your authentication can protect the mount, while Common room passwords and visible agent grants still apply.
 
-Download the package and its SHA-256 checksum from the [v1.2.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.2.0), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.2.0.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
+Download the package and its SHA-256 checksum from the [v1.3.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.3.0), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.3.0.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
 
 The package includes the example: run `bun node_modules/common-workspace/example/server.mjs` in a project where you installed it, then open `http://127.0.0.1:3100`.
 
@@ -99,6 +99,14 @@ Choose **Team walkthrough**, **Weekly check-in**, or **Design review** when crea
 4. **Follow featured** shows the host's selection in this browser. **Explore canvas** or Back/Escape leaves that view so you can write and draw. Following never starts screen capture or resumes a window you paused; **Resume watching** does that explicitly.
 
 The planning list is not an identity check or invitation restriction. Everyone still needs the room link and password. Checkboxes belong to the signed-in room participant; only the host can choose the shared featured person. The planning list is bounded to 200 names and the checklist to 12 items to keep setup manageable; additional people can still join. Session metadata and checklist state use the existing room service and expire with the room. Canvas content remains ephemeral and lives in the participating browsers. The app does not send invitations for you.
+
+## Give a room its own style
+
+Choose **Room style** while creating a session, or open **Canvas options → Room style** afterward. Start with **Meadow**, **Rose**, **Lagoon**, or **Lavender**, then choose custom accent and canvas colors and a **Little dots**, **Quiet grid**, or **Plain canvas** background. The preview stays in the editor until you apply it.
+
+The host controls the shared style; everyone receives it when joining, reconnecting, or reloading. Room style works in freeform and guided rooms on Netlify, standalone Bun, and embedded installations. Participants can inspect the style, while only the host can apply changes. Existing rooms start in Meadow.
+
+Room colors style the interface and background. Existing notes, drawings, and diagrams keep their own colors; a dark canvas can need lighter text. PNG snapshots, canvas recordings, and SVG exports include the background. A personal canvas has **Canvas options → Canvas style**, saved only in this browser. Styling needs no account, external asset, or new service.
 
 ## Phones and tablets
 

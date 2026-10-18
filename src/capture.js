@@ -1,3 +1,5 @@
+import { canvasBackground } from './canvas-background.js';
+
 const MiB = 1024 * 1024;
 const captureError = (message, code) => Object.assign(new Error(message), { code });
 const SAFE_RASTER = /^data:image\/(?:png|jpe?g|webp|gif|avif);base64,/i;
@@ -24,7 +26,7 @@ export class CanvasCapture {
     this.getSession = getSession || (() => this.getBoard());
     this.limits = { maxDurationMs: Math.max(1, Math.min(300000, maxDurationMs)), maxRecordingBytes: Math.max(1, Math.min(100 * MiB, maxRecordingBytes)), maxTotalBytes: Math.max(1, Math.min(150 * MiB, maxTotalBytes)), maxRecords: Math.max(1, Math.min(3, Math.floor(maxRecords))) };
     this.fps = Math.min(15, Math.max(1, fps));
-    this.records = new Map(); this.assets = new Map(); this.urls = new Set(); this.downloadTimers = new Set(); this.current = null; this.starting = false; this.pending = null; this.generation = 0; this.destroyed = false; this.nextId = 0;
+    this.records = new Map(); this.assets = new Map(); this.urls = new Set(); this.downloadTimers = new Set(); this.current = null; this.starting = false; this.pending = null; this.generation = 0; this.destroyed = false; this.nextId = 0; this.backgroundPattern = null;
   }
 
   status() {
@@ -244,6 +246,7 @@ export class CanvasCapture {
     for (const timer of this.downloadTimers) this.clearTimeout(timer);
     this.downloadTimers.clear();
     for (const url of this.urls) this._revoke(url);
+    this.backgroundPattern = null;
     this._changed();
   }
 
@@ -309,17 +312,47 @@ export class CanvasCapture {
 
   _drawFrame(canvas, board) {
     const ctx = canvas.getContext('2d'); const view = board.getView?.() || { x: 0, y: 0, zoom: 1 };
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#f5f6f2'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const background = canvasBackground(board.el);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = background.color; ctx.fillRect(0, 0, canvas.width, canvas.height);
     const width = Math.max(1, finite(board.el.clientWidth, canvas.width)), height = Math.max(1, finite(board.el.clientHeight, canvas.height));
     const scale = Math.min(canvas.width / width, canvas.height / height);
     ctx.save(); ctx.translate((canvas.width - width * scale) / 2, (canvas.height - height * scale) / 2); ctx.scale(scale, scale);
-    ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip(); ctx.translate(finite(view.x), finite(view.y)); ctx.scale(Math.max(.01, finite(view.zoom, 1)), Math.max(.01, finite(view.zoom, 1)));
+    ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip();
+    this._drawBackground(ctx, width, height, view, background);
+    ctx.translate(finite(view.x), finite(view.y)); ctx.scale(Math.max(.01, finite(view.zoom, 1)), Math.max(.01, finite(view.zoom, 1)));
     for (const entity of board.listVisibleEntities?.() ?? board.listEntities()) {
       ctx.save();
       try { ctx.translate(finite(entity.x), finite(entity.y)); this._drawEntity(ctx, entity, board); }
       finally { ctx.restore(); }
     }
     ctx.restore();
+  }
+  _drawBackground(ctx, width, height, view, background) {
+    if (background.pattern === 'plain') return;
+    // Match Board.updateView: pattern spacing follows zoom, while dots and grid
+    // lines stay the same visible thickness. A tiny reusable tile keeps recording
+    // frames bounded even when a zoomed-out canvas contains thousands of dots.
+    const spacing = Math.max(8, 20 * Math.max(.01, finite(view.zoom, 1)));
+    const key = `${background.pattern}:${background.patternColor}:${spacing}`;
+    let cached = this.backgroundPattern;
+    if (cached?.key !== key) {
+      const tile = this.document?.createElement('canvas');
+      if (!tile?.getContext || !ctx.createPattern) return;
+      tile.width = 64; tile.height = 64;
+      const tileContext = tile.getContext('2d');
+      if (!tileContext) return;
+      tileContext.fillStyle = background.patternColor;
+      if (background.pattern === 'dots') {
+        tileContext.beginPath(); tileContext.arc(32, 32, .8 * 64 / spacing, 0, Math.PI * 2); tileContext.fill();
+      } else {
+        tileContext.fillRect(0, 0, 64 / spacing, 64); tileContext.fillRect(0, 0, 64, 64 / spacing);
+      }
+      cached = { key, pattern: ctx.createPattern(tile, 'repeat') };
+      this.backgroundPattern = cached;
+    }
+    if (typeof cached.pattern?.setTransform !== 'function') return;
+    cached.pattern.setTransform({ a: spacing / 64, b: 0, c: 0, d: spacing / 64, e: finite(view.x), f: finite(view.y) });
+    ctx.fillStyle = cached.pattern; ctx.fillRect(0, 0, width, height);
   }
   _fitImage(ctx, image, x, y, width, height) {
     const imageWidth = image.videoWidth || image.naturalWidth || image.width, imageHeight = image.videoHeight || image.naturalHeight || image.height;

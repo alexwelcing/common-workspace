@@ -1,0 +1,83 @@
+/* Themes change room chrome, never the colours of someone’s canvas objects. */
+[data-room-appearance] { color: var(--ink); }
+[data-room-appearance] :is(button, a, input, textarea, select, summary):focus-visible { outline-color: var(--room-focus); }
+[data-room-appearance] .sidebar { background: var(--room-sidebar); }
+[data-room-appearance] :is(.brand, .title-row h1, .modal h2, .chat-empty strong, .chat-message strong, .session-guide-section-heading h3, .session-guide-feature-text, .session-guide-person-copy strong, .sharing-strip-copy strong) { color: var(--ink); }
+[data-room-appearance] :is(.brand-mark, .nav-badge, .recent-count, .panel-tab span, .panel-toggle .panel-unread, .modal-symbol, .sharing-strip-mark) { background: var(--sage); color: var(--green); border-color: var(--border); }
+[data-room-appearance] :is(.nav-item, .recent-room, .sidebar-bottom p, .sidebar-note, #how-it-works, .eyebrow, .privacy-label, .canvas-label, #toggle-panel, .tool, .zoom-controls .icon-button, #zoom-label, .chat-message p, .modal label, .tour-steps strong, .sessions-list a) { color: var(--muted); }
+[data-room-appearance] :is(.nav-item:hover, .recent-room:hover, .tool:hover, .panel-tab:hover, .button:hover, .board-layer-row:hover) { background: var(--room-hover); border-color: var(--border); color: var(--green); }
+[data-room-appearance] :is(.nav-item.active, .tool.selected, .panel-tab.active, .session-guide-next, .session-guide-person.is-featured, .session-guide-participation-choice[aria-pressed='true'], .session-guide-participation.capture-unavailable .session-guide-participation-choice:last-child) { background: var(--sage); color: var(--green); border-color: var(--room-strong-border); }
+[data-room-appearance] :is(.small-dot, .room-dot, .person-online, .board-live-badge i, .board-window-dot, .session-guide-person.is-sharing .session-guide-person-dot) { background: var(--room-accent); }
+[data-room-appearance] .primary:not(.danger-fill):not(.is-sharing):not(.is-requesting), [data-room-appearance] .board-dialog-actions button.primary { color: var(--room-primary-on); background: var(--room-accent); border-color: var(--room-strong-border); }
+[data-room-appearance] .primary:not(.danger-fill):not(.is-sharing):not(.is-requesting):hover, [data-room-appearance] .board-dialog-actions button.primary:hover { color: var(--room-primary-on); background: var(--room-primary-hover); border-color: var(--room-strong-border); }
+[data-room-appearance] :is(.canvas-bar, .session-guide-body, .session-guide-claim, .session-guide-participation-choice, .session-guide-follow, .session-guide-small-button) { background: var(--surface); border-color: var(--border); }
+[data-room-appearance] .canvas-toolbar { border-color: var(--border); }
+[data-room-appearance] :is(.session-guide, .sharing-strip:not([data-phase='requesting']):not([data-phase='error']):not([data-phase='blocked']), .invite-password) { background: var(--room-hover); border-color: var(--border); }
+[data-room-appearance] :is(.session-guide-follow, .session-guide-next, .session-guide-small-button, .session-guide-claim-label, .session-guide-participation legend, .session-guide-participation-choice, .session-guide-task, .session-guide-task.is-derived, .invite-password, .invite-password strong, .invite-dashed, .panel-bottom-tip svg, .session-guide-share) { color: var(--green); }
+[data-room-appearance] :is(.session-guide-share, .invite-dashed, .board-live-badge, .board-consent-button, .board-screen-watch, .board-layer-row.is-selected) { background: var(--sage); border-color: var(--border); }
+[data-room-appearance] :is(.session-guide-follow:hover, .session-guide-next:hover, .session-guide-small-button:hover, .session-guide-share:hover, .invite-dashed:hover, .board-consent-button:hover, .board-screen-watch:hover) { background: var(--room-hover); color: var(--green); border-color: var(--room-strong-border); }
+[data-room-appearance] .session-guide-participation-choice[aria-pressed='true'] { box-shadow: inset 0 0 0 1px var(--room-strong-border); }
+[data-room-appearance] .session-guide-task input { accent-color: var(--room-accent); }
+[data-room-appearance] .session-guide-task.is-complete .session-guide-check { color: var(--green); }
+[data-room-appearance] .session-guide-participation.capture-unavailable { background: var(--room-hover); border-color: var(--border); }
+[data-room-appearance] :is(.modal input:not([type='checkbox']), .modal textarea, .modal select, #chat-form) { background: var(--surface); border-color: var(--border); color: var(--ink); }
+[data-room-appearance] #chat-text { color: var(--ink); }
+[data-room-appearance] .chat-panel #chat-form:focus-within { border-color: var(--room-focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--room-focus), transparent 85%); }
+[data-room-appearance] :is(#chat-form button, .chat-panel .chat-jump) { background: var(--sage); color: var(--green); border-color: var(--border); }
+[data-room-appearance] .chat-panel .chat-message-own { border-color: var(--sage); }
+[data-room-appearance] :is(.chat-empty, .chat-compose-meta, .chat-send-status:not(.chat-unconfirmed)) { color: var(--muted); }
+[data-room-appearance] :is(.modal, .modal-symbol) { border-color: var(--border); }
+[data-room-appearance] .toast { background: var(--green); color: #fff; }
+[data-room-appearance] :is(.common-board, #board-viewport) { background-color: var(--room-canvas); background-image: radial-gradient(circle, var(--room-pattern-color) .8px, transparent .8px); }
+[data-room-pattern='grid'] :is(.common-board, #board-viewport), :is(.common-board, #board-viewport)[data-room-pattern='grid'] { background-image: linear-gradient(to right, var(--room-pattern-color) 1px, transparent 1px), linear-gradient(to bottom, var(--room-pattern-color) 1px, transparent 1px); }
+[data-room-pattern='plain'] :is(.common-board, #board-viewport), :is(.common-board, #board-viewport)[data-room-pattern='plain'] { background-image: none; }
+[data-room-appearance] .canvas-top-hint { color: var(--room-canvas-ink); }
+[data-room-appearance] .hint-icon { color: inherit; }
+[data-room-appearance] .board-entity.is-selected::after { border-color: var(--room-canvas-focus); }
+[data-room-appearance] .common-board:focus-visible { outline-color: var(--room-canvas-focus); }
+[data-room-appearance] .board-resize-handle::after { border-color: var(--room-focus); }
+
+/* All custom colour preview styles are confined to the form fragment. */
+.appearance-details { margin: 20px 0; padding: 0; border: 1px solid var(--border); border-radius: 11px; }
+.appearance-details > summary { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 10px 12px; cursor: pointer; color: var(--green); font-size: 13px; list-style: none; }
+.appearance-details > summary::-webkit-details-marker { display: none; }
+.appearance-details > summary::after { margin-left: auto; content: '+'; font-size: 19px; line-height: 1; }
+.appearance-details[open] > summary::after { content: '−'; }
+.appearance-details-hint { color: var(--muted); font-size: 11px; }
+.appearance-details > .appearance-picker { padding: 5px 12px 13px; }
+.appearance-picker { min-width: 0; color: var(--ink); }
+.appearance-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.appearance-legend { margin: 0 0 13px; padding: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.appearance-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.appearance-preset { display: flex; align-items: center; justify-content: flex-start; gap: 9px; min-width: 0; min-height: 48px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 12px; text-align: left; }
+.appearance-preset:hover { background: var(--room-hover, var(--sage)); }
+.appearance-preset[aria-pressed='true'] { border-color: var(--green); box-shadow: inset 0 0 0 1px var(--green); }
+.appearance-preset-check { margin-left: auto; color: var(--green); visibility: hidden; }
+.appearance-preset[aria-pressed='true'] .appearance-preset-check { visibility: visible; }
+.appearance-swatch { display: grid; align-items: end; width: 27px; height: 28px; padding: 4px; flex: none; overflow: hidden; border: 1px solid #00000020; border-radius: 7px 7px 7px 2px; background: var(--swatch-canvas); }
+.appearance-swatch > span { height: 10px; border-radius: 3px 3px 3px 1px; background: var(--swatch-accent); }
+.appearance-custom { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 17px; }
+.appearance-picker .appearance-colour-label, .appearance-picker .appearance-pattern-label { display: grid; gap: 6px; min-width: 0; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.appearance-colour-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.appearance-picker input[type='color'] { display: block; flex: none; width: 46px; height: 44px; min-height: 44px; margin: 0; padding: 4px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); font-size: 16px; cursor: pointer; }
+.appearance-picker input[type='color']::-webkit-color-swatch-wrapper { padding: 0; }
+.appearance-picker input[type='color']::-webkit-color-swatch { border: 1px solid #00000020; border-radius: 5px; }
+.appearance-picker input[type='color']::-moz-color-swatch { border: 1px solid #00000020; border-radius: 5px; }
+.appearance-colour-control code { min-width: 0; overflow: hidden; color: var(--muted); font: 11px ui-monospace, monospace; text-overflow: ellipsis; }
+.appearance-picker .appearance-pattern-label { margin-top: 15px; }
+.appearance-picker select { display: block; width: 100%; min-width: 0; min-height: 44px; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--ink); font-size: 16px; }
+.appearance-preview { min-width: 0; margin-top: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 11px 11px 11px 4px; background: var(--paper); color: var(--ink); }
+.appearance-preview-bar { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 7px 9px; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 10px; }
+.appearance-preview-bar > span:first-child { color: var(--green); font-size: 18px; }
+.appearance-preview-button { margin-left: auto; padding: 5px 7px; border: 1px solid var(--room-strong-border); border-radius: 6px; background: var(--room-accent); color: var(--room-primary-on); font-size: 9px; white-space: nowrap; }
+.appearance-preview-canvas { display: flex; align-items: center; justify-content: center; gap: 15px; min-height: 104px; padding: 14px; background-color: var(--room-canvas); background-image: radial-gradient(circle, var(--room-pattern-color) .8px, transparent .8px); background-size: 15px 15px; }
+.appearance-preview[data-room-pattern='grid'] .appearance-preview-canvas { background-image: linear-gradient(to right, var(--room-pattern-color) 1px, transparent 1px), linear-gradient(to bottom, var(--room-pattern-color) 1px, transparent 1px); }
+.appearance-preview[data-room-pattern='plain'] .appearance-preview-canvas { background-image: none; }
+.appearance-preview-note { display: grid; align-items: center; width: 104px; min-height: 62px; padding: 10px; border-radius: 4px 4px 10px 4px; background: #f0e4ad; color: #514a31; box-shadow: 0 3px 8px #00000010; font-family: Georgia, serif; font-size: 13px; line-height: 1.4; transform: rotate(-3deg); }
+.appearance-preview-note-second { background: #e8eddc; color: #3f5139; transform: rotate(3deg) translateY(5px); }
+.appearance-picker-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 10px; margin-top: 9px; }
+.appearance-help { flex: 1 1 170px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.appearance-canvas-note { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.appearance-reset { min-height: 44px; padding: 7px 0; color: var(--green); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
+.appearance-fields:disabled { opacity: .7; }
+@media (max-width: 380px) { .appearance-details-hint { display: none; } .appearance-colour-control { gap: 5px; } .appearance-colour-control code { font-size: 10px; } .appearance-preview-bar { flex-wrap: wrap; } }
