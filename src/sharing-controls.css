@@ -28,3 +28,11 @@
   .sharing-strip-body { flex-basis:calc(100% - 40px); }
   .sharing-help[open] { max-height:140px; overflow-y:auto; }
 }
+@media (pointer:coarse), (max-width:650px) {
+  .share-button, .sharing-strip-actions .button { min-height:44px; }
+  .sharing-strip-actions .icon-button { width:44px; height:44px; }
+  .sharing-help summary { display:flex; align-items:center; min-height:44px; }
+  .sharing-help a { display:flex; align-items:center; min-height:44px; }
+  .sharing-strip-actions { flex-wrap:wrap; }
+  .sharing-help[open] { max-height:min(240px,35dvh); }
+}

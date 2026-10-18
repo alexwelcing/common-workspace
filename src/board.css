@@ -167,3 +167,15 @@
 .board-focus-actions[hidden] { display: none; }
 .board-focus-actions .board-screen-watch, .board-focus-actions .board-screen-pause { margin: 0; min-height: 40px; font-size: 12px; }
 @media (max-width: 540px) { .board-focus-bar:has(.board-focus-actions:not([hidden])) { flex-wrap: wrap; } .board-focus-actions:not([hidden]) { width: 100%; padding-top: 4px; border-top: 1px solid var(--border, #e3dfd3); text-align: right; } }
+
+@media (pointer: coarse), (max-width: 540px) {
+  .board-mini-button { flex-basis: 44px; width: 44px; height: 44px; }
+  .board-labeled-button, .board-focus-back, .board-screen-focus { flex-basis: auto; width: auto; min-width: 44px; min-height: 44px; }
+  .board-layers-toggle, .board-layer-select, .board-screen-watch, .board-screen-pause, .board-consent-button, .board-dialog-actions button { min-width: 44px; min-height: 44px; }
+  .board-layer-row { min-height: 52px; }
+  .board-focus-actions .board-screen-watch, .board-focus-actions .board-screen-pause { min-height: 44px; }
+  .board-resize-handle { width: 44px; height: 44px; }
+  .board-resize-handle::after { inset: 14px; }
+  .board-screen-footer { height: 48px; }
+  .board-screen-frame { height: calc(100% - 92px); }
+}

@@ -1,5 +1,20 @@
 # Common releases
 
+## 1.2.0 — 2026-10-18
+
+Mobile participation, touch navigation, and keyboard-aware layouts are included in the hosted app and portable Bun module **0.2.0**.
+
+- Pinch to zoom around the two-finger midpoint and slide two fingers to pan. Converting a drag or drawing into navigation cancels the unfinished edit without broadcasting it or adding undo history. Remote updates remain intact. A single-finger edit commits on release.
+- Pinching out of Focus keeps the current scale and opts into Explore. Mobile Focus hides the drawing and zoom palettes for an unobstructed presentation; Back restores them.
+- Guided participants explicitly choose **Share a window** or **Watch & contribute**. Viewers can become ready by completing their manual tasks without approving capture. An optional window row continues to show actual capture status, and a viewer's real shared window can still be featured.
+- The additive `guidedParticipation:1` capability enables the choice. Older servers keep their existing presenter flow. Mode changes affect only the authenticated participant, preserve progress, and use existing local/hosted persistence without a database migration.
+- Capture capability is checked before asking. Unsupported browsers receive **Sharing help** and **Join without sharing**, without attempting an impossible browser picker. Participation never starts/stops capture or unpauses video.
+- Main touch controls use 44px targets, phone text inputs avoid automatic focus zoom, and People/chat has a close control with focus return. Touch hints explain navigation and editing.
+- The app follows the visible viewport and safe areas when browser chrome or the keyboard changes. Viewport observation batches updates, preserves accessibility zoom, and restores prior state on teardown. Floating module mounts observe the parent viewport independently; inline mounts stay in host layout.
+- Updated local/module instructions describe touch navigation, viewer readiness, permissions, and mobile browser limits. No required service, account, relay, or new infrastructure is introduced.
+
+Verification passed lint, all 232 existing checks with real Postgres, hosted and portable builds, manifest consistency, and standalone startup. Temporary native Chromium touch, responsive-layout, viewport/SDK lifecycle, and two-browser Postgres polling walkthroughs checked pinch cancellation, viewer readiness, persisted progress, chat, keyboard contraction, focus return, and unchanged host capture. No new checked-in test cases or suites. Physical-device keyboard, capture, and cross-device media behavior remain a team-device verification step.
+
 ## 1.1.0 — 2026-10-18
 
 Common brings guided team sessions, an installable Bun module, and the canvas, chat, permissions, and reliability improvements from the complete release branch to `main`. The portable module is promoted from `0.1.0-embed.5` to `0.1.0`.

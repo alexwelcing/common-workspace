@@ -18,6 +18,15 @@ export class ScreenShareControls {
     this.action.onclick=()=>this.onAction();
     this.dismiss.onclick=()=>{this.dismissed=true;this.render()};
     this.button.setAttribute('aria-describedby','sharing-detail');
+    this.showUnsupportedHelp=event=>{
+      const support=this.getContext().captureSupport;
+      if(support?.available!==false||this.state.phase==='sharing'||this.state.requestPending)return;
+      // Unsupported capture is an explanation, not a request that can succeed.
+      // Keep the main button useful without reopening an impossible picker.
+      event.preventDefault();event.stopImmediatePropagation();this.dismissed=false;this.render();
+      this.help.open=true;
+    };
+    this.button.addEventListener('click',this.showUnsupportedHelp,true);
     this.render();
   }
 
@@ -30,17 +39,19 @@ export class ScreenShareControls {
   updateContext(){if(!this.destroyed)this.render()}
 
   render() {
-    const state=this.state,context=this.getContext(),sharing=state.phase==='sharing',pending=state.requestPending;
+    const context=this.getContext(),sharing=this.state.phase==='sharing',pending=this.state.requestPending;
+    const unsupported=!sharing&&!pending&&context.captureSupport?.available===false;
+    const state=unsupported?{...this.state,...context.captureSupport,phase:'blocked'}:this.state;
     this.node.dataset.phase=state.phase;
     this.node.hidden=this.dismissed||state.phase==='idle';
     this.button.classList.toggle('is-sharing',sharing);
     this.button.classList.toggle('is-requesting',pending);
     this.button.disabled=state.phase==='abandoning';
-    const label=sharing?'Stop sharing':pending?'Cancel request':'Share a window';
-    this.button.innerHTML=this.icon(sharing?'MonitorX':pending?'X':'MonitorUp',17)+' '+label;
+    const label=sharing?'Stop sharing':pending?'Cancel request':unsupported?'Sharing help':'Share a window';
+    this.button.innerHTML=this.icon(sharing?'MonitorX':pending?'X':unsupported?'CircleHelp':'MonitorUp',17)+' '+label;
     this.button.setAttribute('aria-label',label);this.button.setAttribute('aria-pressed',String(sharing));
     this.button.setAttribute('aria-busy',String(pending));
-    this.button.title=pending?'The browser picker is waiting for your choice':sharing?'Stop sharing your chosen source':'Choose a tab, window, or screen';
+    this.button.title=pending?'The browser picker is waiting for your choice':sharing?'Stop sharing your chosen source':unsupported?'See why window sharing is unavailable and how you can still take part':'Choose a tab, window, or screen';
     this.title.textContent=sharing?`${state.source?.label||'Chosen source'} · ${state.paused?'paused by browser':'sharing'}`:state.title||'';
     if(sharing){
       const viewers=state.viewerCount||0;
@@ -65,5 +76,5 @@ export class ScreenShareControls {
     this.node.querySelector('.sharing-strip-mark').innerHTML=this.icon(sharing?'MonitorUp':pending?'MonitorUp':state.phase==='stopped'?'Check':'CircleHelp',17);
   }
 
-  destroy(){if(this.destroyed)return;this.destroyed=true;this.button.removeAttribute('aria-describedby');this.node.remove()}
+  destroy(){if(this.destroyed)return;this.destroyed=true;this.button.removeEventListener('click',this.showUnsupportedHelp,true);this.button.removeAttribute('aria-describedby');this.node.remove()}
 }

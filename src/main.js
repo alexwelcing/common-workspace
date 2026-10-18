@@ -1,6 +1,7 @@
 import './style.css';
 import './board.css';
 import './chat.css';
+import './mobile.css';
 import {ChatPanel} from './chat-panel.js';
 import {createElement, Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, X} from 'lucide';
 const icons={Check, Plus, LayoutDashboard, Layers, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, X};
@@ -19,6 +20,8 @@ import {prepareImage, clipboardImages, MAX_IMAGE_BATCH} from './image-import.js'
 import {ModalController} from './modal-controller.js';
 import {SessionGuide} from './session-guide.js';
 import {FeaturedSession} from './featured-session.js';
+import {displayCaptureSupport} from './browser-permissions.js';
+import {installMobileViewport} from './mobile-viewport.js';
 import {renderSessionTemplates,bindSessionTemplates,readWorkshop,templateCanvas} from './session-templates.js';
 import './session-templates.css';
 
@@ -42,7 +45,7 @@ let shared=null, peerCanvas=null, receivingCanvas=false;
 let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null, sharingControls=null;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
 let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor='#305e48', chatPanel=null;
-let workshop=null,sessionGuide=null,featuredSession=null;
+let workshop=null,sessionGuide=null,featuredSession=null,sessionCapabilities={},cleanupViewport=null;
 const screenSubscriptions=new ScreenSubscriptions();
 let subscriptionTimer, disposed=false, embedVisible=true, sessionGeneration=0, roomLookupGeneration=0, modalRevision=0, destroyPromise=null, disconnectExports=null, initialFitNeeded=false;
 const mainEvents=new AbortController(), appTimers=new Set(), appFrames=new Set(), activeRequests=new Set(), objectUrls=new Set(), embedListeners=new Set(), visibilityListeners=new Set();
@@ -71,6 +74,7 @@ function destroyCommon(){
   for(const frame of appFrames)cancelAnimationFrame(frame);appFrames.clear();
   for(const request of activeRequests)request.abort();activeRequests.clear();
   subscriptionResizeObserver.disconnect();
+  cleanupViewport?.();cleanupViewport=null;
   webMCP?.destroy();agentPermissions?.destroy();agentTools?.destroy();walkthrough?.stop();capture?.destroy();
   disconnectExports?.();
   if(socket){socket.onmessage=null;socket.onclose=null;socket.onerror=null;socket.close()}
@@ -195,14 +199,14 @@ $('#app').innerHTML=`
  <span id="engine-label" class="sr-only">Canvas ready</span><div class="canvas-bottom"><div class="zoom-controls"><button class="icon-button" id="zoom-out" aria-label="Zoom out">${icon('Minus',15)}</button><button id="zoom-label" title="Reset zoom" aria-label="Reset zoom">100%</button><button class="icon-button" id="zoom-in" aria-label="Zoom in">${icon('Plus',15)}</button><span></span><button class="icon-button" id="fit-canvas" aria-label="Fit canvas to view">${icon('Scan',16)}</button></div></div>
  <div class="drop-overlay" id="drop-overlay">${icon('ImagePlus',40)}<strong>Drop images onto the canvas</strong></div>
  </div>
- <aside class="right-panel collapsed" id="right-panel" aria-label="People and chat"><div class="panel-tabs"><button class="panel-tab active" data-panel="people">People <span id="people-number">1</span></button><button class="panel-tab" data-panel="chat">Chat <span id="chat-number" hidden>0</span></button></div><div id="panel-content"></div></aside>
+ <aside class="right-panel collapsed" id="right-panel" aria-label="People and chat"><div class="panel-tabs"><button class="panel-tab active" data-panel="people">People <span id="people-number">1</span></button><button class="panel-tab" data-panel="chat">Chat <span id="chat-number" hidden>0</span></button><button class="icon-button close-panel" id="close-panel" aria-label="Close people and chat">${icon('X',18)}</button></div><div id="panel-content"></div></aside>
  </section>
  <footer class="footer"><span id="footer-access">Saved on this device</span><span id="footer-tip">V Select · H Pan · P Draw</span></footer>
 </main><input type="file" id="image-input" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" multiple hidden>`;
 
 sharingControls=new ScreenShareControls({
   button:$('#share-screen'),insertAfter:$('.topbar'),icon,
-  getContext:()=>({sandbox,connected,roomName,recordingReady:!!agentTools}),
+  getContext:()=>({sandbox,connected,roomName,recordingReady:!!agentTools,captureSupport:displayCaptureSupport()}),
   onAction:()=>$('#share-screen').click(),onRecord:()=>agentTools?.openCapture()
 });
 
@@ -227,20 +231,22 @@ sessionGuide=new SessionGuide({el:$('#session-guide-root'),getContext:guideConte
   onWatchFeatured:()=>{const id=workshop?.featuredParticipantId;if(id&&screenSubscriptions.paused.has(id)){screenSubscriptions.toggle(id);syncScreenSubscriptions();refreshSessionGuide()}},onStatus:toast
 });
 function guideScreens(){const active=new Set(participants.map(person=>person.id));return shared?.all().filter(entity=>entity.type==='screen'&&active.has(entity.participantId))||[]}
-function guideContext(){return {workshop,participants,screens:guideScreens(),participantId:auth?.participantId,isAdmin:!!auth?.isAdmin,connected:!sandbox&&connected,following:featuredSession?.following!==false,featuredStatus:featuredSession?.status(),featuredPaused:screenSubscriptions.paused.has(workshop?.featuredParticipantId),sharePending:media?.getCaptureState().requestPending}}
+function guideContext(){return {workshop,participants,screens:guideScreens(),participantId:auth?.participantId,isAdmin:!!auth?.isAdmin,connected:!sandbox&&connected,participationSupported:sessionCapabilities.guidedParticipation===1,captureSupport:displayCaptureSupport(),following:featuredSession?.following!==false,featuredStatus:featuredSession?.status(),featuredPaused:screenSubscriptions.paused.has(workshop?.featuredParticipantId),sharePending:media?.getCaptureState().requestPending}}
 function refreshSessionGuide(){
   if(disposed)return;
-  if(!sandbox&&workshop)$('#room-subtitle').textContent='Follow the Session guide, share a window, and take a turn.';
+  if(!sandbox&&workshop)$('#room-subtitle').textContent='Follow the Session guide, contribute, and take a turn.';
   featuredSession?.update({workshop,connected:!sandbox&&connected,screens:guideScreens(),participants,participantId:auth?.participantId,paused:screenSubscriptions.paused.has(workshop?.featuredParticipantId)});
   sessionGuide?.update();
 }
 function positionCanvasOverlays(){
   if(disposed)return;
   const toolbar=$('.canvas-toolbar').getBoundingClientRect();
-  if(toolbar.height>0)document.documentElement.style.setProperty('--canvas-overlay-bottom',`${Math.max(0,window.innerHeight-toolbar.top)+14}px`);
+  const bottom=$('#board-viewport').getBoundingClientRect().bottom;
+  document.documentElement.style.setProperty('--canvas-overlay-bottom',`${toolbar.height>0?Math.max(0,bottom-toolbar.top)+14:64}px`);
 }
 const subscriptionResizeObserver=new ResizeObserver(()=>{scheduleScreenSubscriptions();positionCanvasOverlays()});
 subscriptionResizeObserver.observe($('#board-viewport'));
+cleanupViewport=installMobileViewport({onChange:()=>{positionCanvasOverlays();sessionGuide?.fitPanel();scheduleScreenSubscriptions()}});
 function isPeerRoom(){return !sandbox&&auth?.room?.collaboration==='peer'}
 function refreshCanvas(){if(!disposed&&shared){board.setEntities(shared.all());board.setLayerOrder(shared.getOrder());scheduleScreenSubscriptions()}}
 function scheduleScreenSubscriptions(){cancelLater(subscriptionTimer);if(!disposed)subscriptionTimer=later(syncScreenSubscriptions,150)}
@@ -332,12 +338,15 @@ loadSandbox();
 setupMedia();
 initGeometry().then(()=>{if(!disposed){$('#engine-label').textContent='Canvas ready';$('#engine-label').title=geometryBackend()}});
 
-function chooseTool(next){if(disposed)return;if(next==='image'){$('#image-input').click();return}if(next==='diagram'){diagramModal();return}board.setTool(next);document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>{const selected=e.dataset.tool===next;e.classList.toggle('selected',selected);e.setAttribute('aria-pressed',String(selected))});$('#canvas-hint').textContent=({select:'Drag to move · Enter to edit · Paste a screenshot',hand:'Drag to pan the canvas',draw:'Click and drag to draw',text:'Click to add text',sticky:'Click to add a note',rectangle:'Click and drag to draw a box',arrow:'Click and drag to draw an arrow'})[next]||''}
+function chooseTool(next){if(disposed)return;if(next==='image'){$('#image-input').click();return}if(next==='diagram'){diagramModal();return}board.setTool(next);document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>{const selected=e.dataset.tool===next;e.classList.toggle('selected',selected);e.setAttribute('aria-pressed',String(selected))});const touch=window.matchMedia?.('(pointer: coarse)')?.matches;$('#canvas-hint').textContent=(touch?{select:'Drag to move · Pinch to zoom · Select, then Edit',hand:'Drag to pan · Pinch to zoom',draw:'Drag to draw · Two fingers to move',text:'Tap to add text',sticky:'Tap to add a note',rectangle:'Drag to draw a box',arrow:'Drag to draw an arrow'}:{select:'Drag to move · Enter to edit · Paste a screenshot',hand:'Drag to pan the canvas',draw:'Click and drag to draw',text:'Click to add text',sticky:'Click to add a note',rectangle:'Click and drag to draw a box',arrow:'Click and drag to draw an arrow'})[next]||''}
+chooseTool('select');
 document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>e.onclick=()=>chooseTool(e.dataset.tool));
 $('#tool-color').oninput=e=>{activeColor=e.target.value;board.setColor(activeColor)};
 $('#zoom-in').onclick=()=>board.setZoom(Math.min(2,board.getView().zoom+.1));$('#zoom-out').onclick=()=>board.setZoom(Math.max(.25,board.getView().zoom-.1));$('#zoom-label').onclick=()=>board.setZoom(1);$('#fit-canvas').onclick=()=>board.fit();
 function setPanelOpen(open){if(!open)chatPanel?.setVisible(false);$('#right-panel').classList.toggle('collapsed',!open);$('#toggle-panel').setAttribute('aria-expanded',String(open));if(open&&rightPanel==='chat')chatPanel?.setVisible(true)}
 $('#toggle-panel').onclick=()=>setPanelOpen($('#right-panel').classList.contains('collapsed'));
+$('#close-panel').onclick=()=>{setPanelOpen(false);$('#toggle-panel').focus({preventScroll:true})};
+$('#right-panel').addEventListener('keydown',event=>{if(event.key==='Escape'&&!event.defaultPrevented&&!event.isComposing){event.preventDefault();$('#close-panel').click()}},{signal:mainEvents.signal});
 $('#new-session').onclick=()=>createModal();$('#invite').onclick=()=>sandbox?createModal():inviteModal();$('#how-it-works').onclick=tour;$('#sessions-nav').onclick=showSessions;$('#sandbox-nav').onclick=()=>{if(sandbox)board.fit();else location.href=appPath('/')};
 $('#room-menu').onclick=roomMenu;
 document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{rightPanel=b.dataset.panel;document.querySelectorAll('[data-panel]').forEach(e=>{const active=e===b;e.classList.toggle('active',active);e.setAttribute('aria-pressed',String(active))});renderPanel()});
@@ -374,14 +383,14 @@ async function enterRoom(result,isNew=false){
   agentPermissions?.revoke('session-changed');webMCP?.refresh();
   capture?.stop().catch(()=>{});walkthrough?.stop();
   intentionalClose=true;cancelLater(reconnectTimer);socket?.close();media?.destroy();
-  featuredSession?.reset();sessionGuide?.reset();workshop=result.workshop||null;
+  featuredSession?.reset();sessionGuide?.reset();workshop=result.workshop||null;sessionCapabilities={};
   auth=result;sandbox=false;connected=false;intentionalClose=false;localStream=null;roomSeeded=!isNew;
   participants=[];chat=[];ensureConversation().resetSession({sandbox:false,connected:false,participantId:result.participantId});screenSubscriptions.reset();board.setScreenSubscriptions([],result.participantId);
   makeCanvasModel();roomName=result.room.name;
   history.pushState(null,'',appPath('/room/'+encodeURIComponent(result.room.id)));
   $('#room-title').textContent=roomName;
   $('#session-kind').textContent='LIVE SESSION';$('#privacy-status').textContent='Password protected';
-  $('#room-subtitle').textContent=workshop?'Follow the Session guide, share a window, and take a turn.':'Share windows and work on the canvas together.';
+  $('#room-subtitle').textContent=workshop?'Follow the Session guide, contribute, and take a turn.':'Share windows and work on the canvas together.';
   $('#footer-access').textContent=isPeerRoom()?'Shared directly between browsers':'Password-protected room';
   document.title=roomName+' — Common';$('#sandbox-nav').classList.remove('active');$('#sessions-nav').classList.add('active');
   setPanelOpen(innerWidth>=1100);
@@ -475,7 +484,7 @@ async function connect(){
       case 'init':{
         diagnostics.record('request',{requestId:m.diagnostics?.requestId});
         auth.room=m.room;saveAuth(auth);
-        workshop=m.workshop||null;participants=m.participants;auth.isAdmin=!!m.self?.isAdmin;saveAuth(auth);setConnection('connected');chat=m.chat||[];renderChat();
+        sessionCapabilities=m.capabilities||{};workshop=m.workshop||null;participants=m.participants;auth.isAdmin=!!m.self?.isAdmin;saveAuth(auth);setConnection('connected');chat=m.chat||[];renderChat();
         if(!isPeerRoom())receiveCanvas(()=>{if(!shared.entities.size&&!shared.tombstones.size)shared.replaceInitial(m.entities);else{const incoming=new Set(m.entities.map(e=>e.id));for(const entity of shared.all())if(!incoming.has(entity.id))shared.deleteLocal(entity.id);for(const entity of m.entities)shared.setLocal(entity)}});
         if(!roomSeeded){
           roomSeeded=true;
@@ -492,7 +501,7 @@ async function connect(){
       case 'chat':chat.push(m.message);if(chat.length>300)chat.shift();renderChat();break;
       case 'signal':media.handleSignal(m.from,m.data);break;
       case 'ended':
-        workshop=null;featuredSession?.reset();sessionGuide?.reset();
+        workshop=null;sessionCapabilities={};featuredSession?.reset();sessionGuide?.reset();
         chat=[];chatPanel?.resetSession({sandbox:false,connected:false,participantId:auth?.participantId});
         intentionalClose=true;connected=false;agentPermissions?.revoke('session-ended');webMCP?.refresh();capture?.stop().catch(()=>{});walkthrough?.stop();board.setReadOnly(true);updateHistoryControls();localStream=null;updateShareButton();forgetAuth(auth.room.id);media.destroy();peerCanvas?.destroy();$('#connection-status').textContent='Session ended';closeModal();
         toast('This session has ended. Your host closed the room.');
@@ -604,7 +613,7 @@ document.addEventListener('paste',event=>{
   const files=clipboardImages(event.clipboardData);if(!files.length)return;
   event.preventDefault();void addImages(files);
 },{signal:mainEvents.signal});
-function tour(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Common ground.</h2><div class="tour-steps"><div>${icon('Link',21)}<span><strong>Create a session</strong>Choose a template, then invite your team with the session link and password.</span></div><div>${icon('MonitorUp',21)}<span><strong>Share a window</strong>Complete your Session guide and approve your own window. The host can feature windows as you take turns.</span></div><div>${icon('Pencil',21)}<span><strong>Build on the canvas</strong>Add notes, images, drawings, and diagrams. Changes appear for everyone in the session.</span></div></div><p class="help-detail">Select an item, then use Edit or Enter to write. Focus (F) enlarges an item just for you; Escape returns to the canvas. Arrow keys move items; Alt + arrows resize, and Shift makes larger steps. Undo (Ctrl/⌘ Z) restores your canvas changes. Paste a screenshot or drop images where you want them. Use Pan (H) to move around. Some networks may block direct screen sharing.</p><a class="local-guide-link" href="${esc(appPath('/self-hosting.html'))}" target="_blank" rel="noopener">Run Common on your own laptop ${icon('ArrowUpRight',15)}</a><button class="primary modal-submit" id="tour-done">Got it ${icon('Check',16)}</button>`);$('#tour-done').onclick=closeModal}
+function tour(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Sprout',25)}</span><h2 id="modal-title">Common ground.</h2><div class="tour-steps"><div>${icon('Link',21)}<span><strong>Create a session</strong>Choose a template, then invite your team with the session link and password.</span></div><div>${icon('MonitorUp',21)}<span><strong>Share a window</strong>Choose Share a window or Watch &amp; contribute in your Session guide. The host can feature approved windows as you take turns.</span></div><div>${icon('Pencil',21)}<span><strong>Build on the canvas</strong>Add notes, images, drawings, and diagrams. Changes appear for everyone in the session.</span></div></div><p class="help-detail">On touch screens, pinch with two fingers to zoom or slide them to pan. Select an item, then use Edit or Enter to write. Focus (F) enlarges an item just for you; Escape returns to the canvas. Arrow keys move items; Alt + arrows resize, and Shift makes larger steps. Undo (Ctrl/⌘ Z) restores your canvas changes. Paste a screenshot or drop images where you want them. Use Pan (H) to move around. Some networks may block direct screen sharing.</p><a class="local-guide-link" href="${esc(appPath('/self-hosting.html'))}" target="_blank" rel="noopener">Run Common on your own laptop ${icon('ArrowUpRight',15)}</a><button class="primary modal-submit" id="tour-done">Got it ${icon('Check',16)}</button>`);$('#tour-done').onclick=closeModal}
 function showSessions(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Layers',25)}</span><h2 id="modal-title">Recent sessions</h2><p>Saved on this device.</p><div class="sessions-list">${savedRooms().length?savedRooms().map(r=>`<a href="${esc(appPath('/room/'+encodeURIComponent(r.id)))}">${icon('Layers',18)}<span>${esc(r.name)}</span>${icon('ArrowUpRight',17)}</a>`).join(''):'<p>No recent sessions.</p>'}</div><button class="primary modal-submit" id="sessions-create">${icon('Plus',16)} Create a session</button>`);$('#sessions-create').onclick=createModal}
 async function showConnectionDetails(){
   const revision=modalRevision,generation=sessionGeneration;

@@ -81,6 +81,7 @@ export class Board {
     this.entities = new Map(); this.nodes = new Map(); this.streams = new Map(); this.cursors = new Map();
     this.externalConsents = new Set(); this.selectedId = null; this.tool = 'select'; this.color = '#52765e';
     this.zoom = 1; this.pan = { x: 24, y: 24 }; this.gesture = null; this.spaceHeld = false;
+    this.touchPointers = new Map(); this.touchNavigation = false;
     this.focusedId = null; this.previousFocusView = null;
     this.abort = new AbortController(); this.lastCursor = 0; this.editingId = null;
     this.el.classList.add('common-board'); this.el.tabIndex = 0;
@@ -148,7 +149,7 @@ export class Board {
     this.el.addEventListener('dblclick', e => this.doubleClick(e), { signal });
     document.addEventListener('keydown', e => this.keyDown(e), { signal });
     document.addEventListener('keyup', e => { if (e.code === 'Space') { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); } }, { signal });
-    window.addEventListener('blur', () => { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); }, { signal });
+    window.addEventListener('blur', () => { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); this.cancelPointers(); }, { signal });
     this.resizeObserver = new ResizeObserver(() => { if (this.focusedId) this.fitFocusedEntity(); else this.updateSelectionTools(); }); this.resizeObserver.observe(this.el);
     this.updateView();
     initGeometry().catch(() => {});
@@ -267,14 +268,16 @@ export class Board {
   }
   cancelPositionGesture() {
     if (!this.gesture || !['move', 'resize'].includes(this.gesture.type)) return;
+    const gesture = this.gesture;
     this.gesture = null; this.el.classList.remove('board-is-dragging');
-    if (this.activePointerId != null && this.el.hasPointerCapture(this.activePointerId)) this.el.releasePointerCapture(this.activePointerId);
-    this.activePointerId = null; this.endHistoryGroup();
+    const pointerId = this.activePointerId; this.activePointerId = null;
+    this.releasePointer(pointerId); if (gesture.pointerType !== 'touch') this.endHistoryGroup();
   }
   setReadOnly(value) {
     this.readOnly = !!value;
     if (this.readOnly) this.closeDiagramEditor();
     this.el.classList.toggle('board-read-only', this.readOnly);
+    if (this.readOnly && this.touchPointers.size) this.cancelPointers();
     if (this.readOnly && this.gesture && this.gesture.type !== 'pan') {
       if (this.gesture.type === 'create') this.remove(this.gesture.id);
       else if (this.gesture.original) this.upsert(this.gesture.original);
@@ -296,9 +299,12 @@ export class Board {
     for (const id of this.entities.keys()) if (!incoming.has(id)) this.remove(id);
     for (const entity of entities) this.upsert(entity);
   }
-  upsert(entity) {
+  upsert(entity, { gesturePreview = false } = {}) {
     if (!entity?.id || !DEFAULTS[entity.type]) return;
     const normalized = { ...DEFAULTS[entity.type], ...entity, x: finite(entity.x), y: finite(entity.y), width: Math.max(2, finite(entity.width, DEFAULTS[entity.type].width)), height: Math.max(2, finite(entity.height, DEFAULTS[entity.type].height)) };
+    // A touch drag is an unshared preview. Remember newer canonical geometry so
+    // switching to navigation never restores an older position over a teammate.
+    if (!gesturePreview && this.gesture?.id === entity.id && this.gesture.pointerType === 'touch' && ['move', 'resize'].includes(this.gesture.type)) this.gesture.original = { ...normalized };
     if (this.gesture?.id === entity.id && (normalized.locked || !this.mayEdit(normalized))) this.cancelPositionGesture();
     const previous = this.entities.get(entity.id);
     this.entities.set(entity.id, normalized); this.renderEntity(normalized); this.applyLayerOrder(); this.updateSelectionTools();
@@ -417,12 +423,12 @@ export class Board {
     this.pan = { x: this.el.clientWidth / 2 - (entity.x + entity.width / 2) * this.zoom, y: top + height / 2 - (entity.y + entity.height / 2) * this.zoom };
     this.updateView();
   }
-  exitFocus({ restoreFocus = this.el.contains(document.activeElement) } = {}) {
+  exitFocus({ restoreFocus = this.el.contains(document.activeElement), preserveView = false } = {}) {
     if (!this.focusedId) return false;
     const previous = this.previousFocusView; this.focusedId = null; this.previousFocusView = null;
     this.el.classList.remove('board-is-focused'); this.focusBar.hidden = true;
     for (const node of this.nodes.values()) node.classList.remove('is-focused');
-    if (previous) { this.zoom = previous.zoom; this.pan = { x: previous.x, y: previous.y }; }
+    if (previous && !preserveView) { this.zoom = previous.zoom; this.pan = { x: previous.x, y: previous.y }; }
     this.updateView(); if (restoreFocus) this.el.focus({ preventScroll: true }); return true;
   }
   editSelected() {
@@ -648,13 +654,74 @@ export class Board {
     return { minX: Math.min(...points.map(p => p.x)), minY: Math.min(...points.map(p => p.y)), maxX: Math.max(...points.map(p => p.x)), maxY: Math.max(...points.map(p => p.y)) };
   }
 
+  releasePointer(pointerId) {
+    if (pointerId != null && this.el.hasPointerCapture(pointerId)) this.el.releasePointerCapture(pointerId);
+  }
+  cancelTouchGesture() {
+    const gesture = this.gesture; if (gesture?.pointerType !== 'touch') return;
+    this.gesture = null; this.activePointerId = null;
+    if (gesture.type === 'create') this.remove(gesture.id);
+    else if (['move', 'resize'].includes(gesture.type)) {
+      const current = this.entities.get(gesture.id);
+      if (current) {
+        const patch = gesture.type === 'move' ? { x: gesture.original.x, y: gesture.original.y } : { width: gesture.original.width, height: gesture.original.height };
+        this.upsert({ ...current, ...patch });
+      }
+    }
+    this.el.classList.remove('board-is-dragging'); this.updateSelectionTools();
+  }
+  cancelPointers() {
+    const touchIds = [...this.touchPointers.keys()]; this.touchPointers.clear(); this.touchNavigation = false;
+    if (this.gesture?.pointerType === 'touch') this.cancelTouchGesture();
+    else if (this.gesture) this.pointerUp({ pointerId: this.activePointerId }, true);
+    for (const id of touchIds) this.releasePointer(id);
+  }
+  touchViewPoints() {
+    const [first, second] = [...this.touchPointers.entries()]; if (!second) return null;
+    const rect = this.el.getBoundingClientRect();
+    return {
+      ids: [first[0], second[0]],
+      midpoint: { x: (first[1].x + second[1].x) / 2 - rect.left, y: (first[1].y + second[1].y) / 2 - rect.top },
+      distance: Math.max(1, Math.hypot(first[1].x - second[1].x, first[1].y - second[1].y)),
+    };
+  }
+  beginTouchView() {
+    const points = this.touchViewPoints(); if (!points) return;
+    this.touchNavigation = true; this.cancelTouchGesture();
+    this.gesture = { type: 'touch-view', pointerType: 'touch' };
+    // Keep the object at the same size while leaving the leader's reading view.
+    // updateView also tells the session guide this browser chose to explore.
+    if (this.focusedId) this.exitFocus({ restoreFocus: false, preserveView: true });
+    Object.assign(this.gesture, {
+      ids: points.ids, distance: points.distance, zoom: this.zoom, minimumZoom: Math.min(.15, this.zoom),
+      anchor: { x: (points.midpoint.x - this.pan.x) / this.zoom, y: (points.midpoint.y - this.pan.y) / this.zoom },
+    });
+    this.el.classList.add('board-is-dragging'); this.updateSelectionTools();
+  }
+  moveTouchView() {
+    const gesture = this.gesture; const points = this.touchViewPoints();
+    if (gesture?.type !== 'touch-view' || !points) return;
+    this.zoom = Math.max(gesture.minimumZoom, Math.min(2.5, gesture.zoom * points.distance / gesture.distance));
+    this.pan = { x: points.midpoint.x - gesture.anchor.x * this.zoom, y: points.midpoint.y - gesture.anchor.y * this.zoom };
+    this.updateView();
+  }
+
   pointerDown(event) {
-    if (this.gesture) return;
     if (event.button !== 0 && event.button !== 1) return;
     if (event.target.closest('button:not([data-resize]),input,textarea,select,[contenteditable="true"]')) return;
+    if (event.pointerType === 'touch') {
+      if (this.gesture && this.gesture.pointerType !== 'touch') return;
+      this.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      this.el.setPointerCapture(event.pointerId);
+      if (this.touchPointers.size >= 2) { event.preventDefault(); if (!this.touchNavigation) this.beginTouchView(); return; }
+      if (this.touchNavigation) { event.preventDefault(); return; }
+    } else if (this.touchPointers.size) return;
+    if (this.gesture) return;
     const point = this.worldPoint(event); const targetNode = event.target.closest('[data-entity-id]');
     const entity = targetNode && this.entities.get(targetNode.dataset.entityId);
-    this.el.focus({ preventScroll: true });
+    // A two-finger navigation start must not dismiss chat or a text editor.
+    // A completed one-finger action takes focus when it is committed instead.
+    if (event.pointerType !== 'touch') this.el.focus({ preventScroll: true });
     if (this.spaceHeld || this.tool === 'hand' || event.button === 1) {
       event.preventDefault(); this.gesture = { type: 'pan', clientX: event.clientX, clientY: event.clientY, pan: { ...this.pan } };
     } else if (this.focusedId) { event.preventDefault(); return; }
@@ -673,17 +740,29 @@ export class Board {
       this.upsert(drawing);
     } else if (this.tool === 'text' || this.tool === 'sticky') {
       if (this.readOnly) { this.onStatus('Reconnect to edit the shared canvas.'); return; }
-      const added = this.add(this.tool, { x: point.x, y: point.y, text: '' });
-      this.setTool('select'); this.select(added.id); requestAnimationFrame(() => this.editText(added.id)); return;
+      if (event.pointerType === 'touch') { event.preventDefault(); this.gesture = { type: 'add-text', start: point, clientX: event.clientX, clientY: event.clientY, drawType: this.tool }; }
+      else {
+        const added = this.add(this.tool, { x: point.x, y: point.y, text: '' });
+        this.setTool('select'); this.select(added.id); requestAnimationFrame(() => this.editText(added.id)); return;
+      }
     } else if (this.tool === 'image') { this.onStatus('Drop an image onto the canvas, or use Add image in the toolbar.'); return; }
     else if (this.tool === 'diagram') { this.onStatus('Use the diagram button to add Mermaid or PlantUML source.'); return; }
-    if (this.gesture) { if (this.gesture.type !== 'pan') this.beginHistoryGroup(this.gesture.type); this.activePointerId = event.pointerId; this.el.setPointerCapture(event.pointerId); this.el.classList.add('board-is-dragging'); this.updateSelectionTools(); }
+    if (this.gesture) {
+      this.gesture.pointerType = event.pointerType;
+      if (this.gesture.type !== 'pan' && event.pointerType !== 'touch') this.beginHistoryGroup(this.gesture.type);
+      this.activePointerId = event.pointerId; this.el.setPointerCapture(event.pointerId); this.el.classList.add('board-is-dragging'); this.updateSelectionTools();
+    }
   }
   pointerMove(event) {
+    if (this.touchPointers.has(event.pointerId)) {
+      this.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (this.touchNavigation) { event.preventDefault(); this.moveTouchView(); return; }
+    }
     if (this.gesture && event.pointerId !== this.activePointerId) return;
     const point = this.worldPoint(event);
     if (performance.now() - this.lastCursor > 60) { this.lastCursor = performance.now(); this.onCursor({ x: Math.round(point.x), y: Math.round(point.y) }); }
     const gesture = this.gesture; if (!gesture) return;
+    if (gesture.type === 'add-text') { if (Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) > 10) gesture.moved = true; return; }
     if (gesture.type !== 'pan' && this.readOnly) return;
     if (gesture.type === 'pan') {
       this.pan = { x: gesture.pan.x + event.clientX - gesture.clientX, y: gesture.pan.y + event.clientY - gesture.clientY }; this.updateView(); return;
@@ -695,9 +774,10 @@ export class Board {
       const next = gesture.type === 'move' ? { ...current, x: gesture.original.x + dx, y: gesture.original.y + dy } : { ...current, width: Math.max(40, gesture.original.width + dx), height: Math.max(32, gesture.original.height + dy) };
       if (event.shiftKey && gesture.type === 'move') { next.x = snap(next.x); next.y = snap(next.y); }
       if (event.shiftKey && gesture.type === 'resize') next.height = next.width * gesture.original.height / gesture.original.width;
-      this.upsert(next);
+      this.upsert(next, { gesturePreview: true });
       // Share intermediate positions at a modest rate; the final position is always sent.
-      if (!gesture.lastSent || performance.now() - gesture.lastSent > 70) {
+      // Touch previews wait for release so a second finger can navigate safely.
+      if (gesture.pointerType !== 'touch' && (!gesture.lastSent || performance.now() - gesture.lastSent > 70)) {
         gesture.lastSent = performance.now();
         this.onChange(next, gesture.type === 'move' ? { x: next.x, y: next.y } : { width: next.width, height: next.height });
       }
@@ -713,11 +793,33 @@ export class Board {
     }
   }
   pointerUp(event, cancelled = false) {
-    const gesture = this.gesture; if (!gesture || event.pointerId !== this.activePointerId) return;
+    const wasTouch = this.touchPointers.delete(event.pointerId);
+    if (this.touchNavigation) {
+      if (this.touchPointers.size < 2) {
+        this.gesture = null; this.el.classList.remove('board-is-dragging'); this.updateSelectionTools();
+      } else if (this.gesture?.ids.includes(event.pointerId)) this.beginTouchView();
+      if (!this.touchPointers.size) this.touchNavigation = false;
+      this.releasePointer(event.pointerId); return;
+    }
+    if (cancelled && wasTouch && this.gesture?.pointerType === 'touch') {
+      this.cancelTouchGesture(); this.releasePointer(event.pointerId); return;
+    }
+    const gesture = this.gesture;
+    if (!gesture || event.pointerId !== this.activePointerId) { if (wasTouch) this.releasePointer(event.pointerId); return; }
     this.gesture = null; this.el.classList.remove('board-is-dragging');
-    if (this.el.hasPointerCapture(event.pointerId)) this.el.releasePointerCapture(event.pointerId);
     this.activePointerId = null;
+    this.releasePointer(event.pointerId);
+    let touchHistory = false;
     try {
+    if (gesture.type === 'add-text') {
+      if (cancelled || gesture.moved || this.readOnly) return;
+      const added = this.add(gesture.drawType, { x: gesture.start.x, y: gesture.start.y, text: '' });
+      if (added) { this.setTool('select'); this.select(added.id); this.editText(added.id); }
+      return;
+    }
+    if (gesture.pointerType === 'touch' && gesture.type !== 'pan' && !this.readOnly) {
+      this.el.focus({ preventScroll: true }); this.beginHistoryGroup(gesture.type); touchHistory = true;
+    }
     if (gesture.type === 'move' || gesture.type === 'resize') {
       const entity = this.entities.get(gesture.id);
       if (entity && !entity.locked && this.mayEdit(entity)) {
@@ -736,7 +838,7 @@ export class Board {
       this.commit(entity); this.select(entity.id);
       if (entity.type !== 'draw') this.setTool('select');
     }
-    } finally { this.endHistoryGroup(); this.updateSelectionTools(); }
+    } finally { if (gesture.pointerType !== 'touch' || touchHistory) this.endHistoryGroup(); this.updateSelectionTools(); }
   }
   wheel(event) {
     if (event.target.closest('textarea,[contenteditable="true"]')) return;
@@ -902,6 +1004,7 @@ export class Board {
     return new XMLSerializer().serializeToString(svg);
   }
   destroy() {
+    this.cancelPointers();
     this.closeDiagramEditor({ restoreFocus: false });
     this.finishTextEdit?.(false);
     this.endHistoryGroup(); this.abort.abort(); this.resizeObserver.disconnect();

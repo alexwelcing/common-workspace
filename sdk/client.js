@@ -1,4 +1,5 @@
 import { normalizeBasePath } from './path.mjs';
+import { installMobileViewport } from '../src/mobile-viewport.js';
 
 const READY_TIMEOUT_MS = 20_000;
 const CLEANUP_TIMEOUT_MS = 2_000;
@@ -84,6 +85,9 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
   let stylesheetState = 'loading', stylesheetRetries = 0;
   let isOpen = initialOpen ?? mode === 'inline';
   const report = problem => invoke(onError, problem);
+  // Overlay geometry belongs to this mount, never the embedding page's root.
+  // An inline frame stays in the host's own layout and scrolling flow.
+  const viewportCleanup = mode === 'overlay' ? installMobileViewport({ windowImpl: window, documentImpl: document, targetElement: host }) : null;
 
   function updateIndicator(state = {}) {
     const label = [state.sharing && 'Sharing', state.recording && 'Recording'].filter(Boolean).join(' · ') || (state.hasCapture ? 'Capture active' : '');
@@ -99,6 +103,7 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
     // so an explicitly-readied closed canvas can initialize at its real size.
     panel.hidden = !isOpen && stylesheetState !== 'loaded';
     panel.inert = !isOpen; panel.setAttribute('aria-hidden', String(!isOpen)); host.dataset.open = String(isOpen); launcher.setAttribute('aria-expanded', String(isOpen));
+    viewportCleanup?.refresh();
     try { current?.lifecycle?.setVisible?.(isOpen); } catch {}
     try { updateIndicator(current?.lifecycle?.getState?.()); } catch { updateIndicator(); }
     if (changed && notify) invoke(onOpenChange, isOpen);
@@ -106,7 +111,7 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
   }
   function clearGeneration(entry) {
     clearTimer(entry.timeout); clearTimer(entry.poll);
-    entry.unsubscribe?.(); entry.removePageHide?.(); entry.abort.abort();
+    entry.unsubscribe?.(); entry.removePageHide?.(); entry.removeViewportFocus?.(); entry.abort.abort();
   }
   function invalidate(entry, problem) {
     if (!entry) return;
@@ -169,6 +174,15 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
           if (stylesheetState === 'failed') { failGeneration(entry, error('SDK_STYLESHEET_ERROR', `Common styles could not load from ${basePath}embed.css. Check host authentication and Content Security Policy, then reopen the canvas.`)); return; }
           entry.api = api; entry.lifecycle = lifecycle; entry.window = child;
           entry.document = child.document;
+          if (viewportCleanup) {
+            const refresh = viewportCleanup.refresh;
+            entry.document.addEventListener('focusin', refresh);
+            entry.document.addEventListener('focusout', refresh);
+            entry.removeViewportFocus = () => {
+              entry.document.removeEventListener('focusin', refresh);
+              entry.document.removeEventListener('focusout', refresh);
+            };
+          }
           const pageHide = () => { if (!destroyed && current === entry) beginGeneration(); };
           child.addEventListener('pagehide', pageHide, { once: true });
           entry.removePageHide = () => child.removeEventListener('pagehide', pageHide);
@@ -248,6 +262,7 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
     destroy() {
       if (destroyPromise) return destroyPromise;
       destroyed = true; const entry = current;
+      viewportCleanup?.();
       let lifecycle = entry?.lifecycle;
       try { lifecycle ||= iframe.contentWindow?.commonEmbedLifecycle; } catch {}
       invalidate(entry, error('SDK_DESTROYED', 'This Common mount was destroyed before the operation completed.'));

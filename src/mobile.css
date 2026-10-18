@@ -1,0 +1,80 @@
+/* Respect the visible viewport, including browser chrome and an open keyboard. */
+#app { position: relative; top: var(--common-viewport-top, 0px); height: var(--common-viewport-height, 100dvh); min-height: 0; }
+.sidebar { padding-left: max(16px, env(safe-area-inset-left)); }
+.topbar, .canvas-bar { padding-right: max(28px, env(safe-area-inset-right)); }
+.footer { padding-bottom: env(safe-area-inset-bottom); }
+.panel-tabs { grid-template-columns: 1fr 1fr 44px; align-items: center; }
+.panel-tabs .close-panel { width: 44px; height: 44px; }
+.modal-overlay { top: var(--common-viewport-top, 0px); bottom: auto; height: var(--common-viewport-height, 100dvh); padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+.modal-overlay .modal { max-height: 100%; }
+
+@media (pointer: coarse), (max-width: 600px) {
+  .topbar .icon-button, .canvas-history .icon-button, .zoom-controls .icon-button,
+  .sidebar .nav-item, .sidebar #how-it-works, .sidebar .new-session,
+  .modal .icon-button, .panel-tabs .panel-tab, .chat-panel .chat-jump { min-width: 44px; min-height: 44px; }
+  .top-actions .button, .top-actions .primary, .top-actions .agent-tools-trigger,
+  #toggle-panel, .modal .button, .modal .primary, .invite-dashed { min-height: 44px; }
+  .canvas-toolbar .tool { width: 44px; height: 44px; }
+  .canvas-toolbar #tool-color { width: 44px; height: 44px; margin: 0; }
+  .canvas-toolbar { bottom: calc(68px + env(safe-area-inset-bottom)); gap: 3px; padding: 5px; }
+  .canvas-bottom { bottom: calc(10px + env(safe-area-inset-bottom)); right: max(10px, env(safe-area-inset-right)); left: 10px; }
+  #zoom-label { min-width: 44px; min-height: 44px; }
+  .chat-panel #chat-form button { width: 44px; height: 44px; }
+  .chat-panel #chat-text, .modal input:not([type='checkbox']), .modal textarea, .modal select { font-size: 16px; }
+  .modal .copy-field input { font-size: 16px !important; }
+  .chat-panel #chat-text { resize: none; max-height: 120px; }
+  .right-panel #panel-content { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  .canvas-wrap:has(.board-is-focused) .canvas-toolbar,
+  .canvas-wrap:has(.board-is-focused) .canvas-bottom,
+  .canvas-wrap:has(.board-is-focused) .canvas-top-hint { display: none; }
+  /* Keep room for typing; capture's Stop control stays in the header. */
+  .common-keyboard-open .sharing-strip, .common-keyboard-open .footer,
+  .common-keyboard-open .canvas-toolbar, .common-keyboard-open .canvas-bottom,
+  .common-keyboard-open .canvas-top-hint,
+  .common-keyboard-open .chat-compose-meta, .common-keyboard-open .chat-send-status { display: none; }
+  .common-keyboard-open .topbar { min-height: 60px; padding-top: 4px; padding-bottom: 4px; }
+  .common-keyboard-open .eyebrow { display: none; }
+  #chat-compose-help { display: none; }
+}
+
+@container (max-width: 760px) {
+  .canvas-toolbar { bottom: calc(68px + env(safe-area-inset-bottom)); }
+}
+@container (max-width: 560px) {
+  .canvas-toolbar { display: grid; grid-template-columns: repeat(5, 44px); width: max-content; max-width: calc(100% - 12px); gap: 3px; padding: 5px; }
+  .canvas-toolbar .tool-divider { display: none; }
+}
+@container (max-width: 255px) {
+  .canvas-toolbar { grid-template-columns: repeat(4, 44px); }
+}
+
+@media (max-width: 600px) {
+  .sidebar { width: calc(56px + env(safe-area-inset-left)); padding-top: max(12px, env(safe-area-inset-top)); padding-left: max(7px, env(safe-area-inset-left)); padding-right: 6px; }
+  .sidebar .brand { padding: 0; }
+  .sidebar .brand-mark { width: 44px; height: 44px; }
+  .sidebar-bottom { padding-left: 0; padding-right: 0; }
+  .sidebar .new-session { margin-top: 18px; }
+  .topbar { min-height: 82px; gap: 5px; padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 8px 8px; }
+  .title-row h1 { font-size: 22px; }
+  .topbar .top-actions { gap: 3px; }
+  .top-actions .share-button, .top-actions .invite-button, .top-actions .agent-tools-trigger { width: 44px; min-width: 44px; min-height: 44px; padding: 0; gap: 0; font-size: 0; }
+  .top-actions .agent-tools-trigger::before { font-size: 16px; }
+  .canvas-bar { min-height: 46px; padding-left: 6px; padding-right: max(6px, env(safe-area-inset-right)); gap: 3px; }
+  .canvas-heading { gap: 4px; }
+  .canvas-label { display: none; }
+  .canvas-history { padding-left: 0; border-left: 0; gap: 0; }
+  #toggle-panel { min-width: 44px; padding: 0 6px; }
+  #toggle-panel > span:not(.panel-unread) { display: none; }
+  .canvas-top-hint { max-width: calc(100% - 24px); left: 12px; top: 10px; }
+  .right-panel:not(.collapsed) { width: 100%; max-width: 100%; box-shadow: -5px 0 20px #34483b10; }
+  .footer { min-height: calc(24px + env(safe-area-inset-bottom)); }
+  .common-keyboard-open .sidebar { display: none; }
+}
+
+@media (pointer: coarse) and (max-height: 500px) {
+  .topbar { min-height: 60px; padding-top: max(4px, env(safe-area-inset-top)); padding-bottom: 4px; }
+  .footer { display: none; }
+  .canvas-wrap .canvas-toolbar { display: flex; justify-content: flex-start; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); width: auto; max-width: none; overflow-x: auto; overscroll-behavior-x: contain; transform: none; border-radius: 12px; }
+  .canvas-toolbar .tool-divider { display: none; }
+  .canvas-wrap .canvas-bottom { bottom: auto; top: 6px; justify-content: flex-start; }
+}
