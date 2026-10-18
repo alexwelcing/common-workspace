@@ -1,5 +1,15 @@
 # Common releases
 
+## 1.4.1 — 2026-10-18
+
+A maintenance release for the spatial beta and portable module **0.4.1**.
+
+- Separate starter templates from browser orchestration, name workspace/selection cancellation guards, and give board rendering, archive export, and history branching dedicated helpers.
+- Expand dense history, storage, archive, view, and UI primitive code. Document causal replay, journal ownership, validation/rollback, personal view state, browser activation, and resource cleanup without changing formats, budgets, permissions, layout, or APIs.
+- Add a maintainer guide with a source map, invariants, symptom-to-code troubleshooting, focused validation, and the app/module release checklist.
+
+Verification compares the cleanup with the shipped behavior: core compiled output, ordered CSS rules, view transitions, and every template field/ID sequence are preserved. Existing real-browser journeys and focused history, archive, capture, keyboard, viewport, and cleanup walkthroughs provide release verification; no test cases, suites, or dependencies are added.
+
 ## 1.4.0 — 2026-10-18
 
 Space & time beta ships as a separate opt-in experience in the app and portable module **0.4.0**. Open `?beta=space`; standard rooms retain their existing canvas.
