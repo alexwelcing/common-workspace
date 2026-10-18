@@ -136,6 +136,8 @@
           <li><a href="#trust">3. Trust the certificate</a></li>
           <li><a href="#guided-sessions">Run a guided session</a></li>
           <li><a href="#mobile">Join from a phone or tablet</a></li>
+          <li><a href="#room-style">Style the room</a></li>
+          <li><a href="#spatial-beta">Space &amp; time beta</a></li>
           <li><a href="#data">Where the data lives</a></li>
           <li><a href="#network">Network &amp; external services</a></li>
           <li><a href="#media-export">Optional MP4 exports</a></li>
@@ -230,6 +232,14 @@ COMMON_NETWORK_PROFILE=private</code></pre>
           <p>The host changes the shared style; teammates inherit it on join and reload. It works in standalone and embedded Bun applications without another service. Room files preserve the choice, while older rooms start in Meadow. Notes and drawings retain their own colors. PNG snapshots, canvas recordings, and SVG exports include the background. Your personal canvas has its own device-local <strong>Canvas style</strong>.</p>
         </section>
 
+        <section id="spatial-beta" aria-labelledby="spatial-beta-title">
+          <h2 id="spatial-beta-title">Try Space &amp; time beta</h2>
+          <p>Add <code>?beta=space</code> to your Common address, for example <code>http://localhost:3001/?beta=space</code>. This separate, opt-in experience uses the same local Bun server and private network settings. Existing rooms keep the standard canvas. Start with the current boards, Team walkthrough, Design review, or Open room; generated invitations bring teammates into the beta with the usual password.</p>
+          <p>Use <strong>Work</strong> to edit a board and <strong>Space</strong> to see boards arranged along X, Y, and Z with independent rotations. The timeline records changes automatically as you work. Explore the read-only past while teammates continue live, <strong>Return to live</strong>, or <strong>Branch from here</strong> to continue in a new local workspace. Your view and selected time stay personal.</p>
+          <p>Boards and their history autosave as small edit records in each browser's IndexedDB and synchronize directly between connected peers. Occasional snapshot compaction retains the full history; earlier device storage upgrades automatically. The save indicator confirms device storage, not a server backup. <strong>On this device</strong> reopens saved local branches and room history after a session ends. <strong>Export room</strong> downloads a binary <code>.common</code> replay with history and optional built-in browser compression; <strong>Import room</strong> opens it locally and still accepts earlier JSON archives. Removing browser data or storage eviction can lose device copies, so export work you want to keep.</p>
+          <p>Canvas replay reconstructs structured edits. Past screen shares retain window metadata; their pixels require an explicit recording downloaded separately. All boards and history currently replicate to every participant. Beta limits are 64 board records, 1,000 object records per board, 16 MiB current board content, 12 MiB per history document, 40 MiB combined workspace history, and 64 MiB per archive. These budgets do not establish a measured room-size guarantee. No additional account, relay, or hosting service is required.</p>
+        </section>
+
         <section id="data" aria-labelledby="data-title">
           <h2 id="data-title">Where the data lives</h2>
           <div class="table-scroll">
@@ -238,7 +248,8 @@ COMMON_NETWORK_PROFILE=private</code></pre>
               <thead><tr><th scope="col">Content</th><th scope="col">Location &amp; lifetime</th></tr></thead>
               <tbody>
                 <tr><th scope="row">Room access, plan &amp; chat</th><td>The host's <code>data/rooms.json</code> contains room metadata and names, guided-session plans and checklist state, password hashes, token hashes, and recent chat. Restrict access to that file. <code>DATA_FILE</code> can select another writable location.</td></tr>
-                <tr><th scope="row">Shared canvas &amp; images</th><td>New rooms keep their Yjs canvas and embedded images in participants' browser memory and synchronize between peers. The host server stores no canvas snapshot. Export anything you want to keep before the last copy closes. The personal canvas saves on that browser's device.</td></tr>
+                <tr><th scope="row">Standard canvas &amp; images</th><td>Standard rooms keep their Yjs canvas and embedded images in participants' browser memory and synchronize between peers. The host server stores no canvas snapshot. Export anything you want to keep before the last copy closes. The personal canvas saves on that browser's device.</td></tr>
+                <tr><th scope="row">Space &amp; time beta</th><td>Per-board Loro documents and the manifest autosave to a small-edit journal in each participant's browser IndexedDB and synchronize between connected peers. Full-history snapshots periodically compact that journal without removing revisions. Ending a room leaves device archives intact. The server stores room access metadata, not spatial content. Export a binary <code>.common</code> replay to keep a copy outside browser storage.</td></tr>
                 <tr><th scope="row">Shared windows</th><td>Video travels over WebRTC between peers, with TURN relaying only if configured. The application server does not store the video.</td></tr>
                 <tr><th scope="row">Recordings &amp; snapshots</th><td>Recordings remain browser blobs until downloaded; reloading or closing the tab loses them. They are not synchronized. Choosing optional MP4 export sends selected media to the connected loopback worker on that same device, which removes its temporary files after the job. Downloads stay in the user's download location.</td></tr>
                 <tr><th scope="row">Optional diagnostics</th><td>Logging and telemetry export are off by default. Enabled diagnostics contain route categories, status, timing, and generated correlation IDs, excluding room IDs, request content, and credentials. An explicitly configured OTLP collector receives those redacted spans.</td></tr>
@@ -330,7 +341,7 @@ bun run media:export --origin http://localhost:3001 --engine docker</code></pre>
           </details>
           <details>
             <summary>The host restarts, and a room or canvas looks different</summary>
-            <p>Room metadata and recent chat use the host's data file, but new shared canvas content lives in browser memory. Keep a browser holding the live document or export what you need. Switching IP, protocol, or port also switches browser origin and its saved identity. An expired token requires joining again with the password.</p>
+            <p>Room metadata and recent chat use the host's data file, but standard shared canvas content lives in browser memory. Keep a browser holding the live document or export what you need. Space &amp; time beta also autosaves content and history to the browser's device storage; use <strong>On this device</strong> to reopen it. Switching IP, protocol, or port switches browser origin and its saved identity and archives. An expired token requires joining again with the password.</p>
           </details>
         </section>
       </article>

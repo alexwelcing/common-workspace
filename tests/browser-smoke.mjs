@@ -6,6 +6,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
+import { gunzipSync } from 'node:zlib';
 
 const require = createRequire(import.meta.url);
 const timeout = 20000;
@@ -14,7 +15,7 @@ const definitions = [
   ['guided-room', 'A phone joins a styled room with its password and becomes ready without capture.'],
   ['chat-and-reload', 'Chat and host-only room styling update both browsers; reload preserves identity and the plan.'],
   ['agent-consent', 'Visible consent controls agent edits; PNG preserves the room canvas colour and revocation blocks edits.'],
-  ['native-peers', 'Native peers exchange canvas edits and decoded video; stop and room end revoke access.'],
+  ['native-peers', 'Native peers share classic media and beta space/time; autosave, history, archives, and room cleanup work.'],
 ];
 
 const loadPlaywright = async playwrightModule => playwrightModule ? require(playwrightModule) : import('playwright-core');
@@ -44,14 +45,14 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
     return text.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').replace(/("?(?:token|password|authorization)"?\s*[:=]\s*"?)[^\s",}]+/gi, '$1[redacted]').replace(/\?[^\s"']+/g, '?[redacted]').slice(0, 1600);
   };
   const endpoint = url => { try { return safe(new URL(url).pathname); } catch { return 'unknown endpoint'; } };
-  let browser, host, phone, roomUrl, phoneIdentity, hostToken, ended = false, expectedPasswordFailure = false, active;
+  let browser, host, phone, roomUrl, phoneIdentity, hostToken, betaRoomUrl, betaToken, betaEnded = false, ended = false, expectedPasswordFailure = false, active;
   const pages = [];
   const abort = () => { browser?.close().catch(() => {}); };
   signal?.addEventListener('abort', abort, { once: true });
   const screenshot = async (page, name) => {
     const filename = `${name}.png`;
     await page.screenshot({ path: path.join(artifactDir, filename), fullPage: true,
-      mask: [page.locator('#invite-link, input[name="password"]')] });
+      mask: [page.locator('#invite-link, #beta-invite-link, input[name="password"]')] });
     report.screenshots.push(filename);
   };
   const checkpoint = async (name, work) => {
@@ -90,6 +91,17 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
     await host.locator('#end-room').click({ timeout: 3000 });
     await host.locator('#confirm-end').click({ timeout: 3000 });
     await host.locator('#modal-title').filter({ hasText: 'Session ended' }).waitFor({ timeout }); ended = true;
+  };
+  const betaMenuAction = async (page, name) => {
+    const trigger = page.getByRole('button', { name: 'Room actions', exact: true });
+    if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+    await page.locator('.beta-room-menu').locator(`[data-beta-action="${name}"]`).click();
+  };
+  const endBetaRoom = async () => {
+    if (!betaRoomUrl || betaEnded || !host || host.isClosed()) return;
+    await host.locator('.close-modal').click({ timeout: 500 }).catch(() => {});
+    await betaMenuAction(host, 'end'); await host.locator('#beta-confirm-end').click({ timeout: 3000 });
+    await host.locator('#modal-title').filter({ hasText: 'Session ended' }).waitFor({ timeout }); betaEnded = true;
   };
   const newPage = async (name, mobile = false) => {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
@@ -259,7 +271,7 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         assert.equal(allowed.ok, true); await host.locator('.type-text').filter({ hasText: 'Approved walkthrough annotation' }).waitFor();
       });
       await checkpoint('Download a manual PNG, then revoke agent writes', async () => {
-        const download = host.waitForEvent('download'); await host.locator('#agent-snapshot').click(); const png = await download;
+        const [png] = await Promise.all([host.waitForEvent('download'), host.locator('#agent-snapshot').click()]);
         assert.match(png.suggestedFilename(), /\.png$/); const filename = 'manual-canvas.png'; await png.saveAs(path.join(artifactDir, filename)); report.screenshots.push(filename);
         const bytes = await readFile(path.join(artifactDir, filename)); assert.ok(bytes.length > 100); assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'The downloaded file must be a PNG.');
         const corner = await host.evaluate(async dataUrl => {
@@ -322,14 +334,98 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         const response = await host.request.get(`${roomUrl.replace('/room/', '/api/rooms/')}/session`, { headers: { Authorization: `Bearer ${hostToken}` } }); assert.equal(response.status(), 404, 'The former host token must no longer access the ended session.');
         assert.equal(await host.locator('#undo-canvas').isDisabled(), true);
       });
+      const betaSaved = page => page.locator('.beta-save-state[data-state="saved"]:visible, .beta-mobile-save-state[data-state="saved"]:visible').waitFor();
+      const betaNote = async (page, text, touch = false) => {
+        await page.locator('.beta-work-tools [data-beta-tool="sticky"]').click();
+        await page.locator('.beta-board-host')[touch ? 'tap' : 'click']({ position: { x: 115, y: 130 } });
+        await page.locator('.beta-board-host .board-text-content[contenteditable="true"]').fill(text);
+        await page.locator('.beta-current-board strong').click(); await betaSaved(page);
+      };
+      await checkpoint('Hidden beta automatically saves personal work across reload', async () => {
+        await host.goto(`${origin.origin}/?beta=space`); await host.getByRole('region', { name: 'Common Space and Time beta' }).waitFor();
+        await host.locator('.beta-board-link').first().click(); await betaNote(host, 'A beta thought saved on this device');
+        await host.reload(); await betaSaved(host);
+        await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'A beta thought saved on this device' }).waitFor();
+        await screenshot(host, 'beta-personal-autosave');
+      });
+      await checkpoint('Create and join a separate beta room with actual peer edits and shared spatial pose', async () => {
+        await betaMenuAction(host, 'create-room');
+        await host.locator('#beta-create-form [name="name"]').fill('Spatial browser journey');
+        await host.locator('#beta-create-form [name="displayName"]').fill('Spatial host'); await host.locator('#beta-create-form [name="password"]').fill(password);
+        const creation = host.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/rooms' && response.ok());
+        await host.locator('#beta-create-form button[type="submit"]').click(); const created = await (await creation).json();
+        betaToken = created.token; secrets.push(betaToken); betaRoomUrl = `${origin.origin}/room/${created.room.id}?beta=space`;
+        assert.equal(created.room.experience, 'spatial-beta');
+        await host.locator('#beta-invite-link').waitFor(); assert.equal(await host.locator('#beta-invite-link').inputValue(), betaRoomUrl); await host.locator('#beta-invite-done').click();
+        await phone.goto(betaRoomUrl); await phone.locator('#beta-join-form [name="displayName"]').fill('Spatial teammate'); await phone.locator('#beta-join-form [name="password"]').fill(password);
+        await phone.locator('#beta-join-form button[type="submit"]').click();
+        await betaNote(host, 'A real spatial peer thought');
+        await phone.locator('.beta-board-host .type-sticky').filter({ hasText: 'A real spatial peer thought' }).waitFor();
+        const boardId = await host.locator('.beta-board-link[aria-pressed="true"]').getAttribute('data-beta-board');
+        await host.locator('.beta-placement summary').click(); await host.locator('.beta-pose-form [name="z"]').fill('180'); await host.locator('.beta-pose-form [name="rotationY"]').fill('12');
+        await host.getByRole('button', { name: 'Apply position', exact: true }).click(); await betaSaved(host);
+        for (const page of [host, phone]) {
+          await page.locator('button[data-beta-mode="space"]').click();
+          await page.waitForFunction(id => document.querySelector(`.beta-plane[data-beta-board="${id}"]`)?.style.transform.includes('rotateY(12deg)') && document.querySelector(`.beta-plane[data-beta-board="${id}"] .beta-plane-heading`)?.textContent.includes('Z 180'), boardId);
+        }
+        await screenshot(host, 'beta-shared-space');
+        await host.reload(); await betaSaved(host); await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'A real spatial peer thought' }).waitFor();
+        await host.waitForFunction(id => document.querySelector(`.beta-plane[data-beta-board="${id}"] .beta-plane-heading`)?.textContent.includes('Z 180'), boardId);
+        await phone.locator('button[data-beta-mode="work"]').click();
+      });
+      await checkpoint('Time exploration stays read-only while a peer keeps editing the live room', async () => {
+        const time = host.getByRole('slider', { name: 'Explore automatically saved room history' });
+        assert.ok(Number(await time.getAttribute('max')) > 1, 'Edits must create automatic history, without a Save or checkpoint action.');
+        await time.focus(); await time.press('ArrowLeft'); await host.locator('.beta-workspace[data-history="past"]').waitFor();
+        await host.locator('.beta-past-banner').waitFor(); assert.equal(await host.locator('.beta-work-tools [data-beta-tool="sticky"]').isDisabled(), true);
+        await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'A real spatial peer thought' }).dblclick();
+        assert.equal(await host.locator('.beta-board-host .board-text-content[contenteditable="true"]').count(), 0);
+        await betaNote(phone, 'The room kept moving while history was open', true);
+        await host.locator('.beta-live-changes').filter({ hasText: /new live change/ }).waitFor();
+        assert.equal(await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'The room kept moving while history was open' }).count(), 0);
+        await screenshot(host, 'beta-readonly-history'); await host.locator('.beta-return-live').click();
+        await host.locator('.beta-workspace[data-history="live"]').waitFor(); await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'The room kept moving while history was open' }).waitFor();
+      });
+      await checkpoint('Export the real spatial archive and end only the beta room created here', async () => {
+        const [archive] = await Promise.all([host.waitForEvent('download'), betaMenuAction(host, 'export')]);
+        assert.match(archive.suggestedFilename(), /^common-spatial-.*\.common$/);
+        const filename = 'beta-workspace.common'; await archive.saveAs(path.join(artifactDir, filename));
+        // Read the exported wire format independently of the browser's codec.
+        const bytes = await readFile(path.join(artifactDir, filename)), maximum = 64 * 1024 * 1024;
+        assert.ok(bytes.length >= 12 && bytes.length <= maximum, 'The archive must fit the 64 MiB container limit.');
+        assert.equal(bytes.subarray(0, 8).toString('ascii'), 'CSPACE02');
+        const metadataLength = bytes.readUInt32LE(8); assert.ok(metadataLength > 0 && metadataLength <= bytes.length - 12);
+        const data = JSON.parse(bytes.subarray(12, 12 + metadataLength).toString('utf8'));
+        assert.equal(data.format, 'common-spatial-archive'); assert.equal(data.version, 2);
+        assert.ok(['gzip', 'none'].includes(data.compression));
+        assert.ok(Number.isSafeInteger(data.payloadBytes) && data.payloadBytes >= 0);
+        assert.ok(Number.isSafeInteger(data.uncompressedBytes) && data.uncompressedBytes >= 0 && data.uncompressedBytes <= maximum);
+        assert.equal(12 + metadataLength + data.payloadBytes, bytes.length, 'Metadata must describe the complete container exactly.');
+        assert.ok(Array.isArray(data.documents) && data.documents.length > 0 && data.documents.length <= 65);
+        assert.ok(data.documents.some(document => document.id === 'manifest'));
+        const ids = new Set(); let total = 0;
+        for (const document of data.documents) {
+          assert.ok(typeof document.id === 'string' && document.id.length <= 128 && !ids.has(document.id)); ids.add(document.id);
+          assert.ok(Number.isSafeInteger(document.byteLength) && document.byteLength > 0 && document.byteLength <= maximum);
+          total += document.byteLength;
+        }
+        assert.equal(total, data.uncompressedBytes, 'Document lengths must cover the uncompressed payload.');
+        const payload = bytes.subarray(12 + metadataLength);
+        const decoded = data.compression === 'gzip' ? gunzipSync(payload, { maxOutputLength: maximum }) : payload;
+        assert.equal(decoded.length, total, 'The independently decoded payload must match its document table.');
+        report.spatialArchive = { filename, bytes: bytes.length, documents: data.documents.length, compression: data.compression, uncompressedBytes: total };
+        await endBetaRoom(); await phone.locator('#modal-title').filter({ hasText: 'Session ended' }).waitFor();
+        const response = await host.request.get(`${betaRoomUrl.replace('/room/', '/api/rooms/').split('?')[0]}/session`, { headers: { Authorization: `Bearer ${betaToken}` } }); assert.equal(response.status(), 404);
+      });
     });
     else { report.journeys[4].status = 'unverified'; report.journeys[4].reason = 'Native peers were explicitly excluded; this is a partial browser review.'; }
     report.passed = requirePeers && report.journeys.every(item => item.status === 'passed'); report.partial = !report.passed; report.status = report.passed ? 'passed' : 'incomplete';
   } catch (error) {
+    if (betaRoomUrl && !betaEnded) report.betaRtc = { host: await rtc(host).catch(() => []), phone: await rtc(phone).catch(() => []) };
     report.status = 'failed'; report.failure = { journey: active?.name || 'setup', message: safe(error.message) };
     for (const { name, page } of pages) if (!page.isClosed()) await screenshot(page, `${name}-failure`).catch(() => {});
   } finally {
-    try { await endRoom(); report.cleanup = { ownRoomEnded: !roomUrl || ended }; }
+    try { await endBetaRoom(); await endRoom(); report.cleanup = { ownRoomEnded: (!roomUrl || ended) && (!betaRoomUrl || betaEnded) }; }
     catch (error) { report.cleanup = { ownRoomEnded: false, message: safe(error.message) }; }
     if (!report.cleanup.ownRoomEnded) {
       report.cleanup.next = 'Stop the isolated runner to discard its temporary room data.';

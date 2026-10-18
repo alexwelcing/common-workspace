@@ -18,7 +18,7 @@ const error = (status, code, message) => Object.assign(new Error(message), { sta
 const roomMissing = () => error(404, 'ROOM_NOT_FOUND', 'This session has ended or the link is invalid.');
 const sessionExpired = () => error(401, 'SESSION_EXPIRED', 'Please enter the room password again.');
 const resync = () => error(409, 'RESYNC_REQUIRED', 'Reconnect to refresh the session.');
-const publicRoom = room => ({ id: room.id, name: room.name, createdAt: timestamp(room.created_at), appearance: appearanceSnapshot(room.appearance), collaboration: 'peer', transport: 'poll' });
+const publicRoom = room => ({ id: room.id, name: room.name, createdAt: timestamp(room.created_at), appearance: appearanceSnapshot(room.appearance), ...(room.experience === 'spatial-beta' ? { experience: 'spatial-beta' } : {}), collaboration: 'peer', transport: 'poll' });
 const publicMember = (member, room) => ({ id: member.id, name: member.name, color: member.color, isAdmin: member.is_admin, ...(room.workshop ? { checklist: workshopChecklist(room.workshop, member.checklist) } : {}) });
 const guidedState = room => room.workshop ? { workshop: workshopSnapshot(room.workshop) } : {};
 const defaultEnv = key => globalThis.Netlify?.env?.get(key) ?? process.env[key];
@@ -278,9 +278,9 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         if (rateLimits) await client.query('DELETE FROM common_auth_limits WHERE expires_at <= $1', [new Date(time)]);
         const count = await client.query('SELECT COUNT(*)::integer AS count FROM common_rooms');
         if (count.rows[0].count >= 1000) throw error(503, 'CAPACITY', 'This service has reached its session capacity.');
-        const room = { id: randomId(), name: roomName, created_at: new Date(time), expires_at: new Date(time + roomTtlMs), appearance: input.appearance, workshop: input.workshop ?? null };
-        await client.query(`INSERT INTO common_rooms (id, name, password_hash, password_salt, created_at, expires_at, workshop, appearance)
-          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`, [room.id, room.name, passwordHash, salt, room.created_at, room.expires_at, room.workshop ? JSON.stringify(room.workshop) : null, JSON.stringify(room.appearance)]);
+        const room = { id: randomId(), name: roomName, created_at: new Date(time), expires_at: new Date(time + roomTtlMs), appearance: input.appearance, workshop: input.workshop ?? null, experience: input.experience ?? null };
+        await client.query(`INSERT INTO common_rooms (id, name, password_hash, password_salt, created_at, expires_at, workshop, appearance, experience)
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)`, [room.id, room.name, passwordHash, salt, room.created_at, room.expires_at, room.workshop ? JSON.stringify(room.workshop) : null, JSON.stringify(room.appearance), room.experience]);
         return addMember(client, room, displayName, true, time);
       });
       return json(result, 201);
