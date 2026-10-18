@@ -10,7 +10,7 @@ WebAssembly runs the canvas geometry kernel for grid snapping and drawing simpli
 
 Open [Space & time beta](https://commonwork.netlify.app/?beta=space), or add `?beta=space` to your local Common address. This separate, opt-in experience ships with the normal app; existing rooms keep their familiar canvas. Beta invitations open the right experience automatically.
 
-Use **2D · Work** to edit a board, then **3D · Space** to step outside and arrange boards along X, Y, and Z with independent rotations. The timeline records changes automatically as you work. Explore the read-only past while teammates continue live, **Return to live**, or **Branch from here** into a new local workspace. Each browser keeps its own view and time position.
+Use **Work** to edit a board, then **Space** to step outside and arrange boards along X, Y, and Z with independent rotations. The timeline records changes automatically as you work. Explore the read-only past while teammates continue live, **Return to live**, or **Branch from here** into a new local workspace. Each browser keeps its own view and time position.
 
 Boards and their history autosave as small edit records in this browser's IndexedDB and synchronize directly between connected peers using Loro's WebAssembly engine. The save indicator reports local persistence, not a server backup. **Export room** downloads a compact binary `.common` replay with history, optionally compressed by the browser; **Import room** opens it locally and still accepts earlier JSON archives. Clearing browser data or browser storage eviction can remove device copies, so export work you want to keep. Canvas replay reconstructs structured edits; past screen pixels require an explicit recording.
 
