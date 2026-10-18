@@ -71,7 +71,7 @@ function pointList(points) { return (points || []).map(p => Array.isArray(p) ? {
 
 /** A collaborative, zoomable DOM/SVG whiteboard. Only local edits call onChange. */
 export class Board {
-  constructor({ el, onChange = () => {}, onDelete = () => {}, onCursor = () => {}, onSelect = () => {}, onStatus = () => {}, onViewChange = () => {}, onEditDiagram = null, onToolChange = () => {}, onLayerAction = null, onLockChange = null, onWatchScreen = () => {}, onHistoryStart = () => {}, onHistoryEnd = () => {}, allowExternalPlantUml = false, canEdit = () => true }) {
+  constructor({ el, onChange = () => {}, onDelete = () => {}, onCursor = () => {}, onSelect = () => {}, onStatus = () => {}, onViewChange = () => {}, onEditDiagram = null, onToolChange = () => {}, onLayerAction = null, onLockChange = null, onWatchScreen = () => {}, onHistoryStart = () => {}, onHistoryEnd = () => {}, allowExternalPlantUml = false, canEdit = () => true, performanceIndex = null }) {
     this.el = el;
     this.onChange = onChange; this.onDelete = onDelete; this.onCursor = onCursor;
     this.onSelect = onSelect; this.onStatus = onStatus; this.onViewChange = onViewChange;
@@ -79,6 +79,7 @@ export class Board {
     this.onLayerAction = onLayerAction; this.onLockChange = onLockChange; this.layerOrder = [];
     this.onHistoryStart = onHistoryStart; this.onHistoryEnd = onHistoryEnd; this.historyGroup = false;
     this.onWatchScreen = onWatchScreen; this.screenSubscriptions = null; this.localParticipantId = null;
+    this.performanceIndex = performanceIndex; this.renderMeasurementDepth = 0; this.finishRenderMeasurement = null;
     this.entities = new Map(); this.nodes = new Map(); this.streams = new Map(); this.cursors = new Map();
     this.externalConsents = new Set(); this.selectedId = null; this.tool = 'select'; this.color = '#52765e';
     this.zoom = 1; this.pan = { x: 24, y: 24 }; this.gesture = null; this.spaceHeld = false;
@@ -274,21 +275,41 @@ export class Board {
     const pointerId = this.activePointerId; this.activePointerId = null;
     this.releasePointer(pointerId); if (gesture.pointerType !== 'touch') this.endHistoryGroup();
   }
+  // Measure synchronous DOM and layer work once per outer update. A bulk
+  // setEntities call includes its nested upserts/removals, without extra samples.
+  // Camera transforms and asynchronous diagram/image loading are separate work.
+  beginRenderMeasurement() {
+    this.renderMeasurementDepth += 1;
+    if (this.renderMeasurementDepth !== 1) return;
+    try { this.finishRenderMeasurement = this.performanceIndex?.start?.('canvas-render'); } catch { /* Diagnostics must never interrupt editing. */ }
+  }
+  endRenderMeasurement(failed) {
+    this.renderMeasurementDepth -= 1;
+    if (this.renderMeasurementDepth !== 0) return;
+    const finish = this.finishRenderMeasurement; this.finishRenderMeasurement = null;
+    try { if (typeof finish === 'function') finish({ failed }); } catch { /* Preserve the canvas result even if diagnostics fail. */ }
+  }
   setReadOnly(value) {
-    this.readOnly = !!value;
-    if (this.readOnly) this.closeDiagramEditor();
-    this.el.classList.toggle('board-read-only', this.readOnly);
-    if (this.readOnly && this.touchPointers.size) this.cancelPointers();
-    if (this.readOnly && this.gesture && this.gesture.type !== 'pan') {
-      if (this.gesture.type === 'create') this.remove(this.gesture.id);
-      else if (this.gesture.original) this.upsert(this.gesture.original);
-      this.gesture = null; this.el.classList.remove('board-is-dragging');
-      if (this.activePointerId != null && this.el.hasPointerCapture(this.activePointerId)) this.el.releasePointerCapture(this.activePointerId);
-      this.activePointerId = null; this.endHistoryGroup();
+    this.beginRenderMeasurement(); let failed = true;
+    try {
+      this.readOnly = !!value;
+      if (this.readOnly) this.closeDiagramEditor();
+      this.el.classList.toggle('board-read-only', this.readOnly);
+      if (this.readOnly && this.touchPointers.size) this.cancelPointers();
+      if (this.readOnly && this.gesture && this.gesture.type !== 'pan') {
+        if (this.gesture.type === 'create') this.remove(this.gesture.id);
+        else if (this.gesture.original) this.upsert(this.gesture.original);
+        this.gesture = null; this.el.classList.remove('board-is-dragging');
+        if (this.activePointerId != null && this.el.hasPointerCapture(this.activePointerId)) this.el.releasePointerCapture(this.activePointerId);
+        this.activePointerId = null; this.endHistoryGroup();
+      }
+      if (this.readOnly && this.editingId) this.nodes.get(this.editingId)?.querySelector('[contenteditable="true"]')?.blur();
+      for (const entity of this.entities.values()) this.renderEntity(entity);
+      this.updateSelectionTools(); this.updateLayers();
+      failed = false;
+    } finally {
+      this.endRenderMeasurement(failed);
     }
-    if (this.readOnly && this.editingId) this.nodes.get(this.editingId)?.querySelector('[contenteditable="true"]')?.blur();
-    for (const entity of this.entities.values()) this.renderEntity(entity);
-    this.updateSelectionTools(); this.updateLayers();
   }
   setColor(color) {
     this.color = color;
@@ -296,30 +317,48 @@ export class Board {
     if (entity && this.mayEdit(entity) && entity.type !== 'screen' && entity.type !== 'image' && entity.type !== 'diagram') this.commit({ ...entity, color }, { color });
   }
   setEntities(entities) {
-    const incoming = new Set(entities.map(e => e.id));
-    for (const id of this.entities.keys()) if (!incoming.has(id)) this.remove(id);
-    for (const entity of entities) this.upsert(entity);
+    this.beginRenderMeasurement(); let failed = true;
+    try {
+      const incoming = new Set(entities.map(e => e.id));
+      for (const id of this.entities.keys()) if (!incoming.has(id)) this.remove(id);
+      for (const entity of entities) this.upsert(entity);
+      failed = false;
+    } finally {
+      this.endRenderMeasurement(failed);
+    }
   }
   upsert(entity, { gesturePreview = false } = {}) {
     if (!entity?.id || !DEFAULTS[entity.type]) return;
-    const normalized = { ...DEFAULTS[entity.type], ...entity, x: finite(entity.x), y: finite(entity.y), width: Math.max(2, finite(entity.width, DEFAULTS[entity.type].width)), height: Math.max(2, finite(entity.height, DEFAULTS[entity.type].height)) };
-    // A touch drag is an unshared preview. Remember newer canonical geometry so
-    // switching to navigation never restores an older position over a teammate.
-    if (!gesturePreview && this.gesture?.id === entity.id && this.gesture.pointerType === 'touch' && ['move', 'resize'].includes(this.gesture.type)) this.gesture.original = { ...normalized };
-    if (this.gesture?.id === entity.id && (normalized.locked || !this.mayEdit(normalized))) this.cancelPositionGesture();
-    const previous = this.entities.get(entity.id);
-    this.entities.set(entity.id, normalized); this.renderEntity(normalized); this.applyLayerOrder(); this.updateSelectionTools();
-    if (this.focusedId === entity.id) this.updateFocusBar();
-    if (this.focusedId === entity.id && (!previous || ['x', 'y', 'width', 'height'].some(key => previous[key] !== normalized[key]))) this.fitFocusedEntity();
+    this.beginRenderMeasurement(); let failed = true;
+    try {
+      const normalized = { ...DEFAULTS[entity.type], ...entity, x: finite(entity.x), y: finite(entity.y), width: Math.max(2, finite(entity.width, DEFAULTS[entity.type].width)), height: Math.max(2, finite(entity.height, DEFAULTS[entity.type].height)) };
+      // A touch drag is an unshared preview. Remember newer canonical geometry so
+      // switching to navigation never restores an older position over a teammate.
+      if (!gesturePreview && this.gesture?.id === entity.id && this.gesture.pointerType === 'touch' && ['move', 'resize'].includes(this.gesture.type)) this.gesture.original = { ...normalized };
+      if (this.gesture?.id === entity.id && (normalized.locked || !this.mayEdit(normalized))) this.cancelPositionGesture();
+      const previous = this.entities.get(entity.id);
+      this.entities.set(entity.id, normalized); this.renderEntity(normalized); this.applyLayerOrder(); this.updateSelectionTools();
+      if (this.focusedId === entity.id) this.updateFocusBar();
+      if (this.focusedId === entity.id && (!previous || ['x', 'y', 'width', 'height'].some(key => previous[key] !== normalized[key]))) this.fitFocusedEntity();
+      failed = false;
+    } finally {
+      this.endRenderMeasurement(failed);
+    }
   }
   remove(id) {
-    if (this.diagramEditor?.id === id) this.closeDiagramEditor();
-    if (this.editingId === id) this.finishTextEdit?.(false);
-    if (this.focusedId === id) this.exitFocus();
-    if (this.gesture?.id === id) this.cancelPositionGesture();
-    this.entities.delete(id); this.nodes.get(id)?.remove(); this.nodes.delete(id); this.externalConsents.delete(id);
-    if (this.selectedId === id) this.select(null);
-    this.applyLayerOrder(); this.updateSelectionTools();
+    this.beginRenderMeasurement(); let failed = true;
+    try {
+      if (this.diagramEditor?.id === id) this.closeDiagramEditor();
+      if (this.editingId === id) this.finishTextEdit?.(false);
+      if (this.focusedId === id) this.exitFocus();
+      if (this.gesture?.id === id) this.cancelPositionGesture();
+      this.entities.delete(id); this.nodes.get(id)?.remove(); this.nodes.delete(id); this.externalConsents.delete(id);
+      if (this.selectedId === id) this.select(null);
+      this.applyLayerOrder(); this.updateSelectionTools();
+      failed = false;
+    } finally {
+      this.endRenderMeasurement(failed);
+    }
   }
   commit(entity, patch) {
     const current = this.entities.get(entity.id);

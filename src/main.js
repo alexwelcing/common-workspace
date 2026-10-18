@@ -14,7 +14,9 @@ import {ScreenSubscriptions} from './screen-subscriptions.js';
 import {PollingSessionTransport} from './session-transport.js';
 import {initGeometry, geometryBackend} from './geometry.js';
 import {getRuntimeConfig, loadRuntimeConfig, cancelRuntimeConfigLoad} from './runtime-config.js';
-import {DiagnosticLog, buildDiagnosticReport} from './diagnostics.js';
+import {DiagnosticLog, buildDiagnosticReport, mediaDiagnostics} from './diagnostics.js';
+import {createPerformanceIndex, createPerformanceReport, installPerformanceDebugApi} from './performance-index.js';
+import {openPerformancePanel, bindPerformanceIndicator} from './performance-panel.js';
 import {appBasePath, appPath, appURL, appWebSocketURL, appRoute, appStorageKey} from './app-path.js';
 import {prepareImage, clipboardImages, MAX_IMAGE_BATCH} from './image-import.js';
 import {ModalController} from './modal-controller.js';
@@ -28,6 +30,9 @@ import {renderSessionTemplates,bindSessionTemplates,readWorkshop,templateCanvas}
 import './session-templates.css';
 
 const diagnostics=new DiagnosticLog();
+const performanceIndex=createPerformanceIndex({documentImpl:document,windowImpl:window});
+const cleanupPerformanceDebug=installPerformanceDebugApi(performanceIndex,{windowImpl:window});
+let cleanupPerformanceIndicator=null;
 async function refreshRuntimeConfiguration(){
   const config=await loadRuntimeConfig({fetch:diagnosticFetch});
   if(disposed)return config;
@@ -37,7 +42,6 @@ async function refreshRuntimeConfiguration(){
   }
   return config;
 }
-const runtimeConfigReady=refreshRuntimeConfiguration();
 
 const $=s=>document.querySelector(s);
 const icon=(name,size=18)=>{const node=createElement(icons[name]||icons.Circle,{width:size,height:size,'stroke-width':1.7});return node.outerHTML};
@@ -59,6 +63,8 @@ const sessionVisibility={
   addEventListener(type,listener){if(type==='visibilitychange')visibilityListeners.add(listener);document.addEventListener(type,listener)},
   removeEventListener(type,listener){if(type==='visibilitychange')visibilityListeners.delete(listener);document.removeEventListener(type,listener)}
 };
+// Start configuration after the lifecycle guards exist: the fetch is also measured.
+const runtimeConfigReady=refreshRuntimeConfiguration();
 function embedState(){
   const sharing=!disposed&&!!localStream?.getVideoTracks?.().some(track=>track.readyState==='live');
   const recording=!disposed&&['starting','recording','stopping'].includes(capture?.status().state);
@@ -67,7 +73,7 @@ function embedState(){
 let lastEmbedState='';
 function publishEmbedState(){const state=embedState(),key=JSON.stringify(state);if(key===lastEmbedState)return;lastEmbedState=key;for(const listener of Array.from(embedListeners))try{listener(state)}catch{}}
 function fitInitialCanvas(){if(!disposed&&initialFitNeeded&&board?.el.clientWidth>0&&board.el.clientHeight>0){board.fit();initialFitNeeded=false}}
-function setEmbedVisible(visible){if(disposed)return embedState();embedVisible=Boolean(visible);if(!embedVisible&&media?.getCaptureState().requestPending)media.stop();if(embedVisible&&initialFitNeeded)nextFrame(fitInitialCanvas);syncScreenSubscriptions();for(const listener of Array.from(visibilityListeners))try{listener(new Event('visibilitychange'))}catch{}publishEmbedState();return embedState()}
+function setEmbedVisible(visible){if(disposed)return embedState();embedVisible=Boolean(visible);performanceIndex.setVisible(embedVisible&&!document.hidden);if(!embedVisible&&media?.getCaptureState().requestPending)media.stop();if(embedVisible&&initialFitNeeded)nextFrame(fitInitialCanvas);syncScreenSubscriptions();for(const listener of Array.from(visibilityListeners))try{listener(new Event('visibilitychange'))}catch{}publishEmbedState();return embedState()}
 function destroyCommon(){
   if(destroyPromise)return destroyPromise;
   let finish;destroyPromise=new Promise(resolve=>{finish=resolve});
@@ -89,6 +95,7 @@ function destroyCommon(){
   peerCanvas?.destroy();shared?.destroy();board?.destroy();
   for(const url of objectUrls)URL.revokeObjectURL(url);objectUrls.clear();
   closeModal();$('#toasts').replaceChildren();$('#app').inert=true;
+  cleanupPerformanceIndicator?.();cleanupPerformanceIndicator=null;cleanupPerformanceDebug();performanceIndex.destroy();
   publishEmbedState();embedListeners.clear();
   void(async()=>{let timer;try{await Promise.race([Promise.resolve(stopping),new Promise(resolve=>{timer=setTimeout(resolve,1000)})])}finally{clearTimeout(timer);finish()}})();
   return destroyPromise;
@@ -185,9 +192,11 @@ async function diagnosticFetch(input,options={}){
   // Each caller owns its controller through body consumption: api(), runtime
   // configuration, or the polling transport. Observe without replacing that
   // signal, so cancellation still reaches JSON streaming after headers arrive.
-  const started=Date.now();
-  try{const response=await fetch(input,options);diagnostics.record('request',{durationMs:Date.now()-started,status:response.status,requestId:response.headers.get('x-common-request-id')});return response}
-  catch(error){diagnostics.record('request',{durationMs:Date.now()-started,state:'failed'});throw error}
+  const started=Date.now(),finish=performanceIndex.start('request');
+  let failed=false;
+  try{const response=await fetch(input,options);failed=!response.ok;diagnostics.record('request',{durationMs:Date.now()-started,status:response.status,requestId:response.headers.get('x-common-request-id')});return response}
+  catch(error){failed=true;diagnostics.record('request',{durationMs:Date.now()-started,state:'failed'});throw error}
+  finally{finish({failed})}
 }
 async function api(path,body,{headers={},timeoutMs=20000}={}){
   const controller=new AbortController();
@@ -260,6 +269,7 @@ sharingControls=new ScreenShareControls({
 
 board=new Board({
   el:$('#board-viewport'),
+  performanceIndex,
   canEdit:entity=>entity.type!=='screen'||sandbox||entity.participantId===auth?.participantId,
   onChange:(entity,patch)=>{if(!shared?.setLocal(entity,patch))refreshCanvas()},
   onDelete:id=>deleteCanvasEntity(id),
@@ -296,7 +306,15 @@ const subscriptionResizeObserver=new ResizeObserver(()=>{scheduleScreenSubscript
 subscriptionResizeObserver.observe($('#board-viewport'));
 cleanupViewport=installMobileViewport({onChange:()=>{positionCanvasOverlays();sessionGuide?.fitPanel();scheduleScreenSubscriptions()}});
 function isPeerRoom(){return !sandbox&&auth?.room?.collaboration==='peer'}
-function refreshCanvas(){if(!disposed&&shared){board.setEntities(shared.all());board.setLayerOrder(shared.getOrder());scheduleScreenSubscriptions()}}
+function refreshCanvas(){if(!disposed&&shared){board.setEntities(shared.all());board.setLayerOrder(shared.getOrder());refreshPerformanceContext();scheduleScreenSubscriptions()}}
+function refreshPerformanceContext({includeMedia=false}={}){
+  if(disposed)return;
+  performanceIndex.setContext({objects:board?.entities.size||0,boards:1,participants:sandbox?1:participants.length});
+  if(includeMedia){
+    const state=mediaDiagnostics(media);
+    performanceIndex.setContext({peerConnections:state.peerConnections,watchedWindows:state.watchedWindows,queuedBytes:state.queuedBytes,bufferedBytes:state.bufferedBytes});
+  }
+}
 function scheduleScreenSubscriptions(){cancelLater(subscriptionTimer);if(!disposed)subscriptionTimer=later(syncScreenSubscriptions,150)}
 function syncScreenSubscriptions(){
   cancelLater(subscriptionTimer);
@@ -306,9 +324,9 @@ function syncScreenSubscriptions(){
   const screens=shared.all().filter(entity=>entity.type==='screen'&&(sandbox||active.has(entity.participantId)));
   const ids=screenSubscriptions.plan(screens,{participantId:ownParticipantId(),selectedId:board.selectedId,focusedId:board.focusedId,view:board.getView(),width:el.clientWidth,height:el.clientHeight,hidden:document.hidden||!embedVisible||(!sandbox&&!connected)});
   board.setScreenSubscriptions(ids,ownParticipantId());
-  media.setSubscriptions(ids);sessionGuide?.update();
+  media.setSubscriptions(ids);sessionGuide?.update();refreshPerformanceContext({includeMedia:true});
 }
-document.addEventListener('visibilitychange',()=>{syncScreenSubscriptions();publishEmbedState()},{signal:mainEvents.signal});
+document.addEventListener('visibilitychange',()=>{performanceIndex.setVisible(embedVisible&&!document.hidden);syncScreenSubscriptions();publishEmbedState()},{signal:mainEvents.signal});
 window.addEventListener('resize',scheduleScreenSubscriptions,{signal:mainEvents.signal});
 function stopDeletedLocalScreen(){
   if(localStream&&!shared?.all().some(e=>e.type==='screen'&&e.participantId===ownParticipantId())){
@@ -320,12 +338,12 @@ function makeCanvasModel(){
   peerCanvas?.destroy();peerCanvas=null;shared?.destroy();
   shared=new SharedCanvas({
     onChange:entity=>{
-      board.upsert(entity);board.setLayerOrder(shared.getOrder());
+      board.upsert(entity);board.setLayerOrder(shared.getOrder());refreshPerformanceContext();
       if(entity.type==='screen'){scheduleScreenSubscriptions();refreshSessionGuide()}
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'upsert',entity});
     },
     onDelete:id=>{
-      if(featuredSession)featuredSession.duringModelUpdate(()=>board.remove(id));else board.remove(id);board.setLayerOrder(shared.getOrder());stopDeletedLocalScreen();refreshSessionGuide();
+      if(featuredSession)featuredSession.duringModelUpdate(()=>board.remove(id));else board.remove(id);board.setLayerOrder(shared.getOrder());refreshPerformanceContext();stopDeletedLocalScreen();refreshSessionGuide();
       scheduleScreenSubscriptions();
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'delete',id});
     },
@@ -380,7 +398,19 @@ $('#redo-canvas').onclick=()=>performHistory('redo');
 for(const type of ['input','focusin','focusout'])board.el.addEventListener(type,()=>queueMicrotask(updateHistoryControls),{signal:mainEvents.signal});
 
 let warnedCanvasStorage=false;
-function saveSandbox(){if(disposed)return;const saved=writeStored('localStorage',appStorageKey('common.canvas'),JSON.stringify([...board.entities.values()].filter(e=>e.type!=='screen')));if(!saved&&!warnedCanvasStorage){warnedCanvasStorage=true;toast('This browser cannot save the canvas on this device. Export it to keep your changes.')}}
+function saveSandbox(){
+  if(disposed)return;
+  const finish=performanceIndex.start('autosave');
+  let failed=true;
+  try{
+    const saved=writeStored('localStorage',appStorageKey('common.canvas'),JSON.stringify([...board.entities.values()].filter(e=>e.type!=='screen')));
+    failed=!saved;
+    if(!saved&&!warnedCanvasStorage){
+      warnedCanvasStorage=true;
+      toast('This browser cannot save the canvas on this device. Export it to keep your changes.');
+    }
+  }finally{finish({failed})}
+}
 function loadSandbox(){applyRoomAppearance(readStoredJSON('localStorage',appStorageKey('common.appearance')));const stored=readStoredJSON('localStorage',appStorageKey('common.canvas')),data=Array.isArray(stored)?stored:null;makeCanvasModel();shared.replaceInitial(data||seed());renderPeople();renderRecent();setPanelOpen(false);if(!data||appBasePath!=='/'){initialFitNeeded=true;nextFrame(fitInitialCanvas)}}
 loadSandbox();
 setupMedia();
@@ -397,6 +427,7 @@ $('#close-panel').onclick=()=>{setPanelOpen(false);$('#toggle-panel').focus({pre
 $('#right-panel').addEventListener('keydown',event=>{if(event.key==='Escape'&&!event.defaultPrevented&&!event.isComposing){event.preventDefault();$('#close-panel').click()}},{signal:mainEvents.signal});
 $('#new-session').onclick=()=>createModal();$('#invite').onclick=()=>sandbox?createModal():inviteModal();$('#how-it-works').onclick=tour;$('#sessions-nav').onclick=showSessions;$('#sandbox-nav').onclick=()=>{if(sandbox)board.fit();else location.href=appPath('/')};
 $('#room-menu').onclick=roomMenu;
+cleanupPerformanceIndicator=bindPerformanceIndicator({monitor:performanceIndex,trigger:$('#room-menu')});
 document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{rightPanel=b.dataset.panel;document.querySelectorAll('[data-panel]').forEach(e=>{const active=e===b;e.classList.toggle('active',active);e.setAttribute('aria-pressed',String(active))});renderPanel()});
 function ensureConversation(){
   if(chatPanel)return chatPanel;
@@ -455,7 +486,7 @@ function setupMedia(){
   const instance=new ScreenSharing({
     send:message=>{if(current())send(message)},
     onStream:(id,stream)=>{if(!current())return;board.setStream(id==='local'?ownParticipantId():id,stream);if(id==='local'){localStream=stream;updateShareButton()}refreshSessionGuide()},
-    onData:(id,bytes)=>{if(current())peerCanvas?.receive(id,bytes)},
+    onData:(id,bytes)=>{if(current()&&peerCanvas)performanceIndex.measure('peer-sync',()=>peerCanvas.receive(id,bytes))},
     onPeerOpen:id=>{if(current()){peerCanvas?.open(id);updateCanvasStatus()}},
     onPeerClose:id=>{if(current()){peerCanvas?.close(id);updateCanvasStatus()}},
     onStatus:message=>{if(current())toast(message)},
@@ -473,7 +504,9 @@ function setupMedia(){
   sharingControls?.setState(instance.getCaptureState());
 }
 function updateCanvasStatus(){
-  if(disposed||sandbox)return;
+  if(disposed)return;
+  refreshPerformanceContext({includeMedia:true});
+  if(sandbox)return;
   const count=peerCanvas?.peers.size||0;
   // Canvas gossip needs only the sparse overlay, independent of video viewers.
   const ready=Boolean(media)&&[...media.desiredCanvasPeers].every(id=>peerCanvas?.peers.has(id));
@@ -687,7 +720,23 @@ async function showMediaExports(){
   disconnectExports=disconnectMediaExport;
   openMediaExportDialog({capture,modal,closeModal,onStatus:toast});
 }
-function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
+function showPerformance(){
+  if(disposed)return;
+  refreshPerformanceContext({includeMedia:true});
+  modalCleanup=openPerformancePanel({monitor:performanceIndex,modal,closeModal,onDownload:downloadPerformanceReport});
+}
+function downloadPerformanceReport(snapshot){
+  if(disposed)return;
+  const report=createPerformanceReport(snapshot,{
+    buildId:getRuntimeConfig().buildId,
+    frontendBuildId:typeof __COMMON_BUILD_ID__==='string'?__COMMON_BUILD_ID__:'development',
+    experience:'classic'
+  });
+  const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+  const link=document.createElement('a');link.href=url;link.download='common-performance-report.json';link.click();
+  objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);
+}
+function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="performance-menu">${icon('Sprout',17)} Performance</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#performance-menu').onclick=showPerformance;modalCleanup=bindPerformanceIndicator({monitor:performanceIndex,item:$('#performance-menu')});$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented||e.isComposing||disposed)return;
   if(e.key==='Escape'){

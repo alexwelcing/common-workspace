@@ -1,5 +1,16 @@
 # Common releases
 
+## 1.5.0 — 2026-10-18
+
+A local performance index is available in the standard canvas and spatial beta, including portable module **0.5.0**.
+
+- Open **Canvas options → Performance** or **Room → Performance** for a rolling 60-second index, measured responsiveness, likely contributors, operation timings, failures, and workload counts. The existing menu gains a quiet indicator when measured responsiveness is strained or poor.
+- The score follows the weakest available responsiveness signal after five visible seconds. It combines browser observations with timed rendering, edits, history reconstruction, and peer merges. Autosave/archive waiting and request latency remain separate clues; missing evidence stays unknown. Background tabs and hidden embeds pause observation.
+- Download a content-free JSON report with build correlation, or inspect the read-only `window.commonPerformance.snapshot()` debug API. Collection stays in memory on the device, uses bounded samples and brief activity-driven frame observation, and releases owned resources on teardown. No analytics service or dependency is added.
+- Existing browser journeys export privacy-checked synthetic reports, retained as CI artifacts for build comparison. Scores are diagnostic evidence rather than a noisy pass/fail benchmark. A performance guide explains budgets, coverage, reproduction, and instrumentation maintenance.
+
+Verification extends the existing five journeys for actual classic/beta operation measurements and report export. Focused real-browser probes cover controlled degradation/recovery, failed storage writes, pause/reset, mobile layout, keyboard focus, report privacy, and lifecycle cleanup; no test cases or suites are added.
+
 ## 1.4.1 — 2026-10-18
 
 A maintenance release for the spatial beta and portable module **0.4.1**.

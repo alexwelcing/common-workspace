@@ -20,7 +20,7 @@ See [the beta guide](docs/spatial-beta.md) for templates, themes, local use, emb
 
 Common includes a portable module for an inline canvas panel or a floating workspace inside your own application. `createCommon` from `common-workspace/bun` attaches to your existing fetch/WebSocket server; `mountCommon` from `common-workspace/client` loads the interface in a same-origin iframe. It opens no additional port, needs no UI framework, and defaults to private networking and in-memory rooms. Your authentication can protect the mount, while Common room passwords and visible agent grants still apply.
 
-Download the package and its SHA-256 checksum from the [v1.4.1 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.4.1), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.4.1.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
+Download the package and its SHA-256 checksum from the [v1.5.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.5.0), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.5.0.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
 
 The package includes the example: run `bun node_modules/common-workspace/example/server.mjs` in a project where you installed it, then open `http://127.0.0.1:3100`.
 
@@ -180,6 +180,8 @@ bun run start
 ### Runtime and reliability diagnostics
 
 Open **Canvas options → Connection details** to see the effective profile/build, connected canvas neighbors, watched windows, queued bytes, and configured relay status. **Download connection report** saves counts, connection states, and generated request IDs for correlation, without room IDs, canvas content, credentials, or recordings.
+
+Open **Canvas options → Performance**, or **Room → Performance** in the spatial beta, for a local responsiveness index, measured work, and workload context. Measurements stay in the browser; reports download only when requested. See the [performance guide](docs/performance.md) for coverage, interpretation, and comparing changes.
 
 `/api/config` identifies the effective transport, profile, protocol, and build; `/api/health` checks the hosting adapter's health. The public configuration contains STUN settings and a TURN-availability flag, never credentials. Both adapters share validation and session policy. Hosted polling delivers targeted batches, skips unchanged rosters, catches up immediately when more events remain, and retries only idempotent signaling when the server advertises support. Chat is not retried automatically.
 

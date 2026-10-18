@@ -22,10 +22,16 @@ import { mountBetaView } from './view.js';
 import { createBetaSession } from './session.js';
 import { installBetaAgent } from './agent.js';
 import { createWorkspaceTemplate } from './templates.js';
+import { mediaDiagnostics } from '../diagnostics.js';
+import { createPerformanceIndex, createPerformanceReport, installPerformanceDebugApi } from '../performance-index.js';
+import { openPerformancePanel, bindPerformanceIndicator } from '../performance-panel.js';
 
 const root = document.querySelector('#app');
 const modalRoot = document.querySelector('#modal-root');
 const events = new AbortController();
+const performanceIndex = createPerformanceIndex();
+const cleanupPerformanceDebug = installPerformanceDebugApi(performanceIndex);
+let cleanupPerformanceIndicator = () => {};
 const appearanceUI = new RoomAppearance();
 const subscriptions = new ScreenSubscriptions();
 const streams = new Map();
@@ -233,6 +239,10 @@ function syncWatching() {
 }
 function render() {
   if (disposed || !store || !view) return;
+  return performanceIndex.measure('spatial-render', renderWorkspace);
+}
+
+function renderWorkspace() {
   let snapshot;
   try {
     snapshot = state();
@@ -287,6 +297,17 @@ function render() {
     tool: board?.tool || 'select',
     sharing: !!activeMedia()?.localStream,
   });
+  const media = mediaDiagnostics(activeMedia());
+  performanceIndex.setContext({
+    objects: snapshot.boards.reduce((count, item) => count + item.objects.length, 0),
+    boards: snapshot.boards.length,
+    participants: sandbox ? 1 : participants.length,
+    peerConnections: media.peerConnections,
+    watchedWindows: media.watchedWindows,
+    queuedBytes: media.queuedBytes,
+    bufferedBytes: media.bufferedBytes,
+    historyBytes: store.getPerformanceState?.().historyBytes || 0,
+  });
   if (!board) return;
   renderActiveBoard(snapshot);
   syncWatching();
@@ -337,11 +358,13 @@ async function openWorkspace(id, options = {}) {
     previous.destroy();
   }
   if (disposed || workspaceAtStart !== workspaceGeneration) return;
+  performanceIndex.reset();
   storageStatus = { state: 'loading', message: 'Opening your autosaved room…' };
   const next = await createSpatialStore({
     id,
     actor: sandbox ? 'You' : session?.auth?.displayName || 'Teammate',
     ...options,
+    performanceIndex,
     onChange: () => {
       if (workspaceAtStart === workspaceGeneration) scheduleRender();
     },
@@ -588,7 +611,9 @@ function importArchive() {
       return;
     }
     try {
-      const archive = parseSpatialArchive(await readReplayArchive(new Uint8Array(await file.arrayBuffer())));
+      const archive = await performanceIndex.measure('archive-import', async () =>
+        parseSpatialArchive(await readReplayArchive(new Uint8Array(await file.arrayBuffer()))),
+      );
       if (disposed || workspaceAtStart !== workspaceGeneration) return;
       await openLocal({ archive });
       toast('Archive opened locally with its automatic history.');
@@ -652,8 +677,8 @@ async function exportWorkspace() {
   // Export the current in-memory history even if device persistence has failed.
   void store.flush().catch(() => {});
   const workspaceAtStart = workspaceGeneration;
-  const result = await writeReplayArchive(
-    store.exportReplayData ? store.exportReplayData() : store.exportArchive(),
+  const result = await performanceIndex.measure('archive-export', () =>
+    writeReplayArchive(store.exportReplayData ? store.exportReplayData() : store.exportArchive()),
   );
   if (disposed || workspaceAtStart !== workspaceGeneration) return;
   download(result.bytes, 'application/octet-stream', `common-spatial-${Date.now()}.common`);
@@ -664,6 +689,36 @@ async function branchFromHistory() {
   const seed = store.fork(selectedRevisionId);
   await openLocal({ seed });
   toast('A new local branch is ready. Its history will save automatically.');
+}
+
+function showPerformance() {
+  modalCleanup = openPerformancePanel({
+    monitor: performanceIndex,
+    modal,
+    closeModal,
+    onDownload: snapshot => {
+      const runtime = getRuntimeConfig();
+      const report = createPerformanceReport(snapshot, {
+        buildId: runtime.buildId,
+        frontendBuildId: typeof __COMMON_BUILD_ID__ === 'string' ? __COMMON_BUILD_ID__ : 'development',
+        experience: 'spatial-beta',
+      });
+      download(JSON.stringify(report, null, 2), 'application/json', `common-performance-${Date.now()}.json`);
+    },
+  });
+}
+
+// Measure response-header latency without recording URLs or replacing cancellation signals.
+async function measuredSessionFetch(input, options) {
+  const finish = performanceIndex.start('request');
+  let failed = true;
+  try {
+    const response = await fetch(input, options);
+    failed = !response.ok;
+    return response;
+  } finally {
+    finish({ failed });
+  }
 }
 
 async function action(name, payload) {
@@ -693,6 +748,9 @@ async function action(name, payload) {
         break;
       case 'agents':
         agent?.open();
+        break;
+      case 'performance':
+        showPerformance();
         break;
       case 'end':
         confirmEnd();
@@ -765,6 +823,9 @@ function destroy() {
   // Invalidate callbacks before releasing resources; repeated destroy calls await the same work.
   destroyPromise = (async () => {
     events.abort();
+    cleanupPerformanceIndicator();
+    cleanupPerformanceDebug();
+    performanceIndex.destroy();
     clearTimeout(draftTimer);
     clearTimeout(toastTimer);
     clearInterval(syncTimer);
@@ -796,6 +857,7 @@ Object.defineProperty(window, 'commonEmbedLifecycle', {
     getState: lifecycleState,
     setVisible(value) {
       visible = !!value;
+      performanceIndex.setVisible(visible);
       if (!visible && activeMedia()?.getCaptureState().requestPending) activeMedia().stop();
       syncWatching();
       publishState();
@@ -826,8 +888,19 @@ view = mountBetaView(root, {
 });
 view.render({ canEdit: false, saveState: 'loading', saveMessage: 'Opening your autosaved room…' });
 view.element.querySelector('.beta-brand').href = appPath('/?beta=space');
+const performanceMenuItem = document.createElement('button');
+performanceMenuItem.type = 'button';
+performanceMenuItem.dataset.betaAction = 'performance';
+performanceMenuItem.textContent = 'Performance';
+view.element.querySelector('.beta-agent-tools-host').before(performanceMenuItem);
+cleanupPerformanceIndicator = bindPerformanceIndicator({
+  monitor: performanceIndex,
+  trigger: view.element.querySelector('.beta-room-trigger'),
+  item: performanceMenuItem,
+});
 board = new Board({
   el: view.boardHost,
+  performanceIndex,
   onChange: (entity, patch) => {
     if (editable()) {
       try {
@@ -890,6 +963,7 @@ personalMedia = new ScreenSharing({
   fallbackIceConfig: () => getRuntimeConfig().rtc,
 });
 const sessionOptions = {
+  fetchImpl: measuredSessionFetch,
   onAdmitted: async (auth, { isNew }) => {
     finishActiveSelection();
     personalMedia.stop();

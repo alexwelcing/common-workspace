@@ -11,7 +11,7 @@ import { gunzipSync } from 'node:zlib';
 const require = createRequire(import.meta.url);
 const timeout = 20000;
 const definitions = [
-  ['personal-canvas', 'The WASM canvas creates, edits, and undoes a local note.'],
+  ['personal-canvas', 'The WASM canvas creates, edits, and undoes a local note; performance diagnostics measure that work.'],
   ['guided-room', 'A phone joins a styled room with its password and becomes ready without capture.'],
   ['chat-and-reload', 'Chat and host-only room styling update both browsers; reload preserves identity and the plan.'],
   ['agent-consent', 'Visible consent controls agent edits; PNG preserves the room canvas colour and revocation blocks edits.'],
@@ -97,6 +97,39 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
     if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
     await page.locator('.beta-room-menu').locator(`[data-beta-action="${name}"]`).click();
   };
+  const performanceReport = async (page, { experience, operations, excluded = [] }) => {
+    // Check work produced by the real journey. Device load can legitimately
+    // change the score, and a freshly opened tab may still be warming up.
+    await page.waitForFunction(names => names.every(name => window.commonPerformance?.snapshot().operations
+      .some(operation => operation.name === name && operation.count > 0)), operations);
+    await page.getByRole('heading', { name: 'Performance', exact: true }).waitFor();
+    await page.locator('[data-performance-operations]').getByRole('row').first().waitFor();
+    const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download report', exact: true }).click()]);
+    assert.match(download.suggestedFilename(), /^common-performance-.*\.json$/);
+    const temporaryPath = await download.path(); assert.ok(temporaryPath, 'The local browser must provide its downloaded report.');
+    const text = await readFile(temporaryPath, 'utf8'), data = JSON.parse(text);
+    assert.equal(data.type, 'common-performance-report'); assert.equal(data.version, 1);
+    assert.equal(data.application.experience, experience);
+    assert.deepEqual(Object.keys(data.application).sort(), ['buildId', 'experience', 'frontendBuildId']);
+    assert.equal(data.performance.version, 1);
+    assert.ok(data.performance.score === null || (Number.isFinite(data.performance.score) && data.performance.score >= 0 && data.performance.score <= 100));
+    assert.ok(['paused', 'warming', 'healthy', 'strained', 'poor'].includes(data.performance.status));
+    for (const name of operations) {
+      const operation = data.performance.operations.find(value => value.name === name);
+      assert.ok(operation?.count > 0 && Number.isFinite(operation.p95Ms) && operation.p95Ms >= 0, `The report must measure ${name} from actual canvas work.`);
+    }
+    assert.ok(data.performance.context.objects > 0, 'The report must describe the current workload without including its content.');
+    assert.ok(!/https?:\/\//i.test(text), 'Performance reports must exclude page and resource URLs.');
+    assert.ok(!/"(?:roomId|participantId|password|token|authorization)"\s*:/i.test(text), 'Performance reports must exclude identity and credential fields.');
+    const roomIds = [roomUrl, betaRoomUrl].filter(Boolean).map(url => new URL(url).pathname.split('/').pop());
+    for (const value of [...secrets, ...roomIds, ...excluded]) {
+      assert.ok(!text.includes(value), 'Performance reports must exclude credentials, room identifiers, names, and canvas content.');
+    }
+    // Only retain the report after its privacy checks pass.
+    const filename = `${experience}-performance.json`; await writeFile(path.join(artifactDir, filename), text);
+    (report.performanceReports ||= []).push({ filename, experience, operations: operations.slice(), status: data.performance.status, score: data.performance.score });
+    await page.locator('.close-modal').click();
+  };
   const endBetaRoom = async () => {
     if (!betaRoomUrl || betaEnded || !host || host.isClosed()) return;
     await host.locator('.close-modal').click({ timeout: 500 }).catch(() => {});
@@ -170,6 +203,11 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         await host.locator('#undo-canvas').click(); await note.waitFor();
         assert.equal(await host.locator('.type-sticky').filter({ hasText: 'An edited starting point' }).count(), 0);
         await screenshot(host, 'personal-canvas');
+      });
+      await checkpoint('Inspect measured canvas work and download a content-free performance report', async () => {
+        await host.locator('#room-menu').click(); await host.locator('#performance-menu').click();
+        await performanceReport(host, { experience: 'classic', operations: ['canvas-render', 'autosave'], excluded: ['A small starting point', 'An edited starting point'] });
+        await note.waitFor();
       });
     });
     const password = `Common-journey-${Date.now()}`; secrets.push(password);
@@ -385,6 +423,14 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         assert.equal(await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'The room kept moving while history was open' }).count(), 0);
         await screenshot(host, 'beta-readonly-history'); await host.locator('.beta-return-live').click();
         await host.locator('.beta-workspace[data-history="live"]').waitFor(); await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'The room kept moving while history was open' }).waitFor();
+      });
+      await checkpoint('Inspect beta autosave and history timings without exposing shared content', async () => {
+        await betaSaved(host); await betaMenuAction(host, 'performance');
+        await performanceReport(host, {
+          experience: 'spatial-beta', operations: ['canvas-render', 'spatial-render', 'history-read', 'autosave'],
+          excluded: ['Spatial browser journey', 'Spatial host', 'Spatial teammate', 'A real spatial peer thought', 'The room kept moving while history was open'],
+        });
+        await host.locator('.beta-workspace[data-history="live"]').waitFor();
       });
       await checkpoint('Export the real spatial archive and end only the beta room created here', async () => {
         const [archive] = await Promise.all([host.waitForEvent('download'), betaMenuAction(host, 'export')]);

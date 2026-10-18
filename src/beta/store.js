@@ -236,13 +236,14 @@ export async function createSpatialStore(options = {}) {
 }
 
 class SpatialStore {
-  constructor({ id = newId(), onChange = () => {}, onStatus = () => {}, onUpdate = () => {}, actor = '' } = {}) {
+  constructor({ id = newId(), onChange = () => {}, onStatus = () => {}, onUpdate = () => {}, actor = '', performanceIndex = null } = {}) {
     if (!workspaceIdValid(id)) throw new Error('Invalid spatial workspace identity.');
     this.id = id;
     this.actor = typeof actor === 'string' ? actor.slice(0, 200) : '';
     this.onChange = onChange;
     this.onStatus = onStatus;
     this.onUpdate = onUpdate;
+    this.performanceIndex = performanceIndex;
     this.documents = new Map();
     this.dirty = new Set();
     this.destroyed = false;
@@ -258,6 +259,44 @@ class SpatialStore {
     this.causalCache = null;
     this.pastCache = new Map();
     this.generation = 0;
+  }
+
+  measurePerformance(name, work, failedWhenFalse = false) {
+    let end;
+    try {
+      end = name && this.performanceIndex?.start?.(name);
+    } catch { /* Diagnostics must never interrupt editing or autosave. */ }
+    if (typeof end !== 'function') return work();
+    const complete = failed => {
+      try { end({ failed }); }
+      catch { /* A disconnected diagnostic panel cannot fail an operation. */ }
+    };
+    try {
+      const result = work();
+      if (result instanceof Promise) {
+        return result.then(value => {
+          complete(failedWhenFalse && value === false);
+          return value;
+        }, error => {
+          complete(true);
+          throw error;
+        });
+      }
+      complete(failedWhenFalse && result === false);
+      return result;
+    } catch (error) {
+      complete(true);
+      throw error;
+    }
+  }
+
+  getPerformanceState() {
+    return {
+      documents: this.documents.size,
+      historyBytes: [...this.documentSizes.values()].reduce((sum, bytes) => sum + bytes, 0),
+      pendingBytes: this.pendingBytes,
+      dirtyDocuments: this.dirty.size,
+    };
   }
 
   async open({ seed, archive, storage } = {}) {
@@ -413,54 +452,56 @@ class SpatialStore {
 
   commit(ids, label, action) {
     this.requireLive();
-    const before = new Map();
-    const backups = new Map();
-    const updates = [];
-    const sizes = new Map();
-    try {
-      const at = Date.now();
-      const message = JSON.stringify(this.group || { action: newId(), at, label, requires: this.observedActions(), ...(this.actor ? { actor: this.actor } : {}) });
-      for (const id of ids) {
-        before.set(id, this.documents.get(id).oplogVersion());
-        backups.set(id, configure(this.documents.get(id).fork()));
-      }
-      action();
-      for (const id of ids) {
-        const doc = this.documents.get(id);
-        doc.commit({ timestamp: Math.floor(at / 1000), message });
-        const version = doc.oplogVersion();
-        const same = before.get(id).compare(version) === 0;
-        version.free();
-        if (same) continue;
-        sizes.set(id, doc.export({ mode: 'snapshot' }).length);
-        updates.push({ id, bytes: doc.export({ mode: 'update', from: before.get(id) }) });
-      }
-      this.checkHistorySizes(sizes);
-    } catch (error) {
-      // Roll back both document state and operation history before publishing.
-      // The backups share history internally until a write diverges.
-      for (const [id, backup] of backups) {
-        this.documents.get(id).free();
-        this.documents.set(id, backup);
-      }
-      backups.clear();
-      throw error;
-    } finally {
-      for (const vector of before.values()) vector.free();
-      for (const backup of backups.values()) backup.free();
-    }
-    for (const [id, size] of sizes) this.documentSizes.set(id, size);
-    for (const update of updates) {
-      this.dirty.add(update.id);
-      this.queueUpdate(update.id, update.bytes);
+    return this.measurePerformance('spatial-edit', () => {
+      const before = new Map();
+      const backups = new Map();
+      const updates = [];
+      const sizes = new Map();
       try {
-        this.emitUpdate(pack({ version: SCHEMA, kind: 'update', id: update.id, data: base64(update.bytes) }));
+        const at = Date.now();
+        const message = JSON.stringify(this.group || { action: newId(), at, label, requires: this.observedActions(), ...(this.actor ? { actor: this.actor } : {}) });
+        for (const id of ids) {
+          before.set(id, this.documents.get(id).oplogVersion());
+          backups.set(id, configure(this.documents.get(id).fork()));
+        }
+        action();
+        for (const id of ids) {
+          const doc = this.documents.get(id);
+          doc.commit({ timestamp: Math.floor(at / 1000), message });
+          const version = doc.oplogVersion();
+          const same = before.get(id).compare(version) === 0;
+          version.free();
+          if (same) continue;
+          sizes.set(id, doc.export({ mode: 'snapshot' }).length);
+          updates.push({ id, bytes: doc.export({ mode: 'update', from: before.get(id) }) });
+        }
+        this.checkHistorySizes(sizes);
       } catch (error) {
-        this.status('error', error.message, error);
+        // Roll back both document state and operation history before publishing.
+        // The backups share history internally until a write diverges.
+        for (const [id, backup] of backups) {
+          this.documents.get(id).free();
+          this.documents.set(id, backup);
+        }
+        backups.clear();
+        throw error;
+      } finally {
+        for (const vector of before.values()) vector.free();
+        for (const backup of backups.values()) backup.free();
       }
-    }
-    if (updates.length) this.changed();
-    return !!updates.length;
+      for (const [id, size] of sizes) this.documentSizes.set(id, size);
+      for (const update of updates) {
+        this.dirty.add(update.id);
+        this.queueUpdate(update.id, update.bytes);
+        try {
+          this.emitUpdate(pack({ version: SCHEMA, kind: 'update', id: update.id, data: base64(update.bytes) }));
+        } catch (error) {
+          this.status('error', error.message, error);
+        }
+      }
+      if (updates.length) this.changed();
+      return !!updates.length;
+    });
   }
 
   changed() {
@@ -485,89 +526,91 @@ class SpatialStore {
     this.saveTimer = null;
     const runLocked = async () => {
       if (!this.dirty.size) return;
-      if (!this.storage) {
-        const error = new Error('Browser storage is unavailable. Download an archive before leaving this tab.');
-        this.status('memory', error.message, error);
-        throw error;
-      }
-      // Merge before writing so a previously suspended tab cannot replace
-      // another tab's newer history. Importing persisted segments is idempotent.
-      const stored = await this.storage.load(this.id);
-      const previous = new Map((stored?.documents || []).map(document => [document.id, document]));
-      for (const document of previous.values()) {
-        const known = this.knownSegments.get(document.id) || new Set();
-        const unseen = (document.segments || []).filter(segment => !known.has(segment.id));
-        const newSnapshot = document.bytes && this.knownSnapshots.get(document.id) !== (document.token || 'legacy');
-        const parts = [...(newSnapshot ? [document.bytes] : []), ...unseen.map(segment => segment.bytes)];
-        if (parts.length) {
-          const candidate = this.documents.get(document.id)?.fork() || configure(new LoroDoc());
-          try {
-            const result = candidate.importBatch(parts);
-            if (result.pending?.size || !this.receive(pack({
-              version: SCHEMA,
-              kind: 'update',
-              id: document.id,
-              data: base64(candidate.export({ mode: 'snapshot' })),
-            }), 'storage', () => {}, true)) {
-              throw new Error('An earlier saved spatial edit could not be read.');
+      return this.measurePerformance('autosave', async () => {
+        if (!this.storage) {
+          const error = new Error('Browser storage is unavailable. Download an archive before leaving this tab.');
+          this.status('memory', error.message, error);
+          throw error;
+        }
+        // Merge before writing so a previously suspended tab cannot replace
+        // another tab's newer history. Importing persisted segments is idempotent.
+        const stored = await this.storage.load(this.id);
+        const previous = new Map((stored?.documents || []).map(document => [document.id, document]));
+        for (const document of previous.values()) {
+          const known = this.knownSegments.get(document.id) || new Set();
+          const unseen = (document.segments || []).filter(segment => !known.has(segment.id));
+          const newSnapshot = document.bytes && this.knownSnapshots.get(document.id) !== (document.token || 'legacy');
+          const parts = [...(newSnapshot ? [document.bytes] : []), ...unseen.map(segment => segment.bytes)];
+          if (parts.length) {
+            const candidate = this.documents.get(document.id)?.fork() || configure(new LoroDoc());
+            try {
+              const result = candidate.importBatch(parts);
+              if (result.pending?.size || !this.receive(pack({
+                version: SCHEMA,
+                kind: 'update',
+                id: document.id,
+                data: base64(candidate.export({ mode: 'snapshot' })),
+              }), 'storage', () => {}, true)) {
+                throw new Error('An earlier saved spatial edit could not be read.');
+              }
+            } finally {
+              candidate.free();
             }
-          } finally {
-            candidate.free();
+          }
+          if (document.bytes) this.knownSnapshots.set(document.id, document.token || 'legacy');
+          this.knownSegments.set(document.id, new Set((document.segments || []).map(segment => segment.id)));
+        }
+        // Capture this save's ownership before IndexedDB yields. A concurrent edit
+        // must keep its queue entry and dirty marker for the following save.
+        const dirty = [...this.dirty];
+        const generation = this.generation;
+        const queued = [...this.pendingUpdates.values()].flatMap(entries => [...entries.values()]);
+        const documents = [];
+        const removeSegments = [];
+        let workspaceBytes = [...previous.values()].reduce((sum, document) => (
+          sum + (document.bytes?.length || 0)
+          + (document.segments || []).reduce((count, segment) => count + segment.bytes.length, 0)
+        ), 0);
+        for (const id of dirty) {
+          const previousDocument = previous.get(id);
+          const segments = previousDocument?.segments || [];
+          const updates = queued.filter(update => update.document === id);
+          const journalBytes = segments.reduce((sum, segment) => sum + segment.bytes.length, 0) + updates.reduce((sum, update) => sum + update.bytes.length, 0);
+          if (!previousDocument?.bytes || this.forceSnapshot.has(id)
+            || segments.length + updates.length >= COMPACT_SEGMENTS || journalBytes >= COMPACT_BYTES) {
+            const bytes = this.documents.get(id).export({ mode: 'snapshot' });
+            if (bytes.length > MAX_DOCUMENT) throw new Error('This board history exceeds the beta storage limit. Download an archive and continue in a fresh branch.');
+            documents.push({ id, bytes, token: newId() });
+            removeSegments.push(...segments.map(segment => ({ document: id, id: segment.id })));
+            workspaceBytes += bytes.length - (previousDocument?.bytes?.length || 0) - segments.reduce((sum, segment) => sum + segment.bytes.length, 0);
           }
         }
-        if (document.bytes) this.knownSnapshots.set(document.id, document.token || 'legacy');
-        this.knownSegments.set(document.id, new Set((document.segments || []).map(segment => segment.id)));
-      }
-      // Capture this save's ownership before IndexedDB yields. A concurrent edit
-      // must keep its queue entry and dirty marker for the following save.
-      const dirty = [...this.dirty];
-      const generation = this.generation;
-      const queued = [...this.pendingUpdates.values()].flatMap(entries => [...entries.values()]);
-      const documents = [];
-      const removeSegments = [];
-      let workspaceBytes = [...previous.values()].reduce((sum, document) => (
-        sum + (document.bytes?.length || 0)
-        + (document.segments || []).reduce((count, segment) => count + segment.bytes.length, 0)
-      ), 0);
-      for (const id of dirty) {
-        const previousDocument = previous.get(id);
-        const segments = previousDocument?.segments || [];
-        const updates = queued.filter(update => update.document === id);
-        const journalBytes = segments.reduce((sum, segment) => sum + segment.bytes.length, 0) + updates.reduce((sum, update) => sum + update.bytes.length, 0);
-        if (!previousDocument?.bytes || this.forceSnapshot.has(id)
-          || segments.length + updates.length >= COMPACT_SEGMENTS || journalBytes >= COMPACT_BYTES) {
-          const bytes = this.documents.get(id).export({ mode: 'snapshot' });
-          if (bytes.length > MAX_DOCUMENT) throw new Error('This board history exceeds the beta storage limit. Download an archive and continue in a fresh branch.');
-          documents.push({ id, bytes, token: newId() });
-          removeSegments.push(...segments.map(segment => ({ document: id, id: segment.id })));
-          workspaceBytes += bytes.length - (previousDocument?.bytes?.length || 0) - segments.reduce((sum, segment) => sum + segment.bytes.length, 0);
+        workspaceBytes += queued.reduce((sum, update) => sum + update.bytes.length, 0);
+        if (workspaceBytes > MAX_ARCHIVE) throw new Error('This autosaved workspace exceeds the 64 MiB beta limit. Download an archive and continue in a fresh branch.');
+        await this.storage.save(this.id, {
+          metadata: {
+            version: SCHEMA,
+            title: this.manifest().getMap('room').get('title') || 'Spatial workspace',
+            updatedAt: Date.now(),
+          },
+          documents,
+          updates: queued,
+          removeSegments,
+        });
+        for (const document of documents) this.knownSnapshots.set(document.id, document.token);
+        for (const segment of removeSegments) this.knownSegments.get(segment.document)?.delete(segment.id);
+        for (const update of queued) {
+          if (!this.knownSegments.has(update.document)) this.knownSegments.set(update.document, new Set());
+          this.knownSegments.get(update.document).add(update.id);
+          const entries = this.pendingUpdates.get(update.document);
+          if (entries?.delete(update.id)) this.pendingBytes -= update.bytes.length;
+          if (!entries?.size) this.pendingUpdates.delete(update.document);
         }
-      }
-      workspaceBytes += queued.reduce((sum, update) => sum + update.bytes.length, 0);
-      if (workspaceBytes > MAX_ARCHIVE) throw new Error('This autosaved workspace exceeds the 64 MiB beta limit. Download an archive and continue in a fresh branch.');
-      await this.storage.save(this.id, {
-        metadata: {
-          version: SCHEMA,
-          title: this.manifest().getMap('room').get('title') || 'Spatial workspace',
-          updatedAt: Date.now(),
-        },
-        documents,
-        updates: queued,
-        removeSegments,
+        if (generation === this.generation) for (const document of documents) this.forceSnapshot.delete(document.id);
+        // Changes arriving during the transaction remain dirty for the next save.
+        if (generation === this.generation) for (const id of dirty) this.dirty.delete(id);
+        this.status(this.dirty.size ? 'saving' : 'saved', this.dirty.size ? 'Saving on this device…' : 'Saved on this device');
       });
-      for (const document of documents) this.knownSnapshots.set(document.id, document.token);
-      for (const segment of removeSegments) this.knownSegments.get(segment.document)?.delete(segment.id);
-      for (const update of queued) {
-        if (!this.knownSegments.has(update.document)) this.knownSegments.set(update.document, new Set());
-        this.knownSegments.get(update.document).add(update.id);
-        const entries = this.pendingUpdates.get(update.document);
-        if (entries?.delete(update.id)) this.pendingBytes -= update.bytes.length;
-        if (!entries?.size) this.pendingUpdates.delete(update.document);
-      }
-      if (generation === this.generation) for (const document of documents) this.forceSnapshot.delete(document.id);
-      // Changes arriving during the transaction remain dirty for the next save.
-      if (generation === this.generation) for (const id of dirty) this.dirty.delete(id);
-      this.status(this.dirty.size ? 'saving' : 'saved', this.dirty.size ? 'Saving on this device…' : 'Saved on this device');
     };
     const run = async () => {
       try {
@@ -831,46 +874,48 @@ class SpatialStore {
       return normalState(raw, this.documents);
     }
     if (this.pastCache.has(revisionId)) return copy(this.pastCache.get(revisionId));
-    const revisions = this.revisions();
-    const index = revisions.findIndex(revision => revision.id === revisionId);
-    if (index < 0) throw new Error('This point in history is no longer available.');
-    const included = new Set(revisions.slice(0, index + 1).map(revision => revision.id));
-    const { groups, changes: allChanges } = this.causalHistory();
-    // A timestamp alone is not a consistent cut across independent board docs.
-    // Include every required action before constructing detached historical views.
-    const pending = [...included];
-    while (pending.length) {
-      for (const dependency of groups.get(pending.pop())?.requires || []) {
-        if (!included.has(dependency)) {
-          included.add(dependency);
-          pending.push(dependency);
-        }
-      }
-    }
-    const documents = new Map();
-    try {
-      for (const [docId, doc] of this.documents) {
-        const changes = allChanges.filter(change => change.docId === docId);
-        const chosen = changes.filter(change => included.has(change.action));
-        const vv = new VersionVector();
-        for (const change of chosen) {
-          if ((vv.get(change.peer) ?? 0) < change.counter + change.length) {
-            vv.setEnd({ peer: change.peer, counter: change.counter + change.length });
+    return this.measurePerformance('history-read', () => {
+      const revisions = this.revisions();
+      const index = revisions.findIndex(revision => revision.id === revisionId);
+      if (index < 0) throw new Error('This point in history is no longer available.');
+      const included = new Set(revisions.slice(0, index + 1).map(revision => revision.id));
+      const { groups, changes: allChanges } = this.causalHistory();
+      // A timestamp alone is not a consistent cut across independent board docs.
+      // Include every required action before constructing detached historical views.
+      const pending = [...included];
+      while (pending.length) {
+        for (const dependency of groups.get(pending.pop())?.requires || []) {
+          if (!included.has(dependency)) {
+            included.add(dependency);
+            pending.push(dependency);
           }
         }
-        const past = doc.forkAt(doc.vvToFrontiers(vv));
-        vv.free();
-        documents.set(docId, past);
       }
-      const raw = documents.get('manifest').toJSON();
-      for (const value of Object.values(raw.boards || {})) if (value && typeof value === 'object') value.pose = Object.fromEntries(POSE_FIELDS.map(key => [key, value[key] ?? 0]));
-      const state = normalState(raw, documents, { historical: true });
-      if (this.pastCache.size >= 8) this.pastCache.delete(this.pastCache.keys().next().value);
-      this.pastCache.set(revisionId, state);
-      return copy(state);
-    } finally {
-      for (const doc of documents.values()) doc.free();
-    }
+      const documents = new Map();
+      try {
+        for (const [docId, doc] of this.documents) {
+          const changes = allChanges.filter(change => change.docId === docId);
+          const chosen = changes.filter(change => included.has(change.action));
+          const vv = new VersionVector();
+          for (const change of chosen) {
+            if ((vv.get(change.peer) ?? 0) < change.counter + change.length) {
+              vv.setEnd({ peer: change.peer, counter: change.counter + change.length });
+            }
+          }
+          const past = doc.forkAt(doc.vvToFrontiers(vv));
+          vv.free();
+          documents.set(docId, past);
+        }
+        const raw = documents.get('manifest').toJSON();
+        for (const value of Object.values(raw.boards || {})) if (value && typeof value === 'object') value.pose = Object.fromEntries(POSE_FIELDS.map(key => [key, value[key] ?? 0]));
+        const state = normalState(raw, documents, { historical: true });
+        if (this.pastCache.size >= 8) this.pastCache.delete(this.pastCache.keys().next().value);
+        this.pastCache.set(revisionId, state);
+        return copy(state);
+      } finally {
+        for (const doc of documents.values()) doc.free();
+      }
+    });
   }
 
   fork(revisionId = null, { id = newId() } = {}) {
@@ -919,87 +964,89 @@ class SpatialStore {
 
   receive(bytes, peerId, reply = () => {}, savingMerge = false) {
     if ((this.destroyed && !savingMerge) || !(bytes instanceof Uint8Array) || bytes.byteLength < 2 || bytes.byteLength > MAX_PACKET) return false;
-    try {
-      const value = JSON.parse(decoder.decode(bytes));
-      if (!value || value.version !== SCHEMA) return false;
-      if (value.kind === 'sync') {
-        if (!Array.isArray(value.documents) || value.documents.length > MAX_BOARDS + 1) return false;
-        const remote = new Map();
-        try {
-          for (const item of value.documents) {
-            if (!item || !docKeyValid(item.id) || remote.has(item.id)) return false;
-            remote.set(item.id, VersionVector.decode(unbase64(item.vector, 65536)));
-          }
-          for (const [id, doc] of this.documents) {
-            const from = remote.get(id) || new VersionVector();
-            try {
-              const current = doc.oplogVersion();
-              const same = from.compare(current) === 0;
-              current.free();
-              if (!same) reply(pack({ version: SCHEMA, kind: 'update', id, data: base64(doc.export({ mode: 'update', from })) }));
-            } finally {
-              if (!remote.has(id)) from.free();
-            }
-          }
-        } finally {
-          for (const vv of remote.values()) vv.free();
-        }
-        return true;
-      }
-      if (value.kind !== 'update' || !docKeyValid(value.id)) return false;
-      if (!this.documents.has(value.id) && this.documents.size >= MAX_BOARDS + 1) return false;
-      const update = unbase64(value.data);
-      const original = this.documents.get(value.id);
-      // Validate in a fork before importing into live history. Rejected packets
-      // must not leave behind operations, board records, or a larger byte budget.
-      const candidate = original ? original.fork() : configure(new LoroDoc());
-      let candidateSize;
+    return this.measurePerformance(savingMerge ? null : 'peer-sync', () => {
       try {
-        const result = candidate.import(update);
-        if (result.pending?.size) {
-          candidate.free();
+        const value = JSON.parse(decoder.decode(bytes));
+        if (!value || value.version !== SCHEMA) return false;
+        if (value.kind === 'sync') {
+          if (!Array.isArray(value.documents) || value.documents.length > MAX_BOARDS + 1) return false;
+          const remote = new Map();
           try {
-            if (!savingMerge) reply(this.encodeSync());
-          } catch { /* Periodic sync also requests missing dependencies. */ }
-          return false;
+            for (const item of value.documents) {
+              if (!item || !docKeyValid(item.id) || remote.has(item.id)) return false;
+              remote.set(item.id, VersionVector.decode(unbase64(item.vector, 65536)));
+            }
+            for (const [id, doc] of this.documents) {
+              const from = remote.get(id) || new VersionVector();
+              try {
+                const current = doc.oplogVersion();
+                const same = from.compare(current) === 0;
+                current.free();
+                if (!same) reply(pack({ version: SCHEMA, kind: 'update', id, data: base64(doc.export({ mode: 'update', from })) }));
+              } finally {
+                if (!remote.has(id)) from.free();
+              }
+            }
+          } finally {
+            for (const vv of remote.values()) vv.free();
+          }
+          return true;
         }
-        if (value.id !== 'manifest') normalObjects(candidate.toJSON(), value.id.slice(6));
-        const candidateDocuments = new Map(this.documents);
-        candidateDocuments.set(value.id, candidate);
-        if (value.id === 'manifest' || this.manifest()) {
-          const raw = candidateDocuments.get('manifest').toJSON();
-          for (const item of Object.values(raw.boards || {})) if (item && typeof item === 'object') item.pose = Object.fromEntries(POSE_FIELDS.map(key => [key, item[key] ?? 0]));
-          normalState(raw, candidateDocuments);
+        if (value.kind !== 'update' || !docKeyValid(value.id)) return false;
+        if (!this.documents.has(value.id) && this.documents.size >= MAX_BOARDS + 1) return false;
+        const update = unbase64(value.data);
+        const original = this.documents.get(value.id);
+        // Validate in a fork before importing into live history. Rejected packets
+        // must not leave behind operations, board records, or a larger byte budget.
+        const candidate = original ? original.fork() : configure(new LoroDoc());
+        let candidateSize;
+        try {
+          const result = candidate.import(update);
+          if (result.pending?.size) {
+            candidate.free();
+            try {
+              if (!savingMerge) reply(this.encodeSync());
+            } catch { /* Periodic sync also requests missing dependencies. */ }
+            return false;
+          }
+          if (value.id !== 'manifest') normalObjects(candidate.toJSON(), value.id.slice(6));
+          const candidateDocuments = new Map(this.documents);
+          candidateDocuments.set(value.id, candidate);
+          if (value.id === 'manifest' || this.manifest()) {
+            const raw = candidateDocuments.get('manifest').toJSON();
+            for (const item of Object.values(raw.boards || {})) if (item && typeof item === 'object') item.pose = Object.fromEntries(POSE_FIELDS.map(key => [key, item[key] ?? 0]));
+            normalState(raw, candidateDocuments);
+          }
+          candidateSize = candidate.export({ mode: 'snapshot' }).byteLength;
+          this.checkHistorySizes(new Map([[value.id, candidateSize]]));
+        } catch (error) {
+          candidate.free();
+          throw error;
         }
-        candidateSize = candidate.export({ mode: 'snapshot' }).byteLength;
-        this.checkHistorySizes(new Map([[value.id, candidateSize]]));
+        if (original) {
+          const before = original.oplogVersion();
+          original.import(update);
+          const after = original.oplogVersion();
+          const changed = before.compare(after) !== 0;
+          before.free();
+          after.free();
+          candidate.free();
+          if (!changed) return true;
+        } else this.documents.set(value.id, candidate);
+        this.documentSizes.set(value.id, candidateSize);
+        // A remote action can depend on the current gesture. Continuing under
+        // the same action ID would create a cycle in the grouped timeline.
+        if (this.group) this.group = { ...this.group, action: newId(), at: Date.now(), requires: this.observedActions() };
+        this.dirty.add(value.id);
+        if (peerId !== 'storage') this.queueUpdate(value.id, update);
+        this.changed();
+        this.emitUpdate(bytes, peerId);
+        return true;
       } catch (error) {
-        candidate.free();
-        throw error;
+        this.status('error', `A spatial update could not be read. ${error.message}`, error);
+        return false;
       }
-      if (original) {
-        const before = original.oplogVersion();
-        original.import(update);
-        const after = original.oplogVersion();
-        const changed = before.compare(after) !== 0;
-        before.free();
-        after.free();
-        candidate.free();
-        if (!changed) return true;
-      } else this.documents.set(value.id, candidate);
-      this.documentSizes.set(value.id, candidateSize);
-      // A remote action can depend on the current gesture. Continuing under
-      // the same action ID would create a cycle in the grouped timeline.
-      if (this.group) this.group = { ...this.group, action: newId(), at: Date.now(), requires: this.observedActions() };
-      this.dirty.add(value.id);
-      if (peerId !== 'storage') this.queueUpdate(value.id, update);
-      this.changed();
-      this.emitUpdate(bytes, peerId);
-      return true;
-    } catch (error) {
-      this.status('error', `A spatial update could not be read. ${error.message}`, error);
-      return false;
-    }
+    }, true);
   }
 
   destroy() {
