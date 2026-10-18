@@ -20,7 +20,7 @@ See [the beta guide](docs/spatial-beta.md) for templates, themes, local use, emb
 
 Common includes a portable module for an inline canvas panel or a floating workspace inside your own application. `createCommon` from `common-workspace/bun` attaches to your existing fetch/WebSocket server; `mountCommon` from `common-workspace/client` loads the interface in a same-origin iframe. It opens no additional port, needs no UI framework, and defaults to private networking and in-memory rooms. Your authentication can protect the mount, while Common room passwords and visible agent grants still apply.
 
-Download the package and its SHA-256 checksum from the [v1.4.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.4.0), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.4.0.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
+Download the package and its SHA-256 checksum from the [v1.4.1 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.4.1), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.4.1.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
 
 The package includes the example: run `bun node_modules/common-workspace/example/server.mjs` in a project where you installed it, then open `http://127.0.0.1:3100`.
 
@@ -217,6 +217,8 @@ Before a public rollout, assess your deployment's capacity, access requirements,
 ## Development and troubleshooting
 
 Run `bun run doctor`, then `bun run local` for a fresh build and a private local server. Use `bun run dev` while changing the source, or `bun run build` when you only need the deployable frontend. The same artifact uses `/api/config` to select its hosting transport; no transport-specific rebuild is needed.
+
+For code boundaries, lifecycle and data invariants, troubleshooting, and the release checklist, see the [maintainer guide](docs/maintaining.md).
 
 The spatial beta's compact controls use shared, framework-free [workspace UI primitives](docs/workspace-ui.md) for shape, motion, keyboard behavior, and lifecycle cleanup.
 
