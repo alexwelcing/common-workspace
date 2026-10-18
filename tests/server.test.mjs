@@ -125,7 +125,7 @@ test('rooms require passwords, reject cross-origin writes, and keep credentials 
   assert.equal(auth.status, 201);
   assert.equal(auth.isAdmin, true);
   const info = await f.request(`/api/rooms/${auth.room.id}`);
-  assert.deepEqual(Object.keys(info.room).sort(), ['createdAt', 'id', 'name']);
+  assert.deepEqual(Object.keys(info.room).sort(), ['appearance', 'createdAt', 'id', 'name']);
   assert.equal((await f.request(`/api/rooms/${auth.room.id}/session`)).status, 401);
   const session = await f.request(`/api/rooms/${auth.room.id}/session`, undefined, { Authorization: `Bearer ${auth.token}` });
   assert.equal(session.participantId, auth.participantId);
@@ -162,7 +162,7 @@ test('standalone admission and activity boundaries conform to the portable room 
     }
   }
   const client = await f.connect(host);
-  assert.deepEqual(client.init.capabilities, { protocolVersion: 1, transport: 'websocket', guidedSessions: 1, guidedParticipation: 1 });
+  assert.deepEqual(client.init.capabilities, { protocolVersion: 1, transport: 'websocket', guidedSessions: 1, guidedParticipation: 1, roomStyling: 1 });
   for (const sample of activityCases) {
     client.send(sample.message);
     assert.equal((await client.next('error')).code, sample.code, sample.label);
@@ -257,7 +257,7 @@ test('collaboration mode is explicit and invalid modes cannot create rooms', asy
   }
   const legacy = await f.create('Server mode', { collaboration: 'server' });
   assert.equal(legacy.status, 201);
-  assert.deepEqual(Object.keys(legacy.room).sort(), ['createdAt', 'id', 'name']);
+  assert.deepEqual(Object.keys(legacy.room).sort(), ['appearance', 'createdAt', 'id', 'name']);
 });
 
 test('peer rooms keep canvas out of the server while retaining admission and isolated signaling', async t => {

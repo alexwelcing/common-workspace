@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, scrypt as scryptCallback, timingSa
 import { promisify } from 'node:util';
 import { normalizeRoomCreation, normalizeJoin, normalizeSignal, normalizeChat, normalizeCursor, normalizeEnvelope, protocolCapabilities } from '../../lib/session-protocol.mjs';
 import { workshopChecklist, workshopSnapshot, workshopUpdate } from '../../lib/session-workshop.mjs';
+import { normalizeAppearance, appearanceSnapshot } from '../../lib/room-appearance.mjs';
 import { stunServersFromEnv, iceTransportPolicyFromEnv } from '../../lib/runtime-config.mjs';
 
 const scrypt = promisify(scryptCallback);
@@ -17,7 +18,7 @@ const error = (status, code, message) => Object.assign(new Error(message), { sta
 const roomMissing = () => error(404, 'ROOM_NOT_FOUND', 'This session has ended or the link is invalid.');
 const sessionExpired = () => error(401, 'SESSION_EXPIRED', 'Please enter the room password again.');
 const resync = () => error(409, 'RESYNC_REQUIRED', 'Reconnect to refresh the session.');
-const publicRoom = room => ({ id: room.id, name: room.name, createdAt: timestamp(room.created_at), collaboration: 'peer', transport: 'poll' });
+const publicRoom = room => ({ id: room.id, name: room.name, createdAt: timestamp(room.created_at), appearance: appearanceSnapshot(room.appearance), collaboration: 'peer', transport: 'poll' });
 const publicMember = (member, room) => ({ id: member.id, name: member.name, color: member.color, isAdmin: member.is_admin, ...(room.workshop ? { checklist: workshopChecklist(room.workshop, member.checklist) } : {}) });
 const guidedState = room => room.workshop ? { workshop: workshopSnapshot(room.workshop) } : {};
 const defaultEnv = key => globalThis.Netlify?.env?.get(key) ?? process.env[key];
@@ -277,9 +278,9 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         if (rateLimits) await client.query('DELETE FROM common_auth_limits WHERE expires_at <= $1', [new Date(time)]);
         const count = await client.query('SELECT COUNT(*)::integer AS count FROM common_rooms');
         if (count.rows[0].count >= 1000) throw error(503, 'CAPACITY', 'This service has reached its session capacity.');
-        const room = { id: randomId(), name: roomName, created_at: new Date(time), expires_at: new Date(time + roomTtlMs), workshop: input.workshop ?? null };
-        await client.query(`INSERT INTO common_rooms (id, name, password_hash, password_salt, created_at, expires_at, workshop)
-          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`, [room.id, room.name, passwordHash, salt, room.created_at, room.expires_at, room.workshop ? JSON.stringify(room.workshop) : null]);
+        const room = { id: randomId(), name: roomName, created_at: new Date(time), expires_at: new Date(time + roomTtlMs), appearance: input.appearance, workshop: input.workshop ?? null };
+        await client.query(`INSERT INTO common_rooms (id, name, password_hash, password_salt, created_at, expires_at, workshop, appearance)
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`, [room.id, room.name, passwordHash, salt, room.created_at, room.expires_at, room.workshop ? JSON.stringify(room.workshop) : null, JSON.stringify(room.appearance)]);
         return addMember(client, room, displayName, true, time);
       });
       return json(result, 201);
@@ -361,7 +362,7 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         room = await refreshRosterDeadline(client, room, now());
         // Bounds, retention checks and both recipient ranges share one MVCC
         // snapshot. Concurrent pruning cannot create a silent gap between reads.
-        const { rows: [batch] } = await client.query(`SELECT room.event_seq, room.event_floor, room.ended_at, room.roster_version,
+        const { rows: [batch] } = await client.query(`SELECT room.event_seq, room.event_floor, room.ended_at, room.roster_version, room.appearance,
           (SELECT MIN(seq) FROM common_events WHERE room_id = room.id AND seq > $2) AS first_seq,
           EXISTS(SELECT 1 FROM common_events WHERE room_id = room.id AND seq > $2
             AND seq <= room.event_seq AND created_at < $4) AS expired,
@@ -393,7 +394,9 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
         // already supplied on a previous partial page.
         const historicalRoster = events.some(event => ['participants', 'checklist'].includes(event.message.type) && String(event.message.rosterVersion) !== version);
         const unchanged = url.searchParams.get('rosterVersion') === version && !historicalRoster;
-        return { events, cursor, hasMore, rosterVersion: version, ...(!unchanged ? { participants: await active(client, room, now()) } : {}) };
+        // Events may span multiple catch-up pages. Reapply the canonical style
+        // from this same MVCC snapshot after each page's historical messages.
+        return { events, cursor, hasMore, rosterVersion: version, appearance: appearanceSnapshot(batch.appearance), ...(!unchanged ? { participants: await active(client, room, now()) } : {}) };
       }));
     }
 
@@ -446,6 +449,12 @@ export function createApiHandler({ pool, env = defaultEnv, now = Date.now, lease
           if (!target.rows.length) throw error(400, 'INVALID_SIGNAL', 'Signal recipient is unavailable.');
           await append(client, room, { type: 'signal', from: member.id, data: input.data }, time, { target: input.to,
             sender: member.id, connection: member.connection_id, requestId: input.requestId ?? null, requestHash });
+        } else if (input.type === 'appearance') {
+          if (!member.is_admin) throw error(403, 'FORBIDDEN', 'Only the host can change the room style.');
+          if (!Object.hasOwn(input, 'appearance')) throw error(400, 'INVALID_ROOM_APPEARANCE', 'Include the room style to apply.');
+          room.appearance = normalizeAppearance(input.appearance);
+          await client.query('UPDATE common_rooms SET appearance = $2::jsonb WHERE id = $1', [room.id, JSON.stringify(room.appearance)]);
+          await append(client, room, { type: 'appearance', appearance: appearanceSnapshot(room.appearance) }, now());
         } else if (input.type === 'workshop') {
           // Lock only the actor and relevant claimants/feature target. These locks
           // fence polling lease renewals without blocking every connected member.

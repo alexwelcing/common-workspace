@@ -86,6 +86,7 @@ export class PollingSessionTransport {
       this._capabilities = result.capabilities || {};
       this._rosterVersion = result.rosterVersion === undefined ? null : String(result.rosterVersion);
       this._participants = JSON.stringify(result.init.participants || []);
+      this._appearance = JSON.stringify(result.init.room?.appearance);
       this.readyState = PollingSessionTransport.OPEN;
       this._emit('open');
       if (this.readyState !== PollingSessionTransport.OPEN) return;
@@ -105,7 +106,7 @@ export class PollingSessionTransport {
         // can then be corrected by the server's current canonical roster.
         const people = JSON.parse(this._participants || '[]');
         this._participants = JSON.stringify(people.map(person => person.id === message.id ? { ...person, checklist: message.checklist } : person));
-      }
+      } else if (message.type === 'appearance') this._appearance = JSON.stringify(message.appearance);
       this._emit('message', { data: JSON.stringify(message) });
       if (message.type === 'ended') this._finish(1000, 'Session ended');
     }
@@ -145,12 +146,19 @@ export class PollingSessionTransport {
       for (const event of result.events) {
         const sequence = BigInt(event.sequence);
         if (sequence <= deliveredThrough) continue;
-        this._message(event.message); deliveredThrough = sequence; this._metrics.deliveredEvents++;
+        // A style event in a catch-up page may predate this page's canonical
+        // appearance. Deliver the snapshot once to avoid flashing old colors or
+        // confirming a pending edit from an unrelated historical match.
+        if(event.message?.type!=='appearance'||result.appearance===undefined)this._message(event.message);
+        deliveredThrough = sequence; this._metrics.deliveredEvents++;
       }
       // The cursor also advances past events addressed to other participants.
       this._cursor = String(result.cursor);
       if (result.rosterVersion !== undefined) this._rosterVersion = String(result.rosterVersion);
       if (Array.isArray(result.participants) && this._participants !== JSON.stringify(result.participants)) this._message({ type: 'participants', participants: result.participants });
+      // Each catch-up page can include older appearance events. Restore the
+      // appearance from the same current database snapshot after those events.
+      if (result.appearance !== undefined && this._appearance !== JSON.stringify(result.appearance)) this._message({ type: 'appearance', appearance: result.appearance });
       if (result.hasMore === true) nextDelay = 0;
     } catch (error) {
       if (this.readyState !== PollingSessionTransport.OPEN) return;
@@ -196,7 +204,13 @@ export class PollingSessionTransport {
       if (this.readyState !== PollingSessionTransport.OPEN) return;
       try {
         for (let attempt = 0; ; attempt++) {
-          try { await this._request('/messages', { method: 'POST', body: message }); break; }
+          try {
+            await this._request('/messages', { method: 'POST', body: message });
+            // Ending is authoritative once acknowledged. Close now instead of
+            // letting a queued signal observe the ended room before the poll.
+            if (message.type === 'end') this._message({ type: 'ended' });
+            break;
+          }
           catch (error) {
             if (!retryableSignal || attempt >= 2 || this.readyState !== PollingSessionTransport.OPEN || (error.status && error.status < 500)) throw error;
             this._metrics.postRetries++; this._diagnose();

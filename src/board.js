@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify';
 import { renderMermaid, plantUmlUrl } from './diagrams.js';
 import { getRuntimeConfig } from './runtime-config.js';
 import { initGeometry, snap, simplifyPoints } from './geometry.js';
+import { canvasBackground } from './canvas-background.js';
 import './board.css';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -977,7 +978,15 @@ export class Board {
     const width = entities.length ? Math.max(...entities.map(e => e.x + e.width)) - minX + 24 : 1200;
     const height = entities.length ? Math.max(...entities.map(e => e.y + e.height)) - minY + 24 : 800;
     const svg = svgElement('svg', { xmlns: SVG_NS, width, height, viewBox: `${minX} ${minY} ${width} ${height}` });
-    svg.append(svgElement('rect', { x: minX, y: minY, width, height, fill: '#f8f9f6' }));
+    const background = canvasBackground(this.el);
+    svg.append(svgElement('rect', { x: minX, y: minY, width, height, fill: background.color }));
+    if (background.pattern !== 'plain') {
+      const defs = svgElement('defs');
+      const pattern = svgElement('pattern', { id: 'common-export-background-pattern', patternUnits: 'userSpaceOnUse', width: 20, height: 20 });
+      if (background.pattern === 'dots') pattern.append(svgElement('circle', { cx: 10, cy: 10, r: .8, fill: background.patternColor }));
+      else pattern.append(svgElement('rect', { width: 1, height: 20, fill: background.patternColor }), svgElement('rect', { width: 20, height: 1, fill: background.patternColor }));
+      defs.append(pattern); svg.append(defs, svgElement('rect', { x: minX, y: minY, width, height, fill: 'url(#common-export-background-pattern)' }));
+    }
     for (const entity of entities) {
       const group = svgElement('g', { transform: `translate(${entity.x},${entity.y})` });
       if (['rectangle', 'ellipse', 'draw', 'arrow'].includes(entity.type)) {

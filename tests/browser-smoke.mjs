@@ -11,9 +11,9 @@ const require = createRequire(import.meta.url);
 const timeout = 20000;
 const definitions = [
   ['personal-canvas', 'The WASM canvas creates, edits, and undoes a local note.'],
-  ['guided-room', 'A phone rejects a wrong password, joins, and becomes ready without capture.'],
-  ['chat-and-reload', 'Chat works both ways; phone reload preserves identity and its checklist.'],
-  ['agent-consent', 'Only visible consent enables agent edits; PNG download works and revocation blocks edits.'],
+  ['guided-room', 'A phone joins a styled room with its password and becomes ready without capture.'],
+  ['chat-and-reload', 'Chat and host-only room styling update both browsers; reload preserves identity and the plan.'],
+  ['agent-consent', 'Visible consent controls agent edits; PNG preserves the room canvas colour and revocation blocks edits.'],
   ['native-peers', 'Native peers exchange canvas edits and decoded video; stop and room end revoke access.'],
 ];
 
@@ -70,6 +70,13 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
     } catch (error) { active.status = 'failed'; active.failure = safe(error.message); throw error; }
     finally { active.durationMs = Date.now() - started; }
   };
+  const initialStyle = { preset: 'lavender', accent: '#735d91', canvas: '#f6f3fa', pattern: 'grid' };
+  const sharedStyle = { preset: 'lagoon', accent: '#2c6975', canvas: '#f0f7f6', pattern: 'plain' };
+  const styled = (page, expected) => page.waitForFunction(value => {
+    const root = document.documentElement, style = getComputedStyle(root);
+    return root.dataset.roomAppearance === value.preset && root.dataset.roomPattern === value.pattern
+      && style.getPropertyValue('--room-canvas').trim() === value.canvas && style.getPropertyValue('--room-accent').trim() === value.accent;
+  }, expected);
   const connected = page => page.waitForFunction(() => document.querySelector('#connection-status')?.textContent.includes('Connected'), null, { timeout });
   const guide = async (page, open) => {
     const toggle = page.locator('.session-guide-toggle');
@@ -159,10 +166,12 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         await host.locator('#new-session').click(); await host.locator('input[name="name"]').fill('Common browser journey');
         await host.locator('input[name="displayName"]').fill('Journey host'); await host.locator('input[name="password"]').fill(password);
         await host.locator('#session-attendees').fill('Phone teammate'); await host.locator('#session-tasks').fill('Review the proposal\nMark yourself ready');
+        await host.locator('.appearance-details > summary').click(); await host.locator('[data-appearance-preset="lavender"]').click();
+        await host.locator('[data-appearance-pattern]').selectOption('grid');
         const creation = host.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/rooms' && response.ok());
-        await host.locator('#create-form .modal-submit').click(); hostToken = (await (await creation).json()).token; secrets.push(hostToken); await host.locator('#invite-link').waitFor();
+        await host.locator('#create-form .modal-submit').click(); const created = await (await creation).json(); hostToken = created.token; secrets.push(hostToken); assert.deepEqual(created.room.appearance, initialStyle); await host.locator('#invite-link').waitFor();
         roomUrl = await host.locator('#invite-link').inputValue(); assert.equal(new URL(roomUrl).origin, origin.origin); assert.ok(!roomUrl.includes(password));
-        await host.locator('#done-invite').click(); await connected(host);
+        await host.locator('#done-invite').click(); await connected(host); await styled(host, initialStyle);
       });
       phone = await newPage('phone', true);
       await checkpoint('Reject one wrong password, then admit the separate phone browser', async () => {
@@ -173,7 +182,7 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         await phone.locator('input[name="password"]').fill(password);
         const admission = phone.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/join') && response.ok());
         await phone.locator('.modal-submit').click(); const identity = await (await admission).json(); phoneIdentity = identity.participantId; secrets.push(identity.token);
-        await connected(phone); await host.waitForFunction(() => document.querySelector('#people-number')?.textContent === '2');
+        assert.deepEqual(identity.room.appearance, initialStyle); await connected(phone); await styled(phone, initialStyle); await host.waitForFunction(() => document.querySelector('#people-number')?.textContent === '2');
       });
       await checkpoint('Explicitly choose Watch & contribute, claim a place, and complete real tasks', async () => {
         await guide(phone, true); await phone.getByRole('button', { name: 'Join without sharing', exact: true }).click();
@@ -198,9 +207,24 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         await host.locator('.chat-message').filter({ hasText: 'The phone is here too' }).waitFor();
         await phone.locator('#close-panel').click(); await phone.waitForFunction(() => document.activeElement?.id === 'toggle-panel');
       });
-      await checkpoint('Reload without losing identity, mode, claim, or completed checklist', async () => {
+      await checkpoint('Only the host can apply a shared room style', async () => {
+        await phone.locator('#room-menu').click(); await phone.locator('#room-appearance-menu').click();
+        await phone.getByRole('heading', { name: 'Room style', exact: true }).waitFor();
+        assert.equal(await phone.locator('.room-appearance-picker').evaluate(fieldset => fieldset.disabled), true, 'Participants may inspect room styling but cannot edit it.');
+        assert.equal(await phone.locator('#room-appearance-form .modal-submit').isDisabled(), true);
+        await phone.getByRole('button', { name: 'Close dialog', exact: true }).click();
+        await host.locator('#room-menu').click(); await host.locator('#room-appearance-menu').click();
+        await host.getByRole('heading', { name: 'Room style', exact: true }).waitFor();
+        await host.locator('[data-appearance-preset="lagoon"]').click(); await host.locator('[data-appearance-pattern]').selectOption('plain');
+        await styled(host, initialStyle); await styled(phone, initialStyle);
+        await host.locator('#room-appearance-form .modal-submit').click(); await host.locator('#room-appearance-form').waitFor({ state: 'hidden' });
+        await styled(host, sharedStyle); await styled(phone, sharedStyle);
+        assert.equal(await host.evaluate(() => window.__journey.captureCalls), 0); assert.equal(await phone.evaluate(() => window.__journey.captureCalls), 0);
+      });
+      await checkpoint('Reload without losing identity, style, mode, claim, or completed checklist', async () => {
         const session = phone.waitForResponse(response => new URL(response.url()).pathname.endsWith('/session') && response.ok());
-        await phone.reload(); assert.equal((await (await session).json()).participantId, phoneIdentity); await connected(phone); await guide(phone, true);
+        await phone.reload(); const restored = await (await session).json(); assert.equal(restored.participantId, phoneIdentity); assert.deepEqual(restored.room.appearance, sharedStyle);
+        await connected(phone); await styled(phone, sharedStyle); await guide(phone, true);
         assert.equal(await phone.getByRole('button', { name: 'Watch & contribute', exact: true }).getAttribute('aria-pressed'), 'true');
         assert.equal(await phone.getByLabel('Your place in the session plan').locator('option:checked').textContent(), 'Phone teammate');
         for (const name of ['Review the proposal', 'Mark yourself ready']) assert.equal(await phone.getByRole('checkbox', { name: new RegExp(`^${name}`) }).isChecked(), true);
@@ -238,6 +262,13 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         const download = host.waitForEvent('download'); await host.locator('#agent-snapshot').click(); const png = await download;
         assert.match(png.suggestedFilename(), /\.png$/); const filename = 'manual-canvas.png'; await png.saveAs(path.join(artifactDir, filename)); report.screenshots.push(filename);
         const bytes = await readFile(path.join(artifactDir, filename)); assert.ok(bytes.length > 100); assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'The downloaded file must be a PNG.');
+        const corner = await host.evaluate(async dataUrl => {
+          const image = new Image(); image.src = dataUrl; await image.decode();
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1; const paint = canvas.getContext('2d');
+          paint.drawImage(image, 0, 0); return [...paint.getImageData(0, 0, 1, 1).data];
+        }, `data:image/png;base64,${bytes.toString('base64')}`);
+        report.snapshotBackground = corner.slice(0, 3);
+        assert.deepEqual(corner, [240, 247, 246, 255], 'PNG corner must preserve the opaque Lagoon/plain room background.');
         await host.locator('#agent-grant-revoke').click();
         const denied = await host.evaluate(() => window.commonAgent.execute({ action: 'canvas.add', entity: { type: 'text', text: 'Revoked annotation' } }));
         assert.equal(denied.ok, false); assert.ok(['AGENT_DISABLED', 'GRANT_REVOKED', 'PERMISSION_DENIED'].includes(denied.error.code));

@@ -43,6 +43,6 @@ test('message envelopes, cursor and chat share transport-independent validation'
   for (const input of [[], null, {}, { type: 4 }]) assert.throws(() => normalizeEnvelope(input), { code: 'INVALID_MESSAGE' });
   assert.throws(() => normalizeEnvelope({ type: 'other' }, { allowedTypes: ['chat'] }), { code: 'INVALID_MESSAGE' });
   assert.throws(() => normalizeEnvelope({ type: 'chat', text: 'hello' }, { maxBytes: 4 }), { status: 413, code: 'TOO_LARGE' });
-  assert.deepEqual(protocolCapabilities('websocket'), { protocolVersion: 1, transport: 'websocket', guidedSessions: 1, guidedParticipation: 1 });
-  assert.deepEqual(protocolCapabilities('poll'), { protocolVersion: 1, transport: 'poll', guidedSessions: 1, guidedParticipation: 1 });
+  assert.deepEqual(protocolCapabilities('websocket'), { protocolVersion: 1, transport: 'websocket', guidedSessions: 1, guidedParticipation: 1, roomStyling: 1 });
+  assert.deepEqual(protocolCapabilities('poll'), { protocolVersion: 1, transport: 'poll', guidedSessions: 1, guidedParticipation: 1, roomStyling: 1 });
 });
