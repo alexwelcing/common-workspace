@@ -42,6 +42,7 @@ Common brings guided team sessions, an installable Bun module, and the canvas, c
 ### Reliability and quality
 
 - Replacing a Bun connection retires old peer connections and obsolete captures before reconnecting the participant.
+- Repeated or unsolicited WebRTC answers are ignored unless a local offer is outstanding, preventing a settled connection from raising a duplicate-answer warning. Valid renegotiation and ICE-restart answers continue through the same queue.
 - Hosted authorization rechecks room/token expiry after asynchronous database reads; leave checks the current connection lease. Concurrent local room creation respects the existing storage budget, and malformed templates return readable validation errors.
 - Polling recovers canonical checklist state across historical pages; recoverable claim conflicts keep the session connected.
 - Session entry and ICE requests have deadlines through JSON body consumption. Teardown cancels pending bodies, and late create/join responses cannot switch the current session.

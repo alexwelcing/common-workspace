@@ -257,8 +257,13 @@ export class ScreenSharing {
         if (data.description) {
           const description = data.description;
           if (!['offer', 'answer'].includes(description.type) || typeof description.sdp !== 'string') return;
-          // A retry may reach a participant that already answered. Reuse its
-          // answer; an already-applied answer likewise needs no second apply.
+          // Only a pending local offer can accept an answer in this protocol.
+          // Check inside the peer's operation queue: a prior answer may have
+          // settled while this retry waited. Comparing SDP is insufficient
+          // because browsers normalize it and append trickled candidates.
+          if (description.type === 'answer' && pc.signalingState !== 'have-local-offer') return;
+          // A retry may reach a participant that already answered its offer.
+          // Reuse that answer instead of starting another negotiation.
           if (pc.signalingState === 'stable' && pc.remoteDescription?.sdp === description.sdp) {
             if (description.type === 'offer' && pc.localDescription?.type === 'answer') this._sendDescription(peer);
             return;
