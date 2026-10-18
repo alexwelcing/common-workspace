@@ -188,8 +188,10 @@ export function mountBetaView(root, handlers = {}) {
   let pointer = null;
   let contentSignature = '';
   let poseSignature = '';
+  let sceneGeometrySignature = '';
   const planes = new Map();
   const boardButtons = new Map();
+  const previewSignatures = new Map();
   const placementDetails = $('.beta-placement');
   const placementPanel = $('.beta-position-panel');
   // Keep the inspector out of the canvas clipping region and in the same safe
@@ -510,7 +512,14 @@ export function mountBetaView(root, handlers = {}) {
     return node;
   }
 
-  function renderBoards() {
+  function boardPreviewSignature(board) {
+    return JSON.stringify([
+      objectList(board), isLive(),
+      clamp(board.width, 160, 4000, 960), clamp(board.height, 120, 3000, 600),
+    ]);
+  }
+
+  function renderBoards({ enteringSpace = false } = {}) {
     const currentIds = new Set(state.boards.map(board => String(board.id)));
     for (const [id, plane] of planes) {
       if (!currentIds.has(id)) {
@@ -518,6 +527,7 @@ export function mountBetaView(root, handlers = {}) {
         planes.delete(id);
         boardButtons.get(id)?.remove();
         boardButtons.delete(id);
+        previewSignatures.delete(id);
       }
     }
     for (const board of state.boards) {
@@ -583,35 +593,53 @@ export function mountBetaView(root, handlers = {}) {
         element('strong', '', board.name || board.title || 'Untitled board'),
         element('span', '', `Z ${pose.z}`),
       );
-      const preview = plane.querySelector('.beta-plane-preview');
-      preview.replaceChildren();
-      const availableHeight = height - 76;
-      const bounds = objects.reduce(
-        (acc, object) => ({
-          width: Math.max(
-            acc.width,
-            clamp(object?.x, -100000, 100000) + clamp(object?.width, 0, 10000, 180),
-          ),
-          height: Math.max(
-            acc.height,
-            clamp(object?.y, -100000, 100000) + clamp(object?.height, 0, 10000, 90),
-          ),
-        }),
-        { width, height: availableHeight },
-      );
-      const previewScale = Math.min(1, width / bounds.width, availableHeight / bounds.height);
-      const content = element('span', 'beta-plane-content');
-      content.style.transform = `scale(${previewScale})`;
-      for (const object of objects.slice(0, 100)) {
-        const node = previewObject(object, isLive());
-        if (node) content.append(node);
+      // Work mode keeps plane metadata current without rebuilding an invisible
+      // second copy of every board. Space entry compares the latest contents.
+      if (state.mode === 'space') {
+        const previewSignature = boardPreviewSignature(board);
+        if (previewSignature !== previewSignatures.get(id)) {
+          const preview = plane.querySelector('.beta-plane-preview');
+          preview.replaceChildren();
+          const availableHeight = height - 76;
+          const bounds = objects.reduce(
+            (acc, object) => ({
+              width: Math.max(
+                acc.width,
+                clamp(object?.x, -100000, 100000) + clamp(object?.width, 0, 10000, 180),
+              ),
+              height: Math.max(
+                acc.height,
+                clamp(object?.y, -100000, 100000) + clamp(object?.height, 0, 10000, 90),
+              ),
+            }),
+            { width, height: availableHeight },
+          );
+          const previewScale = Math.min(1, width / bounds.width, availableHeight / bounds.height);
+          const content = element('span', 'beta-plane-content');
+          content.style.transform = `scale(${previewScale})`;
+          for (const object of objects.slice(0, 100)) {
+            const node = previewObject(object, isLive());
+            if (node) content.append(node);
+          }
+          if (!objects.length)
+            content.append(element('span', 'beta-plane-empty', 'Room for a little thought…'));
+          preview.append(content);
+          previewSignatures.set(id, previewSignature);
+        }
       }
-      if (!objects.length)
-        content.append(element('span', 'beta-plane-empty', 'Room for a little thought…'));
-      preview.append(content);
       if (world.children[index] !== plane) world.insertBefore(plane, world.children[index] || null);
     }
-    if (state.mode === 'space') fitScene();
+    if (state.mode === 'space') {
+      const geometrySignature = JSON.stringify(state.boards.map(board => [
+        board.id, poseOf(board), board.width, board.height,
+      ]));
+      // Object contents cannot change the scene bounds. Avoid a layout read
+      // after every edit; ResizeObserver handles visible viewport size changes.
+      if (enteringSpace || geometrySignature !== sceneGeometrySignature) {
+        sceneGeometrySignature = geometrySignature;
+        fitScene();
+      }
+    }
   }
 
   function renderHeading(saveState, saveMessage) {
@@ -784,11 +812,19 @@ export function mountBetaView(root, handlers = {}) {
     renderToolControls();
     renderPlacement(activeBoard);
 
-    // Keep board and video DOM attached when only autosave/status changes.
-    const newSignature = JSON.stringify([state.boards, state.activeBoardId, liveView]);
-    if (newSignature !== contentSignature) {
+    // Hidden previews need only board metadata and counts. Include the mode so
+    // stepping into Space always checks contents changed while it was hidden.
+    const boardContent = state.boards.map(board => [
+      board.id, board.name, board.title, poseOf(board), board.width, board.height,
+      objectList(board).length,
+    ]);
+    const newSignature = JSON.stringify([boardContent, state.activeBoardId, liveView, space]);
+    const previewChanged = space && state.boards.some(
+      board => boardPreviewSignature(board) !== previewSignatures.get(String(board.id)),
+    );
+    if (newSignature !== contentSignature || previewChanged) {
       contentSignature = newSignature;
-      renderBoards();
+      renderBoards({ enteringSpace: space && !wasSpace });
     } else if (space && !wasSpace) {
       fitScene();
     }
@@ -815,6 +851,7 @@ export function mountBetaView(root, handlers = {}) {
       shell.remove();
       planes.clear();
       boardButtons.clear();
+      previewSignatures.clear();
     },
   };
 }

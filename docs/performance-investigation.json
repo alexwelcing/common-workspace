@@ -1,0 +1,309 @@
+{
+  "date": "2026-10-18",
+  "baselineCommit": "c65e2683c8f7e5eedf916ab3d07cce00426c0f18",
+  "changedRelease": "1.5.1",
+  "environment": "Same managed Linux browser, headless Chromium, Bun/Vite development source. Synthetic scenes; serialized runs; source frozen for final comparisons. Not production or participant capacity benchmarks.",
+  "classic": [
+    {
+      "objects": 100,
+      "before": {
+        "navigationToCanvasMs": 736,
+        "startupIndex": 100,
+        "sixtyArrowEditsMs": 349,
+        "editingIndex": 100
+      },
+      "after": {
+        "navigationToCanvasMs": 393,
+        "startupIndex": 100,
+        "sixtyArrowEditsMs": 261,
+        "editingIndex": 100
+      }
+    },
+    {
+      "objects": 300,
+      "before": {
+        "navigationToCanvasMs": 2315,
+        "startupIndex": 0,
+        "sixtyArrowEditsMs": 555,
+        "editingIndex": 71
+      },
+      "after": {
+        "navigationToCanvasMs": 363,
+        "startupIndex": 100,
+        "sixtyArrowEditsMs": 409,
+        "editingIndex": 100
+      }
+    },
+    {
+      "objects": 700,
+      "before": {
+        "navigationToCanvasMs": 10157,
+        "startupIndex": 0,
+        "sixtyArrowEditsMs": 1186,
+        "editingIndex": 0
+      },
+      "after": {
+        "navigationToCanvasMs": 503,
+        "startupIndex": 99,
+        "sixtyArrowEditsMs": 973,
+        "editingIndex": 46
+      }
+    }
+  ],
+  "store": [
+    {
+      "boards": 1,
+      "objectsPerBoard": 150,
+      "before": {
+        "publicEditMs": {
+          "count": 80,
+          "medianMs": 5.7,
+          "p95Ms": 7.5,
+          "maxMs": 15.4
+        },
+        "editingIndex": 100,
+        "historyReadMs": {
+          "count": 9,
+          "medianMs": 8.8,
+          "p95Ms": 16.9,
+          "maxMs": 16.9
+        }
+      },
+      "after": {
+        "publicEditMs": {
+          "count": 80,
+          "medianMs": 5.1,
+          "p95Ms": 6.2,
+          "maxMs": 23
+        },
+        "editingIndex": 100,
+        "historyReadMs": {
+          "count": 9,
+          "medianMs": 9,
+          "p95Ms": 20.3,
+          "maxMs": 20.3
+        }
+      }
+    },
+    {
+      "boards": 8,
+      "objectsPerBoard": 150,
+      "before": {
+        "publicEditMs": {
+          "count": 80,
+          "medianMs": 27.6,
+          "p95Ms": 31.3,
+          "maxMs": 65.2
+        },
+        "editingIndex": 100,
+        "historyReadMs": {
+          "count": 9,
+          "medianMs": 57.8,
+          "p95Ms": 69.8,
+          "maxMs": 69.8
+        }
+      },
+      "after": {
+        "publicEditMs": {
+          "count": 80,
+          "medianMs": 5.2,
+          "p95Ms": 6.4,
+          "maxMs": 8.6
+        },
+        "editingIndex": 100,
+        "historyReadMs": {
+          "count": 9,
+          "medianMs": 55.4,
+          "p95Ms": 68.9,
+          "maxMs": 68.9
+        }
+      }
+    },
+    {
+      "boards": 16,
+      "objectsPerBoard": 150,
+      "before": {
+        "publicEditMs": {
+          "count": 80,
+          "medianMs": 60.4,
+          "p95Ms": 65.4,
+          "maxMs": 132.9
+        },
+        "editingIndex": 40,
+        "historyReadMs": {
+          "count": 10,
+          "medianMs": 114,
+          "p95Ms": 123.1,
+          "maxMs": 123.1
+        }
+      },
+      "after": {
+        "publicEditMs": {
+          "count": 80,
+          "medianMs": 5.4,
+          "p95Ms": 7.5,
+          "maxMs": 13.5
+        },
+        "editingIndex": 100,
+        "historyReadMs": {
+          "count": 10,
+          "medianMs": 111.9,
+          "p95Ms": 131,
+          "maxMs": 131
+        }
+      }
+    }
+  ],
+  "view": [
+    {
+      "boards": 1,
+      "objectsPerBoard": 100,
+      "mode": "work",
+      "before": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 1.8,
+          "p95Ms": 3,
+          "maxMs": 5
+        },
+        "index": 100,
+        "previewDescendantsAdded": 5840
+      },
+      "after": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 0.8,
+          "p95Ms": 1,
+          "maxMs": 1.2
+        },
+        "index": 100,
+        "previewDescendantsAdded": 0
+      }
+    },
+    {
+      "boards": 1,
+      "objectsPerBoard": 100,
+      "mode": "space",
+      "before": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 5.4,
+          "p95Ms": 6.5,
+          "maxMs": 11.3
+        },
+        "index": 100,
+        "previewDescendantsAdded": 5840
+      },
+      "after": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 2.5,
+          "p95Ms": 4.3,
+          "maxMs": 4.8
+        },
+        "index": 100,
+        "previewDescendantsAdded": 5840
+      }
+    },
+    {
+      "boards": 8,
+      "objectsPerBoard": 100,
+      "mode": "work",
+      "before": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 8,
+          "p95Ms": 10.8,
+          "maxMs": 13.3
+        },
+        "index": 100,
+        "previewDescendantsAdded": 46720
+      },
+      "after": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 0.7,
+          "p95Ms": 0.9,
+          "maxMs": 2.1
+        },
+        "index": 100,
+        "previewDescendantsAdded": 0
+      }
+    },
+    {
+      "boards": 8,
+      "objectsPerBoard": 100,
+      "mode": "space",
+      "before": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 33.2,
+          "p95Ms": 46,
+          "maxMs": 50.7
+        },
+        "index": 64,
+        "previewDescendantsAdded": 46720
+      },
+      "after": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 3.9,
+          "p95Ms": 5.1,
+          "maxMs": 5.8
+        },
+        "index": 100,
+        "previewDescendantsAdded": 5840
+      }
+    },
+    {
+      "boards": 24,
+      "objectsPerBoard": 100,
+      "mode": "work",
+      "before": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 21.7,
+          "p95Ms": 29.9,
+          "maxMs": 32.1
+        },
+        "index": 84,
+        "previewDescendantsAdded": 140160
+      },
+      "after": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 0.7,
+          "p95Ms": 1,
+          "maxMs": 1.1
+        },
+        "index": 100,
+        "previewDescendantsAdded": 0
+      }
+    },
+    {
+      "boards": 24,
+      "objectsPerBoard": 100,
+      "mode": "space",
+      "before": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 93.4,
+          "p95Ms": 119.8,
+          "maxMs": 139.8
+        },
+        "index": 0,
+        "previewDescendantsAdded": 140160
+      },
+      "after": {
+        "renderMs": {
+          "count": 40,
+          "p50Ms": 5.8,
+          "p95Ms": 7.5,
+          "maxMs": 11.8
+        },
+        "index": 100,
+        "previewDescendantsAdded": 5840
+      }
+    }
+  ]
+}

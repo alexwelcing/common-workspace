@@ -77,6 +77,7 @@ export class Board {
     this.onSelect = onSelect; this.onStatus = onStatus; this.onViewChange = onViewChange;
     this.onEditDiagram = onEditDiagram; this.onToolChange = onToolChange; this.allowExternalPlantUml = allowExternalPlantUml; this.canEdit = canEdit; this.readOnly = false;
     this.onLayerAction = onLayerAction; this.onLockChange = onLockChange; this.layerOrder = [];
+    this.layerRanks = new Map(); this.layerOrderDirty = false; this.entityBatchDepth = 0;
     this.onHistoryStart = onHistoryStart; this.onHistoryEnd = onHistoryEnd; this.historyGroup = false;
     this.onWatchScreen = onWatchScreen; this.screenSubscriptions = null; this.localParticipantId = null;
     this.performanceIndex = performanceIndex; this.renderMeasurementDepth = 0; this.finishRenderMeasurement = null;
@@ -211,14 +212,25 @@ export class Board {
   }
   listVisibleEntities() { return this.focusedId ? this.listEntities().filter(entity => entity.id === this.focusedId) : this.listEntities(); }
   setLayerOrder(ids) {
-    this.layerOrder = [...new Set(ids.filter(id => typeof id === 'string'))];
-    this.applyLayerOrder(); this.updateSelectionTools();
+    const next = [...new Set(ids.filter(id => typeof id === 'string'))];
+    if (next.length === this.layerOrder.length && next.every((id, index) => id === this.layerOrder[index])) return;
+    this.layerOrder = next;
+    this.refreshEntityControls(true);
   }
   applyLayerOrder() {
+    this.layerOrderDirty = false;
+    this.layerRanks.clear();
     this.listEntities().forEach((entity, index) => {
-      const node = this.nodes.get(entity.id); if (node) node.style.zIndex = String(index + 1);
+      const rank = index + 1; this.layerRanks.set(entity.id, rank);
+      const node = this.nodes.get(entity.id); if (node && node.style.zIndex !== String(rank)) node.style.zIndex = String(rank);
     });
     this.updateLayers();
+  }
+  refreshEntityControls(orderChanged = false) {
+    this.layerOrderDirty ||= orderChanged;
+    if (this.entityBatchDepth) return;
+    if (this.layerOrderDirty) this.applyLayerOrder(); else this.updateLayers();
+    this.updateSelectionTools();
   }
   changeLayer(id, action) {
     const entity = this.entities.get(id);
@@ -241,8 +253,15 @@ export class Board {
   }
   updateLayers() {
     if (!this.layersList) return;
+    this.layersCount.textContent = String(this.entities.size);
+    // The collapsed layers panel does not need a second DOM tree for the canvas.
+    // Build its current rows when opened, and release them again when closed.
+    if (this.layersPanel.hidden) {
+      this.layersSignature = null;
+      if (this.layersList.childElementCount) this.layersList.replaceChildren();
+      return;
+    }
     const entities = this.listEntities().reverse();
-    this.layersCount.textContent = String(entities.length);
     const nextSignature = JSON.stringify([this.selectedId, entities.map(entity => [entity.id, entity.type, entity.title, entity.text, !!entity.locked, this.mayEdit(entity)])]);
     if (nextSignature === this.layersSignature) return;
     this.layersSignature = nextSignature; this.layersList.replaceChildren();
@@ -319,9 +338,15 @@ export class Board {
   setEntities(entities) {
     this.beginRenderMeasurement(); let failed = true;
     try {
-      const incoming = new Set(entities.map(e => e.id));
-      for (const id of this.entities.keys()) if (!incoming.has(id)) this.remove(id);
-      for (const entity of entities) this.upsert(entity);
+      this.entityBatchDepth += 1;
+      try {
+        const incoming = new Set(entities.map(e => e.id));
+        for (const id of this.entities.keys()) if (!incoming.has(id)) this.remove(id);
+        for (const entity of entities) this.upsert(entity);
+      } finally {
+        this.entityBatchDepth -= 1;
+        this.refreshEntityControls();
+      }
       failed = false;
     } finally {
       this.endRenderMeasurement(failed);
@@ -337,7 +362,8 @@ export class Board {
       if (!gesturePreview && this.gesture?.id === entity.id && this.gesture.pointerType === 'touch' && ['move', 'resize'].includes(this.gesture.type)) this.gesture.original = { ...normalized };
       if (this.gesture?.id === entity.id && (normalized.locked || !this.mayEdit(normalized))) this.cancelPositionGesture();
       const previous = this.entities.get(entity.id);
-      this.entities.set(entity.id, normalized); this.renderEntity(normalized); this.applyLayerOrder(); this.updateSelectionTools();
+      this.entities.set(entity.id, normalized); this.renderEntity(normalized);
+      this.refreshEntityControls(!previous || previous.z !== normalized.z);
       if (this.focusedId === entity.id) this.updateFocusBar();
       if (this.focusedId === entity.id && (!previous || ['x', 'y', 'width', 'height'].some(key => previous[key] !== normalized[key]))) this.fitFocusedEntity();
       failed = false;
@@ -354,7 +380,7 @@ export class Board {
       if (this.gesture?.id === id) this.cancelPositionGesture();
       this.entities.delete(id); this.nodes.get(id)?.remove(); this.nodes.delete(id); this.externalConsents.delete(id);
       if (this.selectedId === id) this.select(null);
-      this.applyLayerOrder(); this.updateSelectionTools();
+      this.refreshEntityControls(true);
       failed = false;
     } finally {
       this.endRenderMeasurement(failed);
@@ -436,7 +462,8 @@ export class Board {
     this.focusHintText = hint;
     if (!this.focusedId) this.previousFocusView = this.getView();
     this.focusedId = id; this.tool = 'select'; this.el.dataset.tool = 'select'; this.onToolChange('select');
-    this.select(id); this.layersPanel.hidden = true; this.layersToggle.setAttribute('aria-expanded', 'false');
+    this.layersPanel.hidden = true; this.layersToggle.setAttribute('aria-expanded', 'false');
+    this.select(id); this.updateLayers();
     this.el.classList.add('board-is-focused');
     for (const [entityId, node] of this.nodes) node.classList.toggle('is-focused', entityId === id);
     this.focusBar.hidden = false; this.updateFocusBar();
@@ -513,7 +540,9 @@ export class Board {
     }
     node.style.left = `${entity.x}px`; node.style.top = `${entity.y}px`;
     node.style.width = `${entity.width}px`; node.style.height = `${entity.height}px`;
-    node.style.zIndex = String(this.listEntities().findIndex(item => item.id === entity.id) + 1);
+    // Membership and stacking changes assign all ranks together. Geometry and
+    // content edits retain their rank without sorting the canvas for every node.
+    const rank = this.layerRanks.get(entity.id); if (rank != null) node.style.zIndex = String(rank);
     node.classList.toggle('is-selected', entity.id === this.selectedId);
     node.classList.toggle('is-focused', entity.id === this.focusedId);
     node.classList.toggle('is-readonly', !this.mayEdit(entity));
@@ -1066,7 +1095,7 @@ export class Board {
     this.endHistoryGroup(); this.abort.abort(); this.resizeObserver.disconnect();
     this.el.classList.remove('board-is-focused', 'board-space-pan', 'board-is-dragging', 'board-read-only');
     for (const node of this.nodes.values()) { const video = node.querySelector('video'); if (video) video.srcObject = null; }
-    this.stage.remove(); this.selectionTools.remove(); this.selectionHint.remove(); this.focusBar.remove(); this.layersControl.remove(); this.el.removeAttribute('aria-describedby'); this.entities.clear(); this.nodes.clear(); this.streams.clear(); this.cursors.clear();
+    this.stage.remove(); this.selectionTools.remove(); this.selectionHint.remove(); this.focusBar.remove(); this.layersControl.remove(); this.el.removeAttribute('aria-describedby'); this.entities.clear(); this.nodes.clear(); this.streams.clear(); this.cursors.clear(); this.layerRanks.clear();
   }
 }
 export default Board;
