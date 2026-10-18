@@ -1,5 +1,16 @@
 # Common releases
 
+## 1.5.2 — 2026-10-18
+
+The spatial beta updates changed objects and boards without repeatedly reconstructing the room. Included in portable module **0.5.2**.
+
+- Add a deeply frozen internal projection with stable references for unchanged entities, boards, drawing points, and room appearance. Accepted native Loro diffs identify affected records; public `state()` snapshots remain fresh, mutable copies. Unknown custom commits retain conservative full validation, and rejected updates or rollbacks cannot poison the projection.
+- Compare accepted object references when rendering the active board. Reconcile failed/no-op optimistic writes, preserve in-progress drawing/text/video, and retain personal camera/model identity during read-only transitions. Space previews use trusted immutable references while ordinary mutable view callers keep content comparison.
+- Keep historical projections in the existing bounded eight-entry cache, invalidate them on accepted history changes, and release owned caches on teardown. Record actual projection rebuilds as **Object projection** in the performance panel; cache hits do not dilute those timings.
+- A paired synthetic whole-app workload with 2,400 objects improved spatial render p95 from 115.9 to 5.2 ms and agent update p95 from 151.3 to 3.3 ms, with index 0 → 100. See [the follow-up investigation](docs/performance-investigation.md#follow-up-object-level-projection-in-152) for scope and evidence.
+
+Verification covers immutable identity and mutable-copy isolation, accepted/rejected/native peer changes, rollback, byte limits, drafts, optimistic reconciliation, history, imports, room switching, and teardown using existing checks and actual browser flows. No new test suite or dependency is added.
+
 ## 1.5.1 — 2026-10-18
 
 Performance investigations improve the standard canvas and spatial beta, including portable module **0.5.1**.

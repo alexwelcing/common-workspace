@@ -305,5 +305,207 @@
         "previewDescendantsAdded": 5840
       }
     }
-  ]
+  ],
+  "objectProjection": {
+    "date": "2026-10-18",
+    "baselineCommit": "3b07de17e5c9118c92b957141adbadc3d9a45c5f",
+    "changedRelease": "1.5.2",
+    "method": "One paired clean actual-app development run: import 16 boards / 2400 mixed objects, grant local agent tools, 40 frame-spaced edits. Separate CPU profiles for attribution; no trace overhead in the timing comparison.",
+    "baseline": {
+      "boards": 16,
+      "objects": 2400,
+      "updates": 40,
+      "agentP50Ms": 134.4,
+      "agentP95Ms": 151.3,
+      "agentMaxMs": 152.7,
+      "index": 0,
+      "observedMs": 15323,
+      "operations": [
+        {
+          "name": "canvas-render",
+          "label": "Canvas render",
+          "count": 256,
+          "p50Ms": 0,
+          "p95Ms": 0.1,
+          "maxMs": 0.1,
+          "failures": 0,
+          "budgetMs": 16,
+          "poorMs": 100,
+          "contributesToScore": true
+        },
+        {
+          "name": "spatial-render",
+          "label": "Spatial view render",
+          "count": 41,
+          "p50Ms": 95.8,
+          "p95Ms": 115.9,
+          "maxMs": 118.1,
+          "failures": 0,
+          "budgetMs": 16,
+          "poorMs": 100,
+          "contributesToScore": true
+        },
+        {
+          "name": "spatial-edit",
+          "label": "Spatial edit",
+          "count": 40,
+          "p50Ms": 4,
+          "p95Ms": 5.5,
+          "maxMs": 5.8,
+          "failures": 0,
+          "budgetMs": 16,
+          "poorMs": 100,
+          "contributesToScore": true
+        },
+        {
+          "name": "autosave",
+          "label": "Device autosave",
+          "count": 1,
+          "p50Ms": 6.9,
+          "p95Ms": 6.9,
+          "maxMs": 6.9,
+          "failures": 0,
+          "budgetMs": 100,
+          "poorMs": 1000,
+          "contributesToScore": false
+        }
+      ],
+      "signals": [
+        {
+          "key": "main-thread-delay",
+          "label": "Main-thread delay",
+          "unit": "ms",
+          "value": 484.9,
+          "score": 0,
+          "threshold": {
+            "good": 50,
+            "poor": 250
+          },
+          "samples": 12
+        },
+        {
+          "key": "long-task-blocking",
+          "label": "Long-task blocking",
+          "unit": "ms/s",
+          "value": 484.8,
+          "score": 0,
+          "threshold": {
+            "good": 10,
+            "poor": 100
+          },
+          "samples": 43,
+          "count": 43,
+          "blockingMs": 7429
+        }
+      ],
+      "errors": []
+    },
+    "after": {
+      "boards": 16,
+      "objects": 2400,
+      "updates": 40,
+      "agentP50Ms": 2.5,
+      "agentP95Ms": 3.3,
+      "agentMaxMs": 12.7,
+      "index": 100,
+      "observedMs": 6868,
+      "operations": [
+        {
+          "name": "canvas-render",
+          "label": "Canvas render",
+          "count": 40,
+          "p50Ms": 0.2,
+          "p95Ms": 0.3,
+          "maxMs": 0.3,
+          "failures": 0,
+          "budgetMs": 16,
+          "poorMs": 100,
+          "contributesToScore": true
+        },
+        {
+          "name": "spatial-render",
+          "label": "Spatial view render",
+          "count": 41,
+          "p50Ms": 4,
+          "p95Ms": 5.2,
+          "maxMs": 5.6,
+          "failures": 0,
+          "budgetMs": 16,
+          "poorMs": 100,
+          "contributesToScore": true
+        },
+        {
+          "name": "state-projection",
+          "label": "Object projection",
+          "count": 40,
+          "p50Ms": 0.3,
+          "p95Ms": 0.4,
+          "maxMs": 0.6,
+          "failures": 0,
+          "budgetMs": 16,
+          "poorMs": 100,
+          "contributesToScore": true
+        },
+        {
+          "name": "spatial-edit",
+          "label": "Spatial edit",
+          "count": 40,
+          "p50Ms": 2.1,
+          "p95Ms": 2.8,
+          "maxMs": 10.3,
+          "failures": 0,
+          "budgetMs": 16,
+          "poorMs": 100,
+          "contributesToScore": true
+        },
+        {
+          "name": "autosave",
+          "label": "Device autosave",
+          "count": 1,
+          "p50Ms": 5.2,
+          "p95Ms": 5.2,
+          "maxMs": 5.2,
+          "failures": 0,
+          "budgetMs": 100,
+          "poorMs": 1000,
+          "contributesToScore": false
+        }
+      ],
+      "signals": [
+        {
+          "key": "main-thread-delay",
+          "label": "Main-thread delay",
+          "unit": "ms",
+          "value": 0.2,
+          "score": 100,
+          "threshold": {
+            "good": 50,
+            "poor": 250
+          },
+          "samples": 6
+        },
+        {
+          "key": "long-task-blocking",
+          "label": "Long-task blocking",
+          "unit": "ms/s",
+          "value": 0,
+          "score": 100,
+          "threshold": {
+            "good": 10,
+            "poor": 100
+          },
+          "samples": 0,
+          "count": 0,
+          "blockingMs": 0
+        }
+      ],
+      "errors": []
+    },
+    "separateTrace": {
+      "beforeStateCalls": 200,
+      "afterStateCalls": 0,
+      "afterProjectionCalls": 200,
+      "acceptedUpdates": 40
+    }
+  }
 }

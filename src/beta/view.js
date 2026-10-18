@@ -1,5 +1,6 @@
 import './style.css';
 import { attachPopover, attachRovingToolbar } from '../ui/workspace-primitives.js';
+import { isSpatialProjection } from './projection.js';
 
 const clamp = (value, low, high, fallback = 0) =>
   Number.isFinite(Number(value)) ? Math.min(high, Math.max(low, Number(value))) : fallback;
@@ -191,7 +192,7 @@ export function mountBetaView(root, handlers = {}) {
   let sceneGeometrySignature = '';
   const planes = new Map();
   const boardButtons = new Map();
-  const previewSignatures = new Map();
+  const previewStates = new Map();
   const placementDetails = $('.beta-placement');
   const placementPanel = $('.beta-position-panel');
   // Keep the inspector out of the canvas clipping region and in the same safe
@@ -512,11 +513,23 @@ export function mountBetaView(root, handlers = {}) {
     return node;
   }
 
-  function boardPreviewSignature(board) {
-    return JSON.stringify([
-      objectList(board), isLive(),
-      clamp(board.width, 160, 4000, 960), clamp(board.height, 120, 3000, 600),
-    ]);
+  function boardPreviewState(board) {
+    const objects = objectList(board);
+    return {
+      objects, live: isLive(),
+      width: clamp(board.width, 160, 4000, 960), height: clamp(board.height, 120, 3000, 600),
+      // Only projections created by our store promise deep immutability.
+      // Ordinary callers may mutate an existing array and still need comparison.
+      serializedObjects: isSpatialProjection(objects) ? null : JSON.stringify(objects),
+    };
+  }
+
+  function samePreviewState(previous, next) {
+    return !!previous && previous.live === next.live
+      && previous.width === next.width && previous.height === next.height
+      && (next.serializedObjects === null
+        ? previous.serializedObjects === null && previous.objects === next.objects
+        : previous.serializedObjects === next.serializedObjects);
   }
 
   function renderBoards({ enteringSpace = false } = {}) {
@@ -527,7 +540,7 @@ export function mountBetaView(root, handlers = {}) {
         planes.delete(id);
         boardButtons.get(id)?.remove();
         boardButtons.delete(id);
-        previewSignatures.delete(id);
+        previewStates.delete(id);
       }
     }
     for (const board of state.boards) {
@@ -596,8 +609,8 @@ export function mountBetaView(root, handlers = {}) {
       // Work mode keeps plane metadata current without rebuilding an invisible
       // second copy of every board. Space entry compares the latest contents.
       if (state.mode === 'space') {
-        const previewSignature = boardPreviewSignature(board);
-        if (previewSignature !== previewSignatures.get(id)) {
+        const previewState = boardPreviewState(board);
+        if (!samePreviewState(previewStates.get(id), previewState)) {
           const preview = plane.querySelector('.beta-plane-preview');
           preview.replaceChildren();
           const availableHeight = height - 76;
@@ -624,7 +637,7 @@ export function mountBetaView(root, handlers = {}) {
           if (!objects.length)
             content.append(element('span', 'beta-plane-empty', 'Room for a little thought…'));
           preview.append(content);
-          previewSignatures.set(id, previewSignature);
+          previewStates.set(id, previewState);
         }
       }
       if (world.children[index] !== plane) world.insertBefore(plane, world.children[index] || null);
@@ -820,7 +833,7 @@ export function mountBetaView(root, handlers = {}) {
     ]);
     const newSignature = JSON.stringify([boardContent, state.activeBoardId, liveView, space]);
     const previewChanged = space && state.boards.some(
-      board => boardPreviewSignature(board) !== previewSignatures.get(String(board.id)),
+      board => !samePreviewState(previewStates.get(String(board.id)), boardPreviewState(board)),
     );
     if (newSignature !== contentSignature || previewChanged) {
       contentSignature = newSignature;
@@ -851,7 +864,7 @@ export function mountBetaView(root, handlers = {}) {
       shell.remove();
       planes.clear();
       boardButtons.clear();
-      previewSignatures.clear();
+      previewStates.clear();
     },
   };
 }
