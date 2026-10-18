@@ -47,7 +47,7 @@ const $=s=>document.querySelector(s);
 const icon=(name,size=18)=>{const node=createElement(icons[name]||icons.Circle,{width:size,height:size,'stroke-width':1.7});return node.outerHTML};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>crypto.randomUUID();
-let shared=null, peerCanvas=null, receivingCanvas=false;
+let shared=null, peerCanvas=null, receivingCanvas=false, restoringSandboxCanvas=false;
 let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null, sharingControls=null;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
 let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor='#305e48', chatPanel=null;
@@ -306,7 +306,7 @@ const subscriptionResizeObserver=new ResizeObserver(()=>{scheduleScreenSubscript
 subscriptionResizeObserver.observe($('#board-viewport'));
 cleanupViewport=installMobileViewport({onChange:()=>{positionCanvasOverlays();sessionGuide?.fitPanel();scheduleScreenSubscriptions()}});
 function isPeerRoom(){return !sandbox&&auth?.room?.collaboration==='peer'}
-function refreshCanvas(){if(!disposed&&shared){board.setEntities(shared.all());board.setLayerOrder(shared.getOrder());refreshPerformanceContext();scheduleScreenSubscriptions()}}
+function refreshCanvas(){if(!disposed&&shared){const entities=shared.all();board.setEntities(entities);board.setLayerOrder(entities.map(entity=>entity.id));refreshPerformanceContext();scheduleScreenSubscriptions()}}
 function refreshPerformanceContext({includeMedia=false}={}){
   if(disposed)return;
   performanceIndex.setContext({objects:board?.entities.size||0,boards:1,participants:sandbox?1:participants.length});
@@ -338,6 +338,7 @@ function makeCanvasModel(){
   peerCanvas?.destroy();peerCanvas=null;shared?.destroy();
   shared=new SharedCanvas({
     onChange:entity=>{
+      if(restoringSandboxCanvas)return;
       board.upsert(entity);board.setLayerOrder(shared.getOrder());refreshPerformanceContext();
       if(entity.type==='screen'){scheduleScreenSubscriptions();refreshSessionGuide()}
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'upsert',entity});
@@ -411,7 +412,21 @@ function saveSandbox(){
     }
   }finally{finish({failed})}
 }
-function loadSandbox(){applyRoomAppearance(readStoredJSON('localStorage',appStorageKey('common.appearance')));const stored=readStoredJSON('localStorage',appStorageKey('common.canvas')),data=Array.isArray(stored)?stored:null;makeCanvasModel();shared.replaceInitial(data||seed());renderPeople();renderRecent();setPanelOpen(false);if(!data||appBasePath!=='/'){initialFitNeeded=true;nextFrame(fitInitialCanvas)}}
+function loadSandbox(){
+  applyRoomAppearance(readStoredJSON('localStorage',appStorageKey('common.appearance')));
+  const stored=readStoredJSON('localStorage',appStorageKey('common.canvas'));
+  const data=Array.isArray(stored)?stored:null;
+  makeCanvasModel();
+  // Restoring one document is one canvas update. Per-item callbacks would
+  // repeatedly sort, render, and save the progressively restored scene.
+  let restored=false;
+  restoringSandboxCanvas=true;
+  try{restored=shared.replaceInitial(data||seed())}
+  finally{restoringSandboxCanvas=false}
+  if(restored){refreshCanvas();saveSandbox()}
+  renderPeople();renderRecent();setPanelOpen(false);
+  if(!data||appBasePath!=='/'){initialFitNeeded=true;nextFrame(fitInitialCanvas)}
+}
 loadSandbox();
 setupMedia();
 initGeometry().then(()=>{if(!disposed){$('#engine-label').textContent='Canvas ready';$('#engine-label').title=geometryBackend()}});

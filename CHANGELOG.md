@@ -1,5 +1,16 @@
 # Common releases
 
+## 1.5.1 — 2026-10-18
+
+Performance investigations improve the standard canvas and spatial beta, including portable module **0.5.1**.
+
+- Restore a local canvas as one render/save operation, build Layers rows only while open, batch stacking/control updates, and preserve stacking during ordinary content/geometry edits. In a paired synthetic development run, 700-note startup fell from 10.2 seconds to 0.5 seconds and restoration saves from 700 to one.
+- Validate only the affected beta board and reuse its normalized byte count. Moving a board reads manifest metadata directly. `spatial-edit` now includes `setEntity`/`updateBoard` preparation rather than reporting only their shorter nested commits; unchanged edits remain unsampled.
+- Defer hidden Space previews, preserve unchanged board previews, and refit the scene only for board geometry or viewport changes. Per-board signatures replace the previous whole-room content signature, with history/live and hidden-to-visible freshness preserved.
+- Document the development profiling workflow and paired numeric evidence, including remaining complete-app projection, large-canvas interaction, and historical reconstruction costs. Component improvements are not a whole-room capacity claim or an all-clear from the index.
+
+Verification uses existing focused checks, actual-browser workflows, and repeated representative workloads; no new test suites or dependencies are added. See [the investigation](docs/performance-investigation.md) for methods and limits.
+
 ## 1.5.0 — 2026-10-18
 
 A local performance index is available in the standard canvas and spatial beta, including portable module **0.5.0**.

@@ -132,7 +132,7 @@ function normalBoard(input, id = input?.id || newId()) {
   return { id, name, pose, width, height };
 }
 
-function normalObjects(data = {}, expectedId) {
+function normalBoardContents(data = {}, expectedId) {
   if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['entities', 'deleted', 'board'].includes(key))) throw new Error('Invalid spatial board document.');
   if (data.board !== undefined && (!data.board || typeof data.board !== 'object' || Array.isArray(data.board)
     || (data.board.id !== undefined && data.board.id !== expectedId))) {
@@ -154,7 +154,7 @@ function normalObjects(data = {}, expectedId) {
     if (bytes > MAX_BOARD_BYTES) throw new Error('A board exceeds the 16 MiB content limit. Move some images to another board.');
     objects.push(entity);
   }
-  return objects.sort(compareSharedEntities);
+  return { objects: objects.sort(compareSharedEntities), bytes };
 }
 
 function normalState(manifest, documents, { historical = false } = {}) {
@@ -168,7 +168,7 @@ function normalState(manifest, documents, { historical = false } = {}) {
     const board = normalBoard(raw, id);
     if (raw.deleted !== undefined && typeof raw.deleted !== 'boolean') throw new Error('Invalid spatial board deletion history.');
     if (raw.deleted) continue;
-    board.objects = normalObjects(documents.get(`board:${id}`)?.toJSON() || {}, id);
+    board.objects = normalBoardContents(documents.get(`board:${id}`)?.toJSON() || {}, id).objects;
     if (historical) {
       for (const entity of board.objects) {
         if (entity.type === 'screen') entity.historical = true;
@@ -259,34 +259,43 @@ class SpatialStore {
     this.causalCache = null;
     this.pastCache = new Map();
     this.generation = 0;
+    this.measuringEdit = false;
   }
 
   measurePerformance(name, work, failedWhenFalse = false) {
+    // Public edits include preparation and validation; their nested commit is
+    // part of the same operation rather than a second, shorter sample.
+    const edit = name === 'spatial-edit';
+    if (edit && this.measuringEdit) return work();
+    if (edit) this.measuringEdit = true;
     let end;
     try {
       end = name && this.performanceIndex?.start?.(name);
     } catch { /* Diagnostics must never interrupt editing or autosave. */ }
-    if (typeof end !== 'function') return work();
-    const complete = failed => {
-      try { end({ failed }); }
+    const complete = (failed, value) => {
+      // Unchanged fields do not create history and are not meaningful edits.
+      if (edit && value === false && !failed) return;
+      try { if (typeof end === 'function') end({ failed }); }
       catch { /* A disconnected diagnostic panel cannot fail an operation. */ }
     };
     try {
       const result = work();
       if (result instanceof Promise) {
         return result.then(value => {
-          complete(failedWhenFalse && value === false);
+          complete(failedWhenFalse && value === false, value);
           return value;
         }, error => {
           complete(true);
           throw error;
         });
       }
-      complete(failedWhenFalse && result === false);
+      complete(failedWhenFalse && result === false, result);
       return result;
     } catch (error) {
       complete(true);
       throw error;
+    } finally {
+      if (edit) this.measuringEdit = false;
     }
   }
 
@@ -327,7 +336,7 @@ class SpatialStore {
           try {
             const result = doc.importBatch(parts);
             if (result.pending?.size) throw new Error('The saved workspace is missing earlier edits.');
-            if (id !== 'manifest') normalObjects(doc.toJSON(), id.slice(6));
+            if (id !== 'manifest') normalBoardContents(doc.toJSON(), id.slice(6));
             size = doc.export({ mode: 'snapshot' }).length;
             this.checkHistorySizes(new Map([[id, size]]));
           }
@@ -676,14 +685,18 @@ class SpatialStore {
   }
 
   updateBoard(id, patch = {}) {
-    const current = this.state().boards.find(board => board.id === id);
-    if (!current) throw new Error('This board is no longer available.');
-    const board = normalBoard({ ...current, ...patch, pose: { ...current.pose, ...patch.pose } }, id);
-    const record = this.manifest().getMap('boards').get(id);
-    const changes = { name: board.name, width: board.width, height: board.height, ...board.pose };
-    if (!Object.keys(changes).some(key => !equal(record.get(key), changes[key]))) return false;
-    return this.commit(['manifest'], patch.name !== undefined ? 'Renamed board' : 'Moved board in space', () => {
-      for (const [key, value] of Object.entries(changes)) if (!equal(record.get(key), value)) record.set(key, value);
+    return this.measurePerformance('spatial-edit', () => {
+      this.requireLive();
+      const record = this.manifest().getMap('boards').get(id);
+      if (!(record instanceof LoroMap) || record.get('deleted')) throw new Error('This board is no longer available.');
+      const raw = record.toJSON();
+      const current = normalBoard({ ...raw, pose: Object.fromEntries(POSE_FIELDS.map(key => [key, raw[key] ?? 0])) }, id);
+      const board = normalBoard({ ...current, ...patch, pose: { ...current.pose, ...patch.pose } }, id);
+      const changes = { name: board.name, width: board.width, height: board.height, ...board.pose };
+      if (!Object.keys(changes).some(key => !equal(record.get(key), changes[key]))) return false;
+      return this.commit(['manifest'], patch.name !== undefined ? 'Renamed board' : 'Moved board in space', () => {
+        for (const [key, value] of Object.entries(changes)) if (!equal(record.get(key), value)) record.set(key, value);
+      });
     });
   }
 
@@ -694,38 +707,43 @@ class SpatialStore {
   }
 
   setEntity(boardId, input, changedFields) {
-    const doc = this.boardDocument(boardId);
-    const entities = doc.getMap('entities');
-    if (!idValid(input?.id)) throw new Error('Invalid spatial object identity.');
-    if (doc.getMap('deleted').get(input.id)) return false;
-    let record = entities.get(input.id);
-    if (record && !(record instanceof LoroMap)) throw new Error('Invalid spatial object record.');
-    const previous = record?.toJSON();
-    const fields = changedFields ? [...new Set(changedFields)].filter(field => ENTITY_FIELDS.has(field) && field !== 'id') : Object.keys(input).filter(field => ENTITY_FIELDS.has(field));
-    const candidate = previous ? { ...previous } : { ...input };
-    for (const field of fields) if (input[field] !== undefined) candidate[field] = input[field];
-    if (!previous) {
-      if (entities.keys().length >= MAX_ENTITIES) throw new Error('This board has reached its 1,000-object beta limit.');
-      const all = this.state().boards.find(board => board.id === boardId)?.objects || [];
-      candidate.orderKey ||= generateKeyBetween(all.at(-1)?.orderKey ?? null, null);
-    }
-    const entity = normalEntity(candidate);
-    const currentObjects = this.state().boards.find(board => board.id === boardId)?.objects || [];
-    if (currentObjects.reduce(
-      (sum, item) => sum + (item.id === entity.id ? 0 : encoder.encode(JSON.stringify(item)).byteLength),
-      encoder.encode(JSON.stringify(entity)).byteLength,
-    ) > MAX_BOARD_BYTES) {
-      throw new Error('This board is full. Move some images to another board.');
-    }
-    const updates = previous ? fields.filter(field => !equal(previous[field], entity[field])) : Object.keys(entity);
-    if (!updates.length) return false;
-    const label = !previous ? `Added ${entity.type === 'sticky' ? 'note' : entity.type}`
-      : updates.some(field => ['text', 'source', 'title'].includes(field)) ? 'Edited writing'
-        : updates.some(field => ['x', 'y', 'width', 'height', 'points'].includes(field)) ? 'Arranged objects'
-          : 'Styled object';
-    return this.commit([`board:${boardId}`], label, () => {
-      if (!record) record = entities.setContainer(entity.id, new LoroMap());
-      for (const field of updates) if (entity[field] !== undefined) record.set(field, entity[field]);
+    return this.measurePerformance('spatial-edit', () => {
+      const doc = this.boardDocument(boardId);
+      const entities = doc.getMap('entities');
+      if (!idValid(input?.id)) throw new Error('Invalid spatial object identity.');
+      if (doc.getMap('deleted').get(input.id)) return false;
+      let record = entities.get(input.id);
+      if (record && !(record instanceof LoroMap)) throw new Error('Invalid spatial object record.');
+      const previous = record?.toJSON();
+      const fields = changedFields ? [...new Set(changedFields)].filter(field => ENTITY_FIELDS.has(field) && field !== 'id') : Object.keys(input).filter(field => ENTITY_FIELDS.has(field));
+      const candidate = previous ? { ...previous } : { ...input };
+      for (const field of fields) if (input[field] !== undefined) candidate[field] = input[field];
+      let contents;
+      if (!previous) {
+        if (entities.keys().length >= MAX_ENTITIES) throw new Error('This board has reached its 1,000-object beta limit.');
+        contents = normalBoardContents(doc.toJSON(), boardId);
+        candidate.orderKey ||= generateKeyBetween(contents.objects.at(-1)?.orderKey ?? null, null);
+      }
+      const entity = normalEntity(candidate);
+      const updates = previous ? fields.filter(field => !equal(previous[field], entity[field])) : Object.keys(entity);
+      if (!updates.length) return false;
+      // A change on one board must not materialize every other board. Reuse the
+      // normalized byte total instead of serializing all objects a second time.
+      contents ||= normalBoardContents(doc.toJSON(), boardId);
+      const replaced = contents.objects.find(item => item.id === entity.id);
+      const bytes = contents.bytes + encoder.encode(JSON.stringify(entity)).byteLength
+        - (replaced ? encoder.encode(JSON.stringify(replaced)).byteLength : 0);
+      if (bytes > MAX_BOARD_BYTES) {
+        throw new Error('This board is full. Move some images to another board.');
+      }
+      const label = !previous ? `Added ${entity.type === 'sticky' ? 'note' : entity.type}`
+        : updates.some(field => ['text', 'source', 'title'].includes(field)) ? 'Edited writing'
+          : updates.some(field => ['x', 'y', 'width', 'height', 'points'].includes(field)) ? 'Arranged objects'
+            : 'Styled object';
+      return this.commit([`board:${boardId}`], label, () => {
+        if (!record) record = entities.setContainer(entity.id, new LoroMap());
+        for (const field of updates) if (entity[field] !== undefined) record.set(field, entity[field]);
+      });
     });
   }
 
@@ -1009,7 +1027,7 @@ class SpatialStore {
             } catch { /* Periodic sync also requests missing dependencies. */ }
             return false;
           }
-          if (value.id !== 'manifest') normalObjects(candidate.toJSON(), value.id.slice(6));
+          if (value.id !== 'manifest') normalBoardContents(candidate.toJSON(), value.id.slice(6));
           const candidateDocuments = new Map(this.documents);
           candidateDocuments.set(value.id, candidate);
           if (value.id === 'manifest' || this.manifest()) {

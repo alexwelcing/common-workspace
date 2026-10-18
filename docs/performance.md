@@ -4,6 +4,8 @@ Open **Canvas options → Performance** in the standard canvas, or **Room → Pe
 
 Measurements stay in this tab. There is no analytics service, account, or diagnostic upload. The same collector runs in local Bun installations and on Netlify.
 
+Use it during feature development to spot expensive work, compare a change, and decide where to profile next. The score is a starting point; operation timings and the complete user action provide the evidence.
+
 ## Read the index
 
 The index runs from **0 to 100**, with 100 best. After five seconds of visible observation, it follows the weakest available responsiveness signal rather than averaging away a bad result. Scores of 80–100 are healthy, 50–79 show strain, and below 50 indicate poor responsiveness. These are troubleshooting guides, not device benchmarks or capacity guarantees.
@@ -33,12 +35,16 @@ Autosave and replay import/export include asynchronous waiting. A slow storage t
 
 ## Compare a change
 
-1. Use a synthetic canvas with representative objects and history. Keep the browser, device, viewport, scene, watched windows, and network conditions comparable.
-2. Select **Start fresh**. It clears measurements, not canvas data. Wait through warmup, then repeat a short action sequence: drag, draw, edit text, navigate, and perform the operation being investigated.
-3. Download a report, make one change, and repeat the same sequence. Compare coverage, sample counts, p95/max operation times, failures, and workload as well as the score.
-4. For collaboration changes, repeat with two real browser profiles and the intended network. Compare local Bun and Netlify runs when the hosting boundary matters; reports from different devices are not interchangeable benchmarks.
+1. Run `bun run dev` and open the URL it prints. Build a synthetic scene representative of the feature: object types and counts, boards, history, and watched windows. Write down a short, repeatable sequence such as typing, dragging, switching boards, and replaying history.
+2. Keep the browser profile, device, viewport, scene, and network conditions comparable. Run one investigation at a time; another benchmark, browser profiler, or busy development process can distort the result. Freeze source saves during a run: hot reload restarts observation. Let the scene finish loading, select **Start fresh**, and wait through the five visible seconds of warmup. Reset clears measurements, not canvas data.
+3. Perform the sequence several times. Read coverage, sample counts, raw operation median/p95/maximum, failures, and workload alongside the score. Check that the expected operations were actually measured. Download the baseline report and keep its build identifiers with the action sequence and environment notes. Development build identifiers describe committed source; record the working-tree diff as well.
+4. Make one change, reload the same scene, reset, warm up, and repeat. Keep the second report beside the baseline. Compare complete-action time as well as named operations; fewer repeated renders or history reads can matter even when each individual sample is fast.
+5. Use Chrome DevTools **Performance** to record the specific action when the expensive call is unclear. Inspect the main-thread call tree and self time; use temporary numeric counters to check suspected repeated work. Capture this trace separately from the comparison runs because profiling adds overhead. Check idle periods, inactive boards, and hidden tabs for work that should have stopped or reused a cached result.
+6. For collaboration changes, repeat with two real browser profiles and the intended network. Compare local Bun and Netlify runs when the hosting boundary matters; reports from different devices are not interchangeable benchmarks.
 
-Use the browser's Performance profiler when these clues leave the expensive call unclear. The index does not measure video quality, GPU time, WebRTC bitrate, server capacity, or cross-device latency. A green index does not prove those systems are healthy.
+Timing boundaries matter. The [first developer investigation](performance-investigation.md) found beta edit preflight work outside the `spatial-edit` timer. A fast named operation can miss expensive work before or after it, and short delays may escape the responsiveness signals. Follow a suspicious action through the profiler rather than treating a healthy index as proof that it is cheap.
+
+The index does not measure video quality, GPU time, WebRTC bitrate, server capacity, or cross-device latency. A green index does not prove those systems are healthy.
 
 The existing CI browser journeys retain their privacy-checked synthetic reports in the workflow's `performance-<run ID>` artifact for 14 days. Compare those reports across builds using the same workload and coverage. CI verifies collection and export; variable scores do not act as a release gate. These artifacts come from the CI rooms.
 
