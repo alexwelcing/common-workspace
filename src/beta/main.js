@@ -157,7 +157,10 @@ function render() {
   }
   if (board.readOnly !== !editable()) board.setReadOnly(!editable());
   board.setLayerOrder(entries.map(item => item.id));
-  for (const [id, stream] of streams) board.setStream(id, selectedRevisionId ? null : stream);
+  for (const [id, stream] of streams) {
+    const target = selectedRevisionId || terminal ? null : stream;
+    if (board.streams.get(id) !== target && (target || board.streams.has(id))) board.setStream(id, target);
+  }
   if (selectedRevisionId) for (const id of board.streams.keys()) board.setStream(id, null);
   syncWatching(); agent?.refresh(); publishState();
 }
