@@ -412,10 +412,10 @@ export class CanvasCapture {
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, height); ctx.strokeStyle = '#dde2d8'; ctx.strokeRect(0, 0, width, height);
       this._text(ctx, entity.title || (entity.type === 'screen' ? 'Shared window' : 'Diagram'), 14, 15, width - 28, 25, 12, '#46523f');
       if (entity.type === 'screen') {
-        const video = board.nodes?.get(entity.id)?.querySelector('video');
+        const video = entity.historical ? null : board.nodes?.get(entity.id)?.querySelector('video');
         ctx.fillStyle = '#20261e'; ctx.fillRect(0, 44, width, Math.max(0, height - 74));
-        if (!video || video.readyState < 2 || !this._fitImage(ctx, video, 0, 44, width, height - 74)) this._text(ctx, 'Waiting for shared window', 12, 54, width - 24, height - 94, 14, '#cad2c6', { center: true });
-        this._text(ctx, 'Live screen', 12, height - 22, width - 24, 20, 9, '#89917f');
+        if (!video || video.readyState < 2 || !this._fitImage(ctx, video, 0, 44, width, height - 74)) this._text(ctx, entity.historical ? 'Window placement saved · video not recorded' : 'Waiting for shared window', 12, 54, width - 24, height - 94, 14, '#cad2c6', { center: true });
+        this._text(ctx, entity.historical ? 'Historical window' : 'Live screen', 12, height - 22, width - 24, 20, 9, '#89917f');
       } else {
         const image = this.assets.get(entity.id)?.image;
         if (image) this._fitImage(ctx, image, 20, 61, width - 40, height - 78);

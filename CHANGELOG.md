@@ -1,5 +1,19 @@
 # Common releases
 
+## 1.4.0 — 2026-10-18
+
+Space & time beta ships as a separate opt-in experience in the app and portable module **0.4.0**. Open `?beta=space`; standard rooms retain their existing canvas.
+
+- Edit ordinary flat boards in **2D · Work**, or step outside with **3D · Space**. Shared board positions and rotations use all three axes; camera and timeline positions stay personal.
+- Changes create automatic revisions and autosave to IndexedDB. Explore a read-only past while teammates continue live, return to the present, or branch into a new local workspace with fresh identities. There is no manual save or named-moment workflow.
+- A Loro WASM manifest and per-board documents synchronize content and history directly between peers. IndexedDB schema 2 appends small edit records and occasionally compacts them into full-history snapshots; earlier device storage upgrades automatically. Device saves report failures honestly, and same-installation tabs exchange updates and coordinate writes where supported. Ending a room leaves device archives intact.
+- Export portable binary `.common` replays containing raw Loro history, CRC32 integrity checks, and optional built-in browser GZIP, avoiding JSON/base64 expansion. Earlier JSON archives still import. Export remains available if device autosave fails. Browser data removal or eviction can lose device copies. Canvas replay reconstructs structured edits; screen history preserves metadata, while past pixels need a separately downloaded recording.
+- Start from current boards, Team walkthrough, Design review, or Open room, then customize boards and themes. **On this device** reopens saved branches and room history, including closed-room archives. Existing opt-in agents, snapshots, and recording tools work on the active flat board without new spatial or timeline commands.
+- Beta room metadata selects the correct experience for invitations and embedded `roomId` mounts. An additive hosted migration records the room experience; existing room files remain compatible. The separate beta is lazy-loaded and uses the existing Bun or Netlify room service.
+- Current budgets are 64 board records, 1,000 object records per board, 16 MiB current board content, 12 MiB per history document, 40 MiB combined workspace history, and 64 MiB per archive. All board documents and history still replicate to every browser; selective loading and measured large-room capacity are future work.
+
+Validation extends the existing five browser journeys with the beta peer, history, autosave, and archive flow. No new checked-in suites are added.
+
 ## 1.3.0 — 2026-10-18
 
 Room styling is shared by the hosted app, local Bun rooms, and portable module **0.3.0**.

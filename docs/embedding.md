@@ -2,14 +2,14 @@
 
 Common can run inside an existing Bun application as a canvas panel or a floating workspace. The host owns the HTTP listener, routes, WebSocket server, and authentication. Common mounts its assets and room service beneath one path; it does not start a second server or open a hidden port.
 
-The portable module is included in the [v1.3.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.3.0). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
+The portable module is included in the [v1.4.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.4.0). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
 
 ## Obtain the package
 
-Download `common-workspace-0.3.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.3.0), or obtain both from your administrator. Install that file in your Bun application:
+Download `common-workspace-0.4.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.4.0), or obtain both from your administrator. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.3.0.tgz
+bun add /absolute/path/common-workspace-0.4.0.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.3.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This builds the package and writes `artifacts/common-workspace-0.4.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
 
 The runnable host example is included in the package. After installing, try it directly from your Bun project:
 
@@ -181,7 +181,7 @@ The same-origin iframe is an integration boundary, not a separate security origi
 
 The module defaults to an in-memory room service and the private network profile. It does not write a room database unless you explicitly configure `dataFile`. Restarting an in-memory service removes its room access, presence, and chat state. Peer canvas content and shared images live in participating browsers; live video travels between peers. Personal-canvas browser storage is scoped to the installation's mount path.
 
-Each mounted browser canvas has its own local Focus view and personal Undo/Redo history. Focus changes no shared geometry. Undo applies inverse field edits only while those fields still belong to this browser's action; it preserves newer peer writes and respects current locks and edit access. Undoing deletion creates a new copy with a fresh ID, so integrations should inspect again before reusing an old object ID. Live screen objects are excluded from history. History ends with the session or mount, is not persisted, and is bounded to 100 entries and 24 MiB of recorded actions, plus an active group capped at 24 MiB. Paste uses the browser's normal paste event and requires no clipboard-read policy or permission.
+Each standard mounted canvas has its own local Focus view and personal Undo/Redo history. Focus changes no shared geometry. Undo applies inverse field edits only while those fields still belong to this browser's action; it preserves newer peer writes and respects current locks and edit access. Undoing deletion creates a new copy with a fresh ID, so integrations should inspect again before reusing an old object ID. Live screen objects are excluded from Undo history. Standard Undo history ends with the session or mount, is not persisted, and is bounded to 100 entries and 24 MiB of recorded actions, plus an active group capped at 24 MiB. Paste uses the browser's normal paste event and requires no clipboard-read policy or permission. The opt-in Space & time beta has its own persistent automatic history, described below.
 
 Chat drafts and reading position stay in the mounted iframe's memory through panel switches and transport reconnects. Reloading, entering a different room/session, or destroying the mount clears drafts. Draft text is not written to browser storage or sent before Send. Sending waits for this participant's server echo before clearing an unchanged draft; an uncertain send keeps it and does not retry automatically. A hidden tab or hidden Common mount retains unread messages. Dialog focus and inactive background state apply inside the iframe; the host controls focus outside that frame.
 
@@ -220,3 +220,13 @@ Use **Canvas options → Connection details** for transport and peer states, or 
 The embedded app includes **Room style** during session creation and under **Canvas options**. Hosts can apply Meadow, Rose, Lagoon, or Lavender presets, custom accent/canvas colors, and dots/grid/plain patterns. The same appearance synchronizes across the room and survives reconnects; it is stored in the existing local room state. Inline and floating mounts style their own iframe document and leave the host application's colors unchanged. Destroying a mount restores its owned theme variables.
 
 Personal **Canvas style** stays in that Common mount's browser storage. Existing object colors are retained; snapshots, canvas recordings, and SVG export use the room background. Styles are bounded color/pattern data, with no custom CSS, remote fonts, or image URLs. Existing room files remain compatible and fall back to Meadow.
+
+## Space & time beta
+
+The package includes the separate, lazy-loaded beta. Open your Common mount directly with `?beta=space`, such as `/__common/?beta=space`, to try it and create a beta room. Its invitation links retain the mount prefix. A normal `mountCommon({ target, basePath, roomId })` can join that room: room metadata selects the beta automatically, with the existing password flow. There is no beta SDK option, and existing rooms remain in the standard experience.
+
+The beta edits one flat board at a time and provides a 3D overview and an automatically recorded timeline. Its per-board Loro documents and manifest synchronize directly between peers and autosave small edit records to IndexedDB, scoped to this installation's mount path. Occasional full-history snapshot compaction retains every revision; earlier device storage upgrades automatically. Destroying a mount stops collaboration and capture but leaves the device archive. Ending the room stops room access without deleting those device copies. Browser data removal or eviction can still lose them; **Export room** downloads a binary `.common` replay with history and optional built-in browser compression. Earlier JSON archives still import locally. The module requires no custom filesystem or additional storage process.
+
+Existing opt-in agent canvas, walkthrough, snapshot, and recording tools act on the active flat board. They add no spatial-navigation or timeline commands. Past views are read-only, and past window pixels require an explicit recording. Agent grants and native browser capture permissions still apply. Both inline and floating mounts keep their beta theme inside the iframe.
+
+All board documents and their history are currently replicated to every browser; per-board documents do not yet provide selective loading. See [the beta guide](spatial-beta.md) for limits, storage behavior, and a short walkthrough. No additional server, account, relay, or cloud storage service is required.

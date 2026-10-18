@@ -516,6 +516,14 @@ export class Board {
   }
   renderScreen(node, entity) {
     const header = this.header(entity, entity.title || 'Shared screen', 'screen'); node.append(header);
+    if (entity.historical) {
+      header.querySelector('.board-live-badge').textContent = 'HISTORY';
+      const frame = element('div', 'board-screen-frame');
+      const placeholder = element('div', 'board-screen-placeholder');
+      placeholder.append(icon('screen', 32), element('strong', '', 'Window at this point in history'), element('span', '', 'The window’s placement was saved. Live video is not part of the canvas history.'));
+      frame.append(placeholder); node.append(frame);
+      return;
+    }
     const frame = element('div', 'board-screen-frame');
     const video = document.createElement('video'); video.autoplay = true; video.playsInline = true; video.muted = true;
     video.setAttribute('aria-label', entity.title || 'Shared window video');
