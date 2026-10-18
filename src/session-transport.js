@@ -204,7 +204,13 @@ export class PollingSessionTransport {
       if (this.readyState !== PollingSessionTransport.OPEN) return;
       try {
         for (let attempt = 0; ; attempt++) {
-          try { await this._request('/messages', { method: 'POST', body: message }); break; }
+          try {
+            await this._request('/messages', { method: 'POST', body: message });
+            // Ending is authoritative once acknowledged. Close now instead of
+            // letting a queued signal observe the ended room before the poll.
+            if (message.type === 'end') this._message({ type: 'ended' });
+            break;
+          }
           catch (error) {
             if (!retryableSignal || attempt >= 2 || this.readyState !== PollingSessionTransport.OPEN || (error.status && error.status < 500)) throw error;
             this._metrics.postRetries++; this._diagnose();
