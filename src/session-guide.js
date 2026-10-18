@@ -14,6 +14,7 @@ const make=(tag,className,text)=>{
 };
 const button=(className,text)=>{const el=make('button',className,text);el.type='button';return el};
 const checkedTasks=person=>new Set(person?.checklist?.completed||[]);
+const participation=(person,supported)=>supported&&person?.checklist?.participation==='viewer'?'viewer':'presenter';
 const setText=(node,text)=>{if(node.textContent!==text)node.textContent=text};
 
 /** Guided sessions display authenticated roster state; the canvas view stays local. */
@@ -51,12 +52,23 @@ export class SessionGuide {
     this.claim=make('select','session-guide-claim');this.claim.setAttribute('aria-label','Your place in the session plan');
     this.claimLabel.append(this.claim);
     this.claimHelp=make('p','session-guide-hint','Choose your planned name, or join as an additional participant.');
+    this.participation=make('fieldset','session-guide-participation');
+    this.participation.append(make('legend','','How you’ll take part'));
+    this.participationChoices=make('div','session-guide-participation-choices');
+    this.presenter=button('session-guide-participation-choice','Share a window');
+    this.viewer=button('session-guide-participation-choice','Watch & contribute');
+    this.presenter.setAttribute('aria-pressed','false');this.viewer.setAttribute('aria-pressed','false');
+    this.participationChoices.append(this.presenter,this.viewer);
+    this.participationHelp=make('p','session-guide-hint');this.participationHelp.id=`session-participation-${guideSequence}`;
+    this.participationHelp.setAttribute('role','status');this.participationHelp.setAttribute('aria-live','polite');
+    this.participation.setAttribute('aria-describedby',this.participationHelp.id);
+    this.participation.append(this.participationChoices,this.participationHelp);
     this.checklist=make('div','session-guide-checklist');
     this.joined=this.makeDerived('Joined the session');this.sharing=this.makeDerived('Share a window');
     this.checklist.append(this.joined.node,this.sharing.node);
     this.share=button('session-guide-share','Share a window');
     this.shareHelp=make('p','session-guide-hint','Choose one window in your browser’s picker. Sharing starts only after you allow it.');
-    this.own.append(ownHeading,this.claimLabel,this.claimHelp,this.share,this.shareHelp,this.checklist);
+    this.own.append(ownHeading,this.claimLabel,this.claimHelp,this.participation,this.share,this.shareHelp,this.checklist);
     this.host=make('div','session-guide-host');
     const rosterHeading=make('div','session-guide-section-heading');
     rosterHeading.append(make('h3','','Who’s ready'));this.rosterCount=make('span','');rosterHeading.append(this.rosterCount);
@@ -84,6 +96,8 @@ export class SessionGuide {
     this.claim.onkeydown=event=>{
       if(this.pending.has('claim')&&['ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Home','End',' ','Enter'].includes(event.key))event.preventDefault();
     };
+    this.presenter.onclick=()=>this.chooseParticipation('presenter');
+    this.viewer.onclick=()=>this.chooseParticipation('viewer');
     this.onResize=()=>this.fitPanel();window.addEventListener('resize',this.onResize);
     this.update();
   }
@@ -92,7 +106,7 @@ export class SessionGuide {
     const node=make('div','session-guide-task is-derived');
     const mark=make('span','session-guide-check','○');mark.setAttribute('aria-hidden','true');
     const copy=make('span','session-guide-task-label',label);const state=make('span','session-guide-task-state');
-    node.append(mark,copy,state);return {node,mark,state};
+    node.append(mark,copy,state);return {node,mark,copy,state};
   }
 
   setDerived(item,complete) {
@@ -111,8 +125,12 @@ export class SessionGuide {
 
   fitPanel() {
     if(this.destroyed||this.node.hidden||this.body.hidden)return;
-    const available=Math.max(75,window.innerHeight-this.node.getBoundingClientRect().bottom-12);
-    this.body.style.maxHeight=`${Math.min(window.innerHeight*.58,available)}px`;
+    const viewport=window.visualViewport;
+    const normalZoom=!viewport||!Number.isFinite(viewport.scale)||Math.abs(viewport.scale-1)<.05;
+    const height=normalZoom&&viewport?.height>0?viewport.height:window.innerHeight;
+    const top=normalZoom&&Number.isFinite(viewport?.offsetTop)?Math.max(0,viewport.offsetTop):0;
+    const available=Math.max(0,top+height-this.node.getBoundingClientRect().bottom-12);
+    this.body.style.maxHeight=`${Math.min(height*.58,available)}px`;
   }
 
   send(action,fields,pendingKey=null,value=null) {
@@ -130,8 +148,17 @@ export class SessionGuide {
   pendingValue(key,current) {
     const pending=this.pending.get(key);if(!pending)return null;
     if(pending.value===current){this.pending.delete(key);return null}
-    if(Date.now()>=pending.until){this.pending.delete(key);this.onStatus('The checklist update is still unconfirmed. Please try again.');return null}
+    if(Date.now()>=pending.until){this.pending.delete(key);this.onStatus('The session guide update is still unconfirmed. Please try again.');return null}
     return pending;
+  }
+
+  chooseParticipation(mode) {
+    const context=this.getContext();
+    if(!context.participationSupported||!context.connected||this.pending.has('participation'))return;
+    if(mode==='presenter'&&context.captureSupport?.available===false)return;
+    const own=(context.participants||[]).find(person=>person.id===context.participantId);
+    if(!own||participation(own,true)===mode)return;
+    this.send('participation',{mode},'participation',mode);
   }
 
   featureNext() {
@@ -162,8 +189,9 @@ export class SessionGuide {
     const people=context.participants||[],screens=context.screens||[],tasks=workshop.tasks||[],slots=workshop.attendees||[];
     const own=people.find(person=>person.id===context.participantId),completed=checkedTasks(own);
     const ownScreen=screens.some(screen=>screen.participantId===context.participantId),connected=Boolean(context.connected);
-    const ownCompleted=Number(Boolean(own))+Number(ownScreen)+tasks.filter(task=>completed.has(task.id)).length;
-    const total=tasks.length+2;
+    const ownMode=participation(own,context.participationSupported),viewer=ownMode==='viewer';
+    const ownCompleted=Number(Boolean(own))+Number(!viewer&&ownScreen)+tasks.filter(task=>completed.has(task.id)).length;
+    const total=tasks.length+(viewer?1:2);
     const featured=people.find(person=>person.id===workshop.featuredParticipantId);
     const featuredScreen=featured&&screens.some(screen=>screen.participantId===featured.id);
     const title=context.templateName||TEMPLATE_NAMES[workshop.template]||'Guided session';
@@ -192,9 +220,21 @@ export class SessionGuide {
     this.resume.disabled=!connected||!featuredScreen;
     this.host.hidden=!context.isAdmin;this.columns.classList.toggle('has-roster',Boolean(context.isAdmin));
     this.setDerived(this.joined,Boolean(own));this.setDerived(this.sharing,ownScreen);
+    this.sharing.copy.textContent=viewer?'Share a window (optional)':'Share a window';
+    this.sharing.node.classList.toggle('is-optional',viewer);
+    if(viewer)this.sharing.state.textContent=ownScreen?'Live · optional':'Not needed';
+    const captureAvailable=context.captureSupport?.available!==false;
+    this.updateParticipation(context,own,ownScreen,connected);
     this.share.textContent=ownScreen?'Your window is sharing':'Share a window';
-    this.share.disabled=!connected||ownScreen||Boolean(context.sharePending);
+    this.share.disabled=!connected||ownScreen||Boolean(context.sharePending)||!captureAvailable;
+    this.share.hidden=!captureAvailable&&!ownScreen&&!context.sharePending;
     if(context.sharePending)this.share.textContent='Choose in your browser…';
+    this.shareHelp.textContent=ownScreen?'Your window is still sharing. Use Stop sharing at the top to end it.':!captureAvailable
+      ?`${context.captureSupport?.detail||'This browser cannot share a window.'} ${context.participationSupported?'Choose Watch & contribute to take part without sharing.':'You can still follow the session, chat, and add to the canvas.'}`
+      :viewer
+        ?'Sharing is optional. You can follow, chat, draw, and complete your tasks.'
+        :'Choose one window in your browser’s picker. Sharing starts only after you allow it.';
+    this.shareHelp.hidden=!captureAvailable&&Boolean(context.participationSupported)&&!ownScreen;
     this.claimLabel.hidden=!slots.length;this.claimHelp.hidden=!slots.length;
     this.updateClaim(slots,people,own,connected);
     this.updateTasks(tasks,completed,connected);
@@ -203,6 +243,31 @@ export class SessionGuide {
     this.connection.hidden=connected;
     this.connection.textContent='Your progress is readable while reconnecting. Sharing, checkboxes, and featured-window changes resume when connected.';
     this.fitPanel();
+  }
+
+  updateParticipation(context,own,ownScreen,connected) {
+    const supported=context.participationSupported===true;
+    this.participation.hidden=!supported;
+    if(!supported){this.pending.delete('participation');return}
+    const mode=participation(own,true),pending=this.pendingValue('participation',mode),selected=pending?.value||mode;
+    const unavailable=context.captureSupport?.available===false;
+    this.participation.classList.toggle('capture-unavailable',unavailable);
+    for(const [control,value] of [[this.presenter,'presenter'],[this.viewer,'viewer']]){
+      control.setAttribute('aria-pressed',String(selected===value));
+      control.setAttribute('aria-busy',String(Boolean(pending)&&selected===value));
+      control.disabled=!connected||!own||(value==='presenter'&&unavailable);
+      // Pending choices remain focused and visible; repeated clicks are ignored.
+      control.setAttribute('aria-disabled',String(control.disabled||Boolean(pending)));
+    }
+    this.presenter.title=unavailable?'Window sharing is unavailable in this browser':'Include a live window in your checklist; choosing this does not start capture';
+    this.viewer.textContent=unavailable&&mode!=='viewer'?'Join without sharing':'Watch & contribute';
+    let help;
+    if(pending)help='Saving how you’ll take part…';
+    else if(mode==='viewer'&&ownScreen)help='Your checklist does not require a shared window. Your existing window is still sharing; use Stop sharing at the top to end it.';
+    else if(unavailable)help=`${context.captureSupport?.detail||'This browser cannot share a window.'} ${mode==='viewer'?'You can follow, chat, draw, and complete your tasks without sharing.':'Choose Join without sharing to remove the window requirement from your checklist.'}`;
+    else if(mode==='viewer')help='Your checklist does not require a shared window. You can follow, chat, draw, and complete your tasks.';
+    else help='Share a window during your turn, or watch and contribute without sharing. You choose when capture starts.';
+    setText(this.participationHelp,help);
   }
 
   updateClaim(slots,people,own,connected) {
@@ -264,7 +329,7 @@ export class SessionGuide {
     for(const person of people)if(!plannedIds.has(person.checklist?.slotId))entries.push({key:`person:${person.id}`,person});
     const keys=new Set(entries.map(entry=>entry.key));
     for(const [key,item] of this.roster)if(!keys.has(key)){item.node.remove();this.roster.delete(key)}
-    const ready=people.filter(person=>sharing.has(person.id)&&completionCounts.get(person.id)===tasks.length).length;
+    const ready=people.filter(person=>(participation(person,context.participationSupported)==='viewer'||sharing.has(person.id))&&completionCounts.get(person.id)===tasks.length).length;
     const joinedPlanned=entries.filter(entry=>entry.slot&&entry.person).length;
     setText(this.rosterCount,slots.length?`${joinedPlanned}/${slots.length} planned here · ${ready} ready`:`${people.length} here · ${ready} ready`);
     for(let index=0;index<entries.length;index++){
@@ -277,8 +342,9 @@ export class SessionGuide {
         node.append(dot,copy,feature);item={node,name,detail,feature};this.roster.set(entry.key,item);
       }
       const person=entry.person,hasScreen=Boolean(person&&sharing.has(person.id));
+      const viewer=participation(person,context.participationSupported)==='viewer';
       const complete=person?completionCounts.get(person.id):0;
-      const signature=JSON.stringify([entry.slot?.name,person?.id,person?.name,person?.id===context.participantId,hasScreen,complete,tasks.length,person?.id===featuredId,Boolean(context.connected)]);
+      const signature=JSON.stringify([entry.slot?.name,person?.id,person?.name,person?.id===context.participantId,hasScreen,viewer,complete,tasks.length,person?.id===featuredId,Boolean(context.connected)]);
       // Roster/video updates also refresh this panel. Keep unchanged rows intact
       // so larger sessions do not rebuild every name and button on each tick.
       if(item.signature!==signature){
@@ -287,7 +353,8 @@ export class SessionGuide {
         if(person?.id===context.participantId)item.name.append(make('span','session-guide-you',' (you)'));
         const extra=!entry.slot?'Additional participant · ':'';
         const actualName=entry.slot&&person&&person.name!==entry.slot.name?`Joined as ${person.name} · `:'';
-        item.detail.textContent=person?`${extra}${actualName}${hasScreen?'Window shared':'Window not shared'} · ${complete}/${tasks.length} tasks`:'Not here yet';
+        const sharingDetail=viewer?`Watch & contribute · ${hasScreen?'Window shared':'No window needed'}`:hasScreen?'Window shared':'Window not shared';
+        item.detail.textContent=person?`${extra}${actualName}${sharingDetail} · ${complete}/${tasks.length} tasks`:'Not here yet';
         item.node.classList.toggle('is-waiting',!person);item.node.classList.toggle('is-sharing',hasScreen);
         item.node.classList.toggle('is-featured',Boolean(person&&person.id===featuredId));
         item.feature.hidden=!hasScreen;item.feature.disabled=!context.connected||person?.id===featuredId;

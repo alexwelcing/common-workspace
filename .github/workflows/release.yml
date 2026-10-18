@@ -62,10 +62,10 @@ jobs:
             fi
           else
             gh release create "$COMMON_RELEASE_TAG" --verify-tag --draft \
-              --title "Common ${COMMON_RELEASE_TAG#v} — guided sessions and Bun embedding" \
+              --title "Common ${COMMON_RELEASE_TAG#v}" \
               --notes-file CHANGELOG.md
           fi
           gh release upload "$COMMON_RELEASE_TAG" "$archive" "$archive.sha256" --clobber
           gh release edit "$COMMON_RELEASE_TAG" --draft=false --latest \
-            --title "Common ${COMMON_RELEASE_TAG#v} — guided sessions and Bun embedding" \
+            --title "Common ${COMMON_RELEASE_TAG#v}" \
             --notes-file CHANGELOG.md
