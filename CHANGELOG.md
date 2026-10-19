@@ -1,5 +1,13 @@
 # Common releases
 
+## 1.8.1 — 2026-10-19
+
+Fix classic recording controls on a fresh page, including portable module **0.8.1**.
+
+- Open recording controls on the first request while their tools finish loading, rather than requiring another click after loading finishes.
+- Keep a pending opening cancellable and ignore abandoned requests after dismissal or teardown. Report loading failures with an explicit reload action, since the browser can retain a failed module download.
+- Opening the controls still does not start recording, approve window capture, or grant agent access.
+
 ## 1.8.0 — 2026-10-19
 
 A tool and interaction cleanup across classic, Space & Time, and portable module **0.8.0**. Classic remains the default.

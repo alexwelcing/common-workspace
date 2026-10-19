@@ -53,6 +53,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const uid=()=>crypto.randomUUID();
 let shared=null, peerCanvas=null, receivingCanvas=false, restoringSandboxCanvas=false;
 let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null, sharingControls=null;
+let agentToolsPromise=null,agentToolsFailed=false,recordingMenuRequest=null;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
 let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor=DEFAULT_TOOL_COLOR, chatPanel=null;
 let toolPopover=null,cleanupToolDock=null,cleanupToolPalette=null,pendingImageImport=null,imageImportInFlight=false,imageImportJob=null,diagramDialog=null,pickerContext=null;
@@ -78,7 +79,7 @@ function embedState(){
 let lastEmbedState='';
 function publishEmbedState(){const state=embedState(),key=JSON.stringify(state);if(key===lastEmbedState)return;lastEmbedState=key;for(const listener of Array.from(embedListeners))try{listener(state)}catch{}}
 function fitInitialCanvas(){if(!disposed&&initialFitNeeded&&board?.el.clientWidth>0&&board.el.clientHeight>0){board.fit();initialFitNeeded=false}}
-function setEmbedVisible(visible){if(disposed)return embedState();embedVisible=Boolean(visible);if(!embedVisible)toolPopover?.close({restoreFocus:false});performanceIndex.setVisible(embedVisible&&!document.hidden);if(!embedVisible&&media?.getCaptureState().requestPending)media.stop();if(embedVisible&&initialFitNeeded)nextFrame(fitInitialCanvas);syncScreenSubscriptions();for(const listener of Array.from(visibilityListeners))try{listener(new Event('visibilitychange'))}catch{}publishEmbedState();return embedState()}
+function setEmbedVisible(visible){if(disposed)return embedState();embedVisible=Boolean(visible);if(!embedVisible){toolPopover?.close({restoreFocus:false});cancelRecordingMenuRequest()}performanceIndex.setVisible(embedVisible&&!document.hidden);if(!embedVisible&&media?.getCaptureState().requestPending)media.stop();if(embedVisible&&initialFitNeeded)nextFrame(fitInitialCanvas);syncScreenSubscriptions();for(const listener of Array.from(visibilityListeners))try{listener(new Event('visibilitychange'))}catch{}publishEmbedState();return embedState()}
 function destroyCommon(){
   if(destroyPromise)return destroyPromise;
   let finish;destroyPromise=new Promise(resolve=>{finish=resolve});
@@ -146,8 +147,8 @@ const savedRooms=()=>{
 const ownParticipantId=()=>sandbox?'local':auth?.participantId;
 const saveRoom=r=>{if(disposed)return;writeStored('localStorage',appStorageKey('common.rooms'),JSON.stringify([{id:r.id,name:r.name},...savedRooms().filter(x=>x.id!==r.id)].slice(0,8)));renderRecent()};
 function toast(message,action,key){if(disposed)return;if(key)document.querySelectorAll('[data-toast-key]').forEach(el=>{if(el.dataset.toastKey===key)el.remove()});const el=document.createElement('div');el.className='toast';if(key)el.dataset.toastKey=key;el.innerHTML=icon('Check',16);el.append(document.createTextNode(message));if(action){const button=document.createElement('button');button.type='button';button.className='toast-action';button.textContent=action.label;button.onclick=()=>{el.remove();action.run()};el.append(button);el.dataset.historyAction='true'}$('#toasts').append(el);later(()=>el.remove(),4500)}
-function modal(html,onSubmit){if(disposed)return;toolPopover?.close();modalCleanup?.();modalCleanup=null;appearanceDialog=null;diagramDialog=null;clearPendingAppearance();modalRevision++;const root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);modalController.activate()}
-function closeModal(){modalCleanup?.();modalCleanup=null;appearanceDialog=null;diagramDialog=null;clearPendingAppearance();modalRevision++;modalController.close({restoreFocus:!disposed});if(!disposed)chatPanel?.refreshVisibility()}
+function modal(html,onSubmit){if(disposed)return;cancelRecordingMenuRequest();toolPopover?.close();modalCleanup?.();modalCleanup=null;appearanceDialog=null;diagramDialog=null;clearPendingAppearance();modalRevision++;const root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);modalController.activate()}
+function closeModal(){cancelRecordingMenuRequest();modalCleanup?.();modalCleanup=null;appearanceDialog=null;diagramDialog=null;clearPendingAppearance();modalRevision++;modalController.close({restoreFocus:!disposed});if(!disposed)chatPanel?.refreshVisibility()}
 function dialogOperation(form){const revision=modalRevision,generation=sessionGeneration;return()=>!disposed&&form.isConnected&&modalRevision===revision&&sessionGeneration===generation}
 function formError(form,msg){if(disposed)return;let e=form.querySelector('.form-error');if(!e){e=document.createElement('p');e.className='form-error';e.setAttribute('role','alert');form.append(e)}e.textContent=msg}
 function clearPendingAppearance(){if(pendingAppearance)cancelLater(pendingAppearance.timer);pendingAppearance=null}
@@ -346,7 +347,7 @@ function syncScreenSubscriptions(){
   board.setScreenSubscriptions(ids,ownParticipantId());
   media.setSubscriptions(ids);sessionGuide?.update();refreshPerformanceContext({includeMedia:true});
 }
-document.addEventListener('visibilitychange',()=>{if(document.hidden)toolPopover?.close({restoreFocus:false});performanceIndex.setVisible(embedVisible&&!document.hidden);syncScreenSubscriptions();publishEmbedState()},{signal:mainEvents.signal});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){toolPopover?.close({restoreFocus:false});cancelRecordingMenuRequest()}performanceIndex.setVisible(embedVisible&&!document.hidden);syncScreenSubscriptions();publishEmbedState()},{signal:mainEvents.signal});
 window.addEventListener('resize',scheduleScreenSubscriptions,{signal:mainEvents.signal});
 function stopDeletedLocalScreen(){
   if(localStream&&!shared?.all().some(e=>e.type==='screen'&&e.participantId===ownParticipantId())){
@@ -595,7 +596,7 @@ async function joinFromPath(id) {
 }
 async function enterRoom(result,isNew=false){
   if(disposed||!useClassicRoom(result.room))return;
-  sessionGeneration++;clearPendingImages();toolPopover?.close({restoreFocus:false});
+  sessionGeneration++;cancelRecordingMenuRequest();clearPendingImages();toolPopover?.close({restoreFocus:false});
   agentPermissions?.revoke('session-changed');webMCP?.refresh();
   capture?.stop().catch(()=>{});walkthrough?.stop();
   intentionalClose=true;cancelLater(reconnectTimer);socket?.close();media?.destroy();
@@ -915,7 +916,40 @@ function downloadPerformanceReport(snapshot){
   const link=document.createElement('a');link.href=url;link.download='common-performance-report.json';link.click();
   objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);
 }
-function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="space-time-menu">${icon('Workflow',17)} Open Space &amp; time</button><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="performance-menu">${icon('Sprout',17)} Performance</button><button class="button" id="record-canvas">${icon('Circle',17)} Record canvas</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#space-time-menu').onclick=()=>location.href=spacePath();$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#performance-menu').onclick=showPerformance;modalCleanup=bindPerformanceIndicator({monitor:performanceIndex,item:$('#performance-menu')});$('#record-canvas').onclick=()=>{closeModal();if(agentTools)agentTools.openCapture();else toast('Recording controls are loading. Try again in a moment.')};$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
+function cancelRecordingMenuRequest(){
+  const request=recordingMenuRequest;if(!request)return;
+  recordingMenuRequest=null;
+  if(request.button.isConnected){request.button.disabled=false;request.button.innerHTML=request.label;request.button.removeAttribute('aria-busy')}
+}
+function recordingMenuError(button){
+  $('#recording-open-error')?.remove();
+  button.textContent='Reload Common';button.dataset.recordingRecovery='reload';
+  const error=document.createElement('p');error.id='recording-open-error';error.className='form-error';error.setAttribute('role','alert');
+  error.textContent='Recording controls could not load. Check your connection, then reload Common to load them.';
+  button.after(error);
+}
+async function openRecordingFromMenu(){
+  const button=$('#record-canvas');if(!button||button.disabled||disposed)return;
+  if(agentToolsFailed){if(button.dataset.recordingRecovery==='reload')location.reload();else recordingMenuError(button);return}
+  cancelRecordingMenuRequest();
+  const request={button,label:button.innerHTML,revision:modalRevision,generation:sessionGeneration};
+  recordingMenuRequest=request;
+  const current=()=>!disposed&&recordingMenuRequest===request&&button.isConnected&&modalController.isOpen&&modalRevision===request.revision&&sessionGeneration===request.generation&&embedVisible&&!document.hidden;
+  $('#recording-open-error')?.remove();button.disabled=true;button.textContent='Opening recording…';button.setAttribute('aria-busy','true');
+  try{
+    const controls=await loadAgentTools();
+    if(!current())return;
+    if(!controls)throw new Error('Recording controls are unavailable.');
+    recordingMenuRequest=null;closeModal();controls.openCapture();
+  }catch{
+    if(!current())return;
+    cancelRecordingMenuRequest();
+    recordingMenuError(button);
+  }finally{
+    if(recordingMenuRequest===request)cancelRecordingMenuRequest();
+  }
+}
+function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="space-time-menu">${icon('Workflow',17)} Open Space &amp; time</button><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="performance-menu">${icon('Sprout',17)} Performance</button><button class="button" id="record-canvas">${icon('Circle',17)} Record canvas</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#space-time-menu').onclick=()=>location.href=spacePath();$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#performance-menu').onclick=showPerformance;modalCleanup=bindPerformanceIndicator({monitor:performanceIndex,item:$('#performance-menu')});$('#record-canvas').onclick=openRecordingFromMenu;if(agentToolsFailed)recordingMenuError($('#record-canvas'));$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented||e.isComposing||disposed)return;
   if(e.key==='Escape'){
@@ -939,10 +973,18 @@ document.addEventListener('keydown',e=>{
 window.addEventListener('beforeunload',destroyCommon,{signal:mainEvents.signal});window.addEventListener('popstate',()=>{if(!disposed)location.reload()},{signal:mainEvents.signal});
 // Public, opt-in browser agent interface. It never exposes room credentials.
 // Loaded in its own chunk so it never delays the first paint of the canvas.
-async function loadAgentTools(){
+function loadAgentTools(){
+  if(disposed)return Promise.resolve(null);
+  if(agentTools)return Promise.resolve(agentTools);
+  if(agentToolsPromise)return agentToolsPromise;
+  agentToolsPromise=initializeAgentTools().catch(error=>{agentToolsFailed=true;throw error});
+  return agentToolsPromise;
+}
+async function initializeAgentTools(){
 if(disposed)return;
 const [{createAgentAPI,createAgentPermissions},{CanvasCapture},{Walkthrough},{installAgentTools},{installWebMCP}]=await Promise.all([import('./agent-api.js'),import('./capture.js'),import('./walkthrough.js'),import('./agent-tools.js'),import('./webmcp.js')]);
 if(disposed)return;
+try{
 capture=new CanvasCapture({getBoard:()=>board,getSession:()=>shared,getWindowStream:()=>localStream,onChange:()=>{if(!disposed)agentTools?.refresh();publishEmbedState()},onStatus:toast});
 capture.exportCanvas=(data,{mimeType,filename,download=false}={})=>{
   if(disposed)throw new Error('Common was closed.');
@@ -970,8 +1012,6 @@ const agentAPI=createAgentAPI({
   getContext:getAgentContext,permissions:agentPermissions,
   recording:capture,walkthrough,onStatus:toast
 });
-Object.defineProperty(window,'commonAgent',{value:agentAPI,writable:false,configurable:false});
-document.documentElement.dataset.commonAgent='1';
 agentTools=installAgentTools({
   api:agentAPI,capture,walkthrough,permissions:agentPermissions,getEnabled:()=>agentControlEnabled,
   onEnabledChange:enabled=>{agentControlEnabled=!!enabled;window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:agentControlEnabled}}))},
@@ -979,7 +1019,17 @@ agentTools=installAgentTools({
 });
 sharingControls?.updateContext();
 webMCP=installWebMCP({api:agentAPI,permissions:agentPermissions,onStatus:toast});
+Object.defineProperty(window,'commonAgent',{value:agentAPI,writable:false,configurable:false});
+document.documentElement.dataset.commonAgent='1';
 window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:false}}));
+return agentTools;
+}catch(error){
+  // Publish the permanent API only after setup succeeds. A failed attempt can
+  // release its owned resources before Common is reloaded.
+  webMCP?.destroy();agentTools?.destroy();agentPermissions?.destroy();walkthrough?.stop();capture?.destroy();
+  webMCP=null;agentTools=null;agentPermissions=null;walkthrough=null;capture=null;
+  throw error;
 }
-loadAgentTools().catch(()=>toast('Agent tools could not be loaded. Reload to try again.'));
+}
+loadAgentTools().catch(()=>toast('Recording and agent controls could not load. Reload Common to try again.'));
 const path=appRoute().match(/^\/room\/([^/]+)\/?$/);if(path){let id;try{id=decodeURIComponent(path[1])}catch{}if(id&&/^[A-Za-z0-9_-]{1,100}$/.test(id))joinFromPath(id);else{history.replaceState(null,'',appPath('/'));toast('This session link is not valid. Ask the host for a new invitation.')}}
