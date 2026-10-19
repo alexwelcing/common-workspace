@@ -3,6 +3,8 @@ import { renderMermaid, plantUmlUrl } from './diagrams.js';
 import { getRuntimeConfig } from './runtime-config.js';
 import { initGeometry, snap, simplifyPoints } from './geometry.js';
 import { canvasBackground } from './canvas-background.js';
+import { createTextLayout } from './text-layout.js';
+import { SVG_TEXT_FONT_CSS } from './text-font.js';
 import './board.css';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -70,6 +72,31 @@ const useWritingSurface = () => window.matchMedia('(max-width: 760px), (pointer:
 function finite(value, fallback = 0) { return Number.isFinite(Number(value)) ? Number(value) : fallback; }
 function pointList(points) { return (points || []).map(p => Array.isArray(p) ? { x: p[0], y: p[1] } : p); }
 
+function editorText(root) {
+  // Native contenteditable uses DIVs for Enter and a final BR as a caret
+  // placeholder. innerText counts an empty DIV twice with pre-wrap, so read
+  // those line boundaries directly without changing the live caret/IME DOM.
+  function read(parent) {
+    let text = '', previousBlock = false, started = false;
+    for (const node of parent.childNodes) {
+      const block = node.nodeType === 1 && ['DIV', 'P'].includes(node.nodeName);
+      if (block) {
+        if (previousBlock || (started && !text.endsWith('\n'))) text += '\n';
+        text += read(node); previousBlock = true;
+      } else {
+        if (previousBlock) text += '\n';
+        previousBlock = false;
+        if (node.nodeType === 3) text += node.data;
+        else if (node.nodeName === 'BR') { if (node.nextSibling) text += '\n'; }
+        else if (node.nodeType === 1) text += read(node);
+      }
+      started = true;
+    }
+    return text;
+  }
+  return read(root).slice(0, 20000);
+}
+
 /** A collaborative, zoomable DOM/SVG whiteboard. Only local edits call onChange. */
 export class Board {
   constructor({ el, onChange = () => {}, onDelete = () => {}, onCursor = () => {}, onSelect = () => {}, onStatus = () => {}, onViewChange = () => {}, onEditDiagram = null, onToolChange = () => {}, onLayerAction = null, onLockChange = null, onWatchScreen = () => {}, onHistoryStart = () => {}, onHistoryEnd = () => {}, allowExternalPlantUml = false, canEdit = () => true, performanceIndex = null }) {
@@ -88,7 +115,12 @@ export class Board {
     this.touchPointers = new Map(); this.touchNavigation = false;
     this.focusedId = null; this.previousFocusView = null;
     this.abort = new AbortController(); this.lastCursor = 0; this.editingId = null;
+    this.textLayout = createTextLayout({ documentImpl: el.ownerDocument });
+    this.unsubscribeTextLayout = this.textLayout.subscribe(() => {
+      for (const entity of this.entities.values()) this.fitText(this.nodes.get(entity.id), entity);
+    });
     this.el.classList.add('common-board'); this.el.tabIndex = 0;
+    this.selectionTop = parseFloat(this.el.ownerDocument.defaultView?.getComputedStyle(this.el).getPropertyValue('--board-controls-top')) || 8;
     this.el.setAttribute('aria-label', 'Shared canvas. Use the toolbar to add notes, drawings, and diagrams.');
     this.stage = element('div', 'board-stage');
     this.cursorLayer = element('div', 'board-cursor-layer');
@@ -155,6 +187,7 @@ export class Board {
     document.addEventListener('keyup', e => { if (e.code === 'Space') { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); } }, { signal });
     window.addEventListener('blur', () => { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); this.cancelPointers(); }, { signal });
     this.resizeObserver = new ResizeObserver(() => {
+      this.selectionTop = parseFloat(this.el.ownerDocument.defaultView?.getComputedStyle(this.el).getPropertyValue('--board-controls-top')) || 8;
       if (this.editingId) { this.revealWritingCaret?.(); return; }
       if (this.focusedId) this.fitFocusedEntity(); else this.updateSelectionTools();
     }); this.resizeObserver.observe(this.el);
@@ -533,7 +566,8 @@ export class Board {
     const width = this.selectionTools.offsetWidth || Math.min(310, this.el.clientWidth - 16);
     const height = this.selectionTools.offsetHeight || 44;
     const x = Math.max(8, Math.min(this.el.clientWidth - width - 8, point.x + entity.width * this.zoom / 2 - width / 2));
-    const y = Math.max(8, Math.min(this.el.clientHeight - height - 8, point.y - height - 8));
+    const top = Math.min(this.selectionTop, Math.max(8, this.el.clientHeight - height - 8));
+    const y = Math.max(top, Math.min(this.el.clientHeight - height - 8, point.y - height - 8));
     this.selectionTools.style.transform = `translate(${x}px, ${y}px)`;
   }
 
@@ -553,7 +587,8 @@ export class Board {
     node.classList.toggle('is-readonly', !this.mayEdit(entity));
     node.classList.toggle('is-position-locked', !!entity.locked);
     node.setAttribute('aria-label', entity.title || `${entity.type} on canvas`);
-    if (node._signature === signature(entity) || this.editingId === entity.id) return;
+    if (this.editingId === entity.id) return;
+    if (node._signature === signature(entity)) { this.fitText(node, entity); return; }
     node._signature = signature(entity);
     const previousVideo = node.querySelector('video'); if (previousVideo) previousVideo.srcObject = null;
     node.replaceChildren();
@@ -562,6 +597,7 @@ export class Board {
     else if (entity.type === 'image') this.renderImage(node, entity);
     else if (entity.type === 'diagram') this.renderDiagram(node, entity);
     else this.renderShape(node, entity);
+    this.fitText(node, entity);
     const resize = element('button', 'board-resize-handle'); resize.type = 'button'; resize.dataset.resize = 'true';
     resize.setAttribute('aria-label', 'Resize selected object. Use arrow keys; hold Shift for 10 pixels.'); resize.title = 'Drag to resize · Arrows resize · Shift for 10 px';
     node.append(resize);
@@ -579,13 +615,42 @@ export class Board {
   renderText(node, entity) {
     if (entity.type === 'sticky') node.style.backgroundColor = entity.fill || '#fff0b5';
     const content = element('div', 'board-text-content', entity.text || '');
-    content.style.fontSize = `${Math.min(100, Math.max(10, finite(entity.fontSize, 18)))}px`;
     content.style.color = entity.color || COLORS[entity.type] || COLORS.text;
     content.setAttribute('aria-label', entity.type === 'sticky' ? 'Sticky note text; double click to edit' : 'Text; double click to edit');
     content.spellcheck = true; content.dataset.editable = 'true';
     if (entity.type === 'text' && entity.title) node.append(element('div', 'board-text-eyebrow', entity.title));
     node.append(content);
     const grip = element('div', 'board-text-grip'); grip.dataset.dragHandle = 'true'; grip.append(icon('grip', 15)); node.append(grip);
+  }
+  fitText(node, entity) {
+    if (!node || this.editingId === entity.id || !['text', 'sticky', 'rectangle', 'ellipse'].includes(entity.type)) return;
+    const content = node.querySelector('[data-editable]'); if (!content) return;
+    const previous = content._layoutSource;
+    // Position, stacking, selection, and room updates do not measure text again.
+    if (previous && previous.text === entity.text && previous.type === entity.type
+      && previous.width === entity.width && previous.height === entity.height
+      && previous.revision === this.textLayout.revision) return;
+    const layout = this.textLayout.layout(entity);
+    this.setTextMetrics(content, layout);
+    content.textContent = layout.lines.join('\n');
+    content._layoutSource = { text: entity.text, type: entity.type, width: entity.width, height: entity.height, revision: this.textLayout.revision };
+  }
+  setTextMetrics(content, layout) {
+    const style = content.style;
+    for (const [key, value] of Object.entries({
+      'x': layout.domX, 'y': layout.domY,
+      'width': layout.domWidth, 'height': layout.textHeight / layout.renderScale,
+      'font-size': layout.fontSize, 'line-height': layout.lineHeight,
+      'render-size': layout.renderFontSize, 'render-line-height': layout.renderLineHeight,
+    })) style.setProperty(`--text-${key}`, `${value}px`);
+    style.setProperty('--text-render-scale', layout.renderScale);
+    style.setProperty('--text-font-family', layout.fontFamily);
+    style.setProperty('--text-font-weight', layout.fontWeight);
+    style.setProperty('--text-align', layout.align);
+  }
+  getEditingText() {
+    if (!this.editingContent) return null;
+    return this.editingDirty ? editorText(this.editingContent) : this.entities.get(this.editingId)?.text || '';
   }
   renderScreen(node, entity) {
     const header = this.header(entity, entity.title || 'Shared screen', 'screen'); node.append(header);
@@ -726,7 +791,7 @@ export class Board {
     node.append(svg);
     if (entity.type === 'rectangle' || entity.type === 'ellipse') {
       const label = element('div', 'board-shape-label board-text-content', entity.text || '');
-      label.dataset.editable = 'true'; label.style.fontSize = `${entity.fontSize || 14}px`;
+      label.dataset.editable = 'true';
       label.setAttribute('aria-label', 'Shape label; double click to edit');
       node.append(label);
     }
@@ -1030,9 +1095,12 @@ export class Board {
     if (!entity || !content || !this.mayEdit(entity) || this.editingId === id) return;
     this.finishTextEdit?.();
     this.beginHistoryGroup('edit text');
-    this.editingId = id; this.editingContent = content; this.editingComposing = false;
+    this.editingId = id; this.editingContent = content; this.editingComposing = false; this.editingDirty = false;
     this.select(id); this.updateSelectionTools();
-    const originalText = content.innerText.slice(0, 20000);
+    // Fitted display lines contain soft wraps. Only the original, unwrapped text
+    // belongs in the editor and shared document, including on a no-op edit.
+    const originalText = (entity.text || '').slice(0, 20000);
+    content.textContent = originalText;
     const editEvents = new AbortController();
     const mobile = useWritingSurface();
     let completionFrame, compositionFrame, compositionSettling = false, completionRequested = false;
@@ -1054,11 +1122,11 @@ export class Board {
       if (this.finishTextEdit !== finish) return;
       if (completionFrame !== undefined) cancelAnimationFrame(completionFrame);
       if (compositionFrame !== undefined) cancelAnimationFrame(compositionFrame);
-      const text = content.innerText.slice(0, 20000);
+      const text = this.editingDirty ? editorText(content) : originalText;
       editEvents.abort(); content.removeEventListener('blur', onBlur);
       content.contentEditable = 'false'; node.classList.remove('is-editing');
       restore();
-      this.editingId = null; this.editingContent = null; this.editingComposing = false; this.finishTextEdit = null;
+      this.editingId = null; this.editingContent = null; this.editingComposing = false; this.editingDirty = false; this.finishTextEdit = null;
       const current = this.entities.get(id);
       if (save && current && text !== originalText) this.commit({ ...current, text }, { text });
       else if (current) {
@@ -1091,6 +1159,11 @@ export class Board {
       event.preventDefault();
       const text = event.clipboardData.getData('text/plain').slice(0, 20000);
       document.execCommand('insertText', false, text);
+    }, { signal: editEvents.signal });
+    content.addEventListener('input', () => {
+      this.editingDirty = true;
+      // Keep the caret/IME DOM intact while fitting a desktop edit in place.
+      if (!mobile) this.setTextMetrics(content, this.textLayout.layout({ ...this.entities.get(id), text: editorText(content) }));
     }, { signal: editEvents.signal });
     content.contentEditable = 'true'; node.classList.add('is-editing');
     content.focus({ preventScroll: mobile });
@@ -1187,6 +1260,7 @@ export class Board {
     const width = entities.length ? Math.max(...entities.map(e => e.x + e.width)) - minX + 24 : 1200;
     const height = entities.length ? Math.max(...entities.map(e => e.y + e.height)) - minY + 24 : 800;
     const svg = svgElement('svg', { xmlns: SVG_NS, width, height, viewBox: `${minX} ${minY} ${width} ${height}` });
+    const fonts = svgElement('style'); fonts.textContent = SVG_TEXT_FONT_CSS; svg.append(fonts);
     const background = canvasBackground(this.el);
     svg.append(svgElement('rect', { x: minX, y: minY, width, height, fill: background.color }));
     if (background.pattern !== 'plain') {
@@ -1199,11 +1273,9 @@ export class Board {
     for (const entity of entities) {
       const group = svgElement('g', { transform: `translate(${entity.x},${entity.y})` });
       if (['rectangle', 'ellipse', 'draw', 'arrow'].includes(entity.type)) {
-        const shape = this.nodes.get(entity.id)?.querySelector('svg'); if (shape) group.append(shape.cloneNode(true));
-        if (entity.text) {
-          const text = svgElement('text', { x: entity.width / 2, y: entity.height / 2, 'text-anchor': 'middle', 'dominant-baseline': 'middle', fill: '#435b43', 'font-family': 'sans-serif', 'font-size': entity.fontSize || 14 });
-          text.textContent = entity.text; group.append(text);
-        }
+        const shape = this.nodes.get(entity.id)?.querySelector('svg');
+        if (shape) { const clone = shape.cloneNode(true); clone.setAttribute('width', entity.width); clone.setAttribute('height', entity.height); group.append(clone); }
+        if (entity.text && ['rectangle', 'ellipse'].includes(entity.type)) this.exportText(group, entity, '#435b43');
       } else if (entity.type === 'image' && (entity.url || '').startsWith('data:image/')) {
         group.append(svgElement('image', { href: entity.url, width: entity.width, height: entity.height, preserveAspectRatio: 'xMidYMid meet' }));
       } else if (entity.type === 'diagram') {
@@ -1213,19 +1285,29 @@ export class Board {
         else { const text = svgElement('text', { x: 16, y: 32, fill: '#28322f', 'font-family': 'sans-serif', 'font-size': 15 }); text.textContent = entity.title || 'Diagram'; group.append(text); }
       } else {
         if (entity.type === 'sticky') group.append(svgElement('rect', { width: entity.width, height: entity.height, rx: 6, fill: entity.fill || '#fff0b5' }));
-        const fontSize = entity.fontSize || 18; const padding = entity.type === 'sticky' ? 22 : 4;
-        const text = svgElement('text', { x: padding, y: padding + fontSize, fill: entity.color || COLORS.text, 'font-family': 'sans-serif', 'font-size': fontSize });
-        const lines = (entity.text || '').split('\n'); lines.forEach((line, i) => { const tspan = svgElement('tspan', { x: padding, dy: i ? fontSize * 1.45 : 0 }); tspan.textContent = line; text.append(tspan); }); group.append(text);
+        this.exportText(group, entity, entity.color || COLORS[entity.type] || COLORS.text);
       }
       svg.append(group);
     }
     return new XMLSerializer().serializeToString(svg);
+  }
+  exportText(group, entity, color) {
+    const layout = this.textLayout.layout(entity);
+    const text = svgElement('text', { fill: color, 'font-family': layout.fontFamily, 'font-weight': layout.fontWeight,
+      'font-size': layout.renderFontSize, transform: `scale(${layout.renderScale})`, 'text-anchor': layout.align === 'center' ? 'middle' : 'start', 'xml:space': 'preserve',
+      style: 'font-optical-sizing:none;font-kerning:normal;letter-spacing:0;white-space:pre' });
+    layout.lines.forEach((line, index) => {
+      const span = svgElement('tspan', { x: layout.x / layout.renderScale, y: layout.baseline / layout.renderScale + index * layout.renderLineHeight });
+      span.textContent = line; text.append(span);
+    });
+    group.append(text);
   }
   destroy() {
     this.cancelPointers();
     this.closeDiagramEditor({ restoreFocus: false });
     this.finishTextEdit?.(false);
     this.endHistoryGroup(); this.abort.abort(); this.resizeObserver.disconnect();
+    this.unsubscribeTextLayout(); this.textLayout.destroy();
     this.el.classList.remove('board-is-focused', 'board-space-pan', 'board-is-dragging', 'board-read-only');
     for (const node of this.nodes.values()) { const video = node.querySelector('video'); if (video) video.srcObject = null; }
     this.stage.remove(); this.selectionTools.remove(); this.selectionHint.remove(); this.focusBar.remove(); this.layersControl.remove(); this.el.removeAttribute('aria-describedby'); this.entities.clear(); this.nodes.clear(); this.streams.clear(); this.cursors.clear(); this.layerRanks.clear();

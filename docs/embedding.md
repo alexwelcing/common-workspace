@@ -2,14 +2,14 @@
 
 Common can run inside an existing Bun application as a canvas panel or a floating workspace. The host owns the HTTP listener, routes, WebSocket server, and authentication. Common mounts its assets and room service beneath one path; it does not start a second server or open a hidden port.
 
-The portable module is included in the [v1.6.1 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.6.1). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
+The portable module is included in the [v1.7.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.7.0). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
 
 ## Obtain the package
 
-Download `common-workspace-0.6.1.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.6.1), or obtain both from your administrator. Install that file in your Bun application:
+Download `common-workspace-0.7.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.7.0), or obtain both from your administrator. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.6.1.tgz
+bun add /absolute/path/common-workspace-0.7.0.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.6.1.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This builds the package and writes `artifacts/common-workspace-0.7.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
 
 The runnable host example is included in the package. After installing, try it directly from your Bun project:
 
@@ -138,7 +138,9 @@ The returned controller provides:
 
 Closing the panel abandons a still-pending window choice; any late result is stopped. It **does not stop an already active share or recording**. The launcher continues to show their status, and reopening preserves the room. Incoming video subscriptions pause while hidden. Call `await canvas.destroy()` when your host view is removed or the person signs out; destruction stops captures, revokes agent access, and closes the embedded connections. Destroy and mount again to change the prefix or initially selected room.
 
-On phones, editing text or a note opens a focused writing view inside the Common frame, with readable text independent of canvas zoom. **Done** restores the board and its controls without changing object geometry or the personal camera. Active sharing/recording Stop controls remain available. The view follows available keyboard space; desktop editing stays inline. No additional SDK option is needed.
+On phones, editing text or a note opens a focused writing view inside the Common frame, with 18 px text independent of canvas zoom. **Done** restores the board and its controls without changing object geometry or the personal camera. Active sharing/recording Stop controls remain available. The view follows available keyboard space; desktop editing stays inline. No additional SDK option is needed.
+
+In both experiences, text in notes, text objects, rectangles, and ellipses fits the shared `width` and `height`. Resizing the box changes the visual text size; fitting leaves raw text and shared geometry untouched. Legacy `fontSize` remains accepted and stored for compatibility but is ignored for this visual fit. Integrations should choose the box dimensions rather than a font size.
 
 ## Host authentication and room access
 

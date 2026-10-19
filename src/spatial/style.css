@@ -517,6 +517,8 @@
 }
 
 .beta-board-host {
+  /* Leave the floating view controls clear when framing a selected object. */
+  --board-controls-top: 80px;
   position: absolute;
   inset: 0;
   min-height: 0;
@@ -531,6 +533,7 @@
   top: 78px;
   right: 18px;
 }
+
 
 .beta-work-tools {
   position: absolute;

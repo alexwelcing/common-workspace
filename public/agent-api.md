@@ -37,7 +37,7 @@ const response = await api.execute({
   entity: {
     id: 'intro-heading', type: 'text',
     x: 80, y: 80, width: 700, height: 90,
-    text: 'Product walkthrough', fontSize: 36
+    text: 'Product walkthrough'
   }
 });
 if (!response.ok) throw new Error(response.error.message);
@@ -108,7 +108,9 @@ For an exact runtime description, call `describe()`. Invalid or unsupported fiel
 
 `canvas.add.entity.type` supports `text`, `sticky`, `rectangle`, `ellipse`, `arrow`, `draw`, `image`, and `diagram`. Prefer `image.add` for raster images; `canvas.add` with type `image` requires its raster data in the `url` field. Live `screen` objects come from the normal **Share a window** flow and cannot be fabricated through `canvas.add`. Existing object types cannot be changed, and transport/ownership fields cannot be supplied.
 
-Common content fields include `text`, `title`, `fontSize`, `color`, and `fill`. Text and diagram source are limited to 20000 characters, titles to 200 characters, and font size to 8–200. `draw` uses a `points` array of local `{x,y}` points, at most 10000. A Mermaid `diagram` uses `language: "mermaid"` and `source`. Position locks prevent changes to `x`, `y`, `width`, `height`, and drawing `points`; unlock deliberately before moving a locked object. Locks prevent accidental layout changes rather than serving as an access boundary. Other participants' screen objects remain under their owners' control.
+Common content fields include `text`, `title`, `color`, and `fill`. Text and diagram source are limited to 20000 characters and titles to 200 characters. For `text`, `sticky`, `rectangle`, and `ellipse`, the complete text automatically fits the shared `width` and `height`; resize that box to control the visual text size. Fitting does not rewrite raw text or alter object geometry. Legacy `fontSize` remains accepted at 8–200 and retained in data for compatibility, but it is ignored for fitted text size. The focused mobile writer remains 18 px independently of the box.
+
+`draw` uses a `points` array of local `{x,y}` points, at most 10000. A Mermaid `diagram` uses `language: "mermaid"` and `source`. Position locks prevent changes to `x`, `y`, `width`, `height`, and drawing `points`; unlock deliberately before moving a locked object. Locks prevent accidental layout changes rather than serving as an access boundary. Other participants' screen objects remain under their owners' control.
 
 ```json
 [

@@ -8,19 +8,19 @@ The host retains its own `/api/health`, `/api/counter`, and `/echo` WebSocket. O
 
 If Common is already installed in your Bun project, this example is included: run `bun node_modules/common-workspace/example/server.mjs` and open `http://127.0.0.1:3100`. You can also copy that `example/` folder into your own project.
 
-Obtain `common-workspace-0.6.1.tgz` and its SHA-256 checksum from the [v1.6.1 release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.6.1), or ask its owner for both files. Release access requires read access to the private repository; installing an administrator-provided archive needs no cloud account or registry login. If you have the Common source checkout, build that tarball there first:
+Obtain `common-workspace-0.7.0.tgz` and its SHA-256 checksum from the [v1.7.0 release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.7.0), or ask its owner for both files. Release access requires read access to the private repository; installing an administrator-provided archive needs no cloud account or registry login. If you have the Common source checkout, build that tarball there first:
 
 ```sh
 bun install --frozen-lockfile
 bun run pack:module
 ```
 
-The resulting artifact is `artifacts/common-workspace-0.6.1.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
+The resulting artifact is `artifacts/common-workspace-0.7.0.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
 
 ```sh
 cp -R /path/to/common/examples/bun-embed ./my-common-host
 cd my-common-host
-bun add /absolute/path/to/common-workspace-0.6.1.tgz
+bun add /absolute/path/to/common-workspace-0.7.0.tgz
 bun run start
 ```
 

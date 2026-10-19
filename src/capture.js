@@ -1,4 +1,5 @@
 import { canvasBackground } from './canvas-background.js';
+import { createTextLayout } from './text-layout.js';
 
 const MiB = 1024 * 1024;
 const captureError = (message, code) => Object.assign(new Error(message), { code });
@@ -246,6 +247,7 @@ export class CanvasCapture {
     for (const timer of this.downloadTimers) this.clearTimeout(timer);
     this.downloadTimers.clear();
     for (const url of this.urls) this._revoke(url);
+    this.textLayout?.destroy(); this.textLayout = null;
     this.backgroundPattern = null;
     this._changed();
   }
@@ -376,20 +378,34 @@ export class CanvasCapture {
     for (const line of lines) { if (top >= y + height) break; ctx.fillText(line, center ? x + Math.max(0, (width - ctx.measureText(line).width) / 2) : x, top); top += lineHeight; }
     ctx.restore();
   }
+  _entityText(ctx, entity) {
+    this.textLayout ||= createTextLayout({ documentImpl: this.document, context: ctx });
+    const layout = this.textLayout.layout(entity);
+    if (!(layout.renderScale > 0)) return;
+    ctx.save();
+    try {
+      ctx.beginPath(); ctx.rect(layout.box.x, layout.box.y, layout.box.width, layout.box.height); ctx.clip();
+      ctx.scale(layout.renderScale, layout.renderScale);
+      ctx.font = layout.renderFont; ctx.textAlign = layout.align; ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = entity.type === 'text' ? entity.color || '#28322f' : entity.type === 'sticky' ? entity.color || '#5b5237' : '#435b43';
+      if ('letterSpacing' in ctx) ctx.letterSpacing = `${layout.letterSpacing}px`;
+      if ('fontKerning' in ctx) ctx.fontKerning = 'normal';
+      layout.lines.forEach((line, index) => ctx.fillText(line, layout.x / layout.renderScale, layout.baseline / layout.renderScale + index * layout.renderLineHeight));
+    } finally { ctx.restore(); }
+  }
   _drawEntity(ctx, entity, board) {
     const width = Math.max(1, finite(entity.width, 100)), height = Math.max(1, finite(entity.height, 100));
-    const color = entity.color || '#567263', fontSize = Math.max(10, Math.min(100, finite(entity.fontSize, entity.type === 'text' ? 24 : 18)));
+    const color = entity.color || '#567263';
     ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     if (entity.type === 'text' || entity.type === 'sticky') {
       if (entity.type === 'sticky') { ctx.fillStyle = entity.fill || '#fff0b5'; ctx.fillRect(0, 0, width, height); }
-      const padding = entity.type === 'sticky' ? 22 : 4;
-      this._text(ctx, entity.text, padding, entity.type === 'sticky' ? 23 : 5, width - padding * 2, height - padding * 2, fontSize, entity.color || (entity.type === 'sticky' ? '#5b5237' : '#28322f'));
+      this._entityText(ctx, entity);
     } else if (entity.type === 'rectangle' || entity.type === 'ellipse') {
       ctx.beginPath();
       if (entity.type === 'ellipse') ctx.ellipse(width / 2, height / 2, Math.max(1, width / 2 - 2), Math.max(1, height / 2 - 2), 0, 0, Math.PI * 2);
       else ctx.rect(2, 2, Math.max(1, width - 4), Math.max(1, height - 4));
       if (entity.fill && entity.fill !== 'transparent') { ctx.fillStyle = entity.fill; ctx.fill(); } ctx.stroke();
-      this._text(ctx, entity.text, 10, 10, width - 20, height - 20, finite(entity.fontSize, 14), '#435b43', { center: true });
+      this._entityText(ctx, entity);
     } else if (entity.type === 'draw' || entity.type === 'arrow') {
       const points = pointsOf(entity);
       if (entity.type === 'draw' && points.length) {

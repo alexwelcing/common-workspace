@@ -362,7 +362,7 @@ function updateHistoryControls(){
   if(disposed)return;
   const state=shared?.getHistoryState(),enabled=!disposed&&!board?.readOnly&&(sandbox||connected);
   const editor=board?.editingContent;
-  const pendingText=editor&&editor.innerText.slice(0,20000)!==(shared?.get(board.editingId)?.text||'');
+  const pendingText=editor&&board.editingDirty&&board.getEditingText()!==(shared?.get(board.editingId)?.text||'');
   for(const direction of ['undo','redo']){
     const button=$('#'+direction+'-canvas');if(!button)continue;
     const available=state?.[direction==='undo'?'canUndo':'canRedo'];

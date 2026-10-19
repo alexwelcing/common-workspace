@@ -1,5 +1,14 @@
 # Common releases
 
+## 1.7.0 — 2026-10-19
+
+Text automatically fits its shared object box in classic and Space & Time, including portable module **0.7.0**.
+
+- Fit the complete text of notes, text objects, rectangles, and ellipses inside their boxes. Resize a box to adjust its displayed text size; fitting does not rewrite text or change shared geometry.
+- Keep the focused mobile writer at a readable 18 px while the board uses fitted text. Desktop editing remains inline.
+- Share fitted wrapping with Space previews, snapshots, recordings, and SVG downloads, which include the installed font. Preserve deliberate blank lines during native text editing.
+- Retain legacy `fontSize` data and API acceptance for compatibility; it no longer controls the visual size of fitted object text. Agents and integrations should set `width` and `height` for the desired text layout.
+
 ## 1.6.1 — 2026-10-19
 
 Mobile writing gets a focused view in the app and portable module **0.6.1**. Classic remains the default; Space & Time remains a regular option.

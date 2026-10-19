@@ -30,11 +30,11 @@ Use `bun run local` to build and start the private local profile, or build with 
 
 All socket messages are JSON objects. Server sends an initial `{type:'init', room, self:{id,name,color,isAdmin,checklist?}, workshop?, participants:[...], entities:[...], chat:[...], capabilities:{protocolVersion:1,transport:'websocket',guidedSessions:1,guidedParticipation:1,roomStyling:1}}`. `room.appearance` holds the canonical room style. `participants` entries are `{id,name,color,isAdmin,checklist?}`. Server then broadcasts `{type:'participants',participants:[...]}` on presence changes. Both adapters share admission/chat/signal/cursor validation and session policy from `lib/session-protocol.mjs`.
 
-## Hidden spatial beta admission
+## Space & Time admission
 
-Create a spatial beta room with `POST /api/rooms` and `experience:'spatial-beta'`. These rooms always use peer collaboration: omitted `collaboration` selects `peer` on both adapters, while an explicit non-peer mode returns `400 INVALID_COLLABORATION`. An unsupported non-null experience returns `400 INVALID_EXPERIENCE`. Omitted or `null` experience creates an ordinary room with its existing collaboration defaults and response shape.
+Create a Space & Time room with `POST /api/rooms` and the compatibility wire value `experience:'spatial-beta'`. These rooms always use peer collaboration: omitted `collaboration` selects `peer` on both adapters, while an explicit non-peer mode returns `400 INVALID_COLLABORATION`. An unsupported non-null experience returns `400 INVALID_EXPERIENCE`. Omitted or `null` experience creates an ordinary room with its existing collaboration defaults and response shape.
 
-For beta rooms, every public room lookup, authenticated create/join/session response, and connection initialization includes `room.experience:'spatial-beta'`. Ordinary rooms omit the field. The browser uses this metadata to route a beta invitation into the separate beta experience and to reject ordinary room links entered there. This field selects the document experience; it grants no identity, host privilege, or capture permission. Password, token, room-expiry, and connection checks are unchanged. The room experience is fixed at creation, and no message can change it.
+For Space & Time rooms, every public room lookup, authenticated create/join/session response, and connection initialization includes `room.experience:'spatial-beta'`. Ordinary rooms omit the field. The browser uses this metadata to select the correct experience, overriding query or SDK preferences. Classic remains the default for a personal workspace. This field selects the document experience; it grants no identity, host privilege, or capture permission. Password, token, room-expiry, and connection checks are unchanged. The room experience is fixed at creation, and no message can change it.
 
 Standalone Bun persists the marker in its configured room file. Netlify stores it in nullable `common_rooms.experience`, added by `20261018000300_spatial_beta_rooms.sql`; existing rows stay ordinary. Spatial documents and automatic history remain in participating browsers rather than the admission database. The backend continues to provide room admission, presence, signaling, chat, and room styles, and rejects server canvas writes in peer rooms.
 
@@ -139,6 +139,8 @@ Both hosting adapters emit `X-Common-Request-Id`, `X-Common-Build`, `X-Common-Pr
 `COMMON_OTLP_ENDPOINT` optionally exports these spans to a full HTTP(S) OTLP traces endpoint; `COMMON_OTLP_TOKEN` supplies a server-side Bearer token. Export is bounded by `COMMON_OTLP_TIMEOUT_MS` (default 500 ms, range 25–750 ms) and collector failure does not fail the room request. Logging and export are off by default and need no Cloudflare service.
 
 ## Session messages
+
+Text in `text`, `sticky`, `rectangle`, and `ellipse` objects automatically fits the shared `width` and `height` in both browser experiences. Fitting preserves raw text and geometry; resizing the box controls the visual text size. The legacy `fontSize` field remains accepted and stored for compatibility but does not control fitted text size.
 
 Client → server:
 

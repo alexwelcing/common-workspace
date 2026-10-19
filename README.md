@@ -25,7 +25,7 @@ See [the Space & Time guide](docs/space-time.md) for templates, themes, local us
 
 Common includes a portable module for an inline canvas panel or a floating workspace inside your own application. `createCommon` from `common-workspace/bun` attaches to your existing fetch/WebSocket server; `mountCommon` from `common-workspace/client` loads the interface in a same-origin iframe. It opens no additional port, needs no UI framework, and defaults to private networking and in-memory rooms. Your authentication can protect the mount, while Common room passwords and visible agent grants still apply.
 
-Download the package and its SHA-256 checksum from the [v1.6.1 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.6.1), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.6.1.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
+Download the package and its SHA-256 checksum from the [v1.7.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.7.0), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.7.0.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
 
 The package includes the example: run `bun node_modules/common-workspace/example/server.mjs` in a project where you installed it, then open `http://127.0.0.1:3100`.
 
@@ -130,6 +130,8 @@ Join with the same link and password. In a classic guided room, choose **Watch &
 Use two fingers to pan and pinch to zoom. With one finger, drag objects or use a drawing tool. Starting a pinch cancels the unfinished one-finger edit. **Focus** enlarges a window or note for your view and hides the mobile drawing tools; **Back to canvas** restores them. Pinching leaves Focus so you can explore independently. Touch controls have larger targets, and People/chat has its own close button.
 
 Select a text object or note and tap **Edit** to write. On a phone, writing opens a focused view with readable text independent of canvas zoom. Tap **Done** to return to the board; its object sizes and your camera stay unchanged. Navigation and drawing controls tuck away while writing, with active sharing/recording Stop controls still available. Desktop editing stays inline.
+
+The mobile writer stays at 18 px. On the board, text in notes, text objects, rectangles, and ellipses fits the shared box automatically. Resize the box to change its displayed text size; fitting preserves the complete text and does not move or resize the object for you.
 
 Common fits chat and dialogs to the visible viewport when the keyboard opens and respects device safe areas. Floating embeds follow the host page's visible viewport too; inline embeds remain in their application's layout. Browser zoom remains available for accessibility.
 
