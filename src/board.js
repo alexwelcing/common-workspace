@@ -1160,6 +1160,13 @@ export class Board {
       const text = event.clipboardData.getData('text/plain').slice(0, 20000);
       document.execCommand('insertText', false, text);
     }, { signal: editEvents.signal });
+    content.addEventListener('beforeinput', event => {
+      if (event.inputType !== 'insertLineBreak' || event.isComposing || this.editingComposing) return;
+      // This is a plain-text editor: Shift+Enter is the same newline as Enter.
+      // The native paragraph command retains caret/undo behavior without the
+      // extra terminal text-node newline Chromium adds for pre-wrap line breaks.
+      event.preventDefault(); document.execCommand('insertParagraph', false);
+    }, { signal: editEvents.signal });
     content.addEventListener('input', () => {
       this.editingDirty = true;
       // Keep the caret/IME DOM intact while fitting a desktop edit in place.
