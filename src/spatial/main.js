@@ -1,6 +1,7 @@
 import '../style.css';
 import '../mobile.css';
 import { Board } from '../board.js';
+import { CANVAS_TOOLS, CANVAS_TOOL_SHORTCUTS, DEFAULT_TOOL_COLOR } from '../canvas-tools.js';
 import {
   RoomAppearance,
   renderAppearancePicker,
@@ -58,6 +59,9 @@ let storageStatus = { state: 'loading', message: 'Opening your autosaved room…
 let participants = [];
 let pendingRoom = null;
 let roomLookupError = '';
+let toolHint = '';
+let colorContext;
+const paletteColors = new Map();
 
 // Workspace changes cancel old room/import work; selection changes cancel board-local work.
 let workspaceGeneration = 0;
@@ -90,6 +94,46 @@ const ownId = () => (sandbox ? personalId : session?.auth?.participantId);
 const activeMedia = () => (sandbox ? personalMedia : session?.media);
 const state = () => store?.projection(selectedRevisionId) || { boards: [] };
 const objects = () => state().boards.find(item => item.id === activeBoardId)?.objects || [];
+
+function readOnlyHint() {
+  if (selectedRevisionId) return 'History is read-only. Select or Pan to explore; return to live to edit.';
+  if (terminal) return 'This session has ended. Explore saved work or branch from history to edit locally.';
+  if (!sandbox && !session?.auth) return 'Join this room to edit. Select or Pan to explore its saved work.';
+  return 'Reconnect to edit. Select or Pan to explore while the room reconnects.';
+}
+function hintForTool(id) {
+  const tool = CANVAS_TOOLS.find(item => item.id === id);
+  return (window.matchMedia?.('(pointer: coarse)').matches ? tool?.touchHint : tool?.hint) || '';
+}
+function chooseTool(id) {
+  if (!CANVAS_TOOLS.some(tool => tool.id === id)) return;
+  if (!editable() && !['select', 'hand'].includes(id)) { toast(readOnlyHint()); return; }
+  view.closePopovers();
+  board.setTool(id);
+  toolHint = hintForTool(id);
+  board.el.focus({ preventScroll: true });
+  scheduleRender();
+}
+function paletteColor(value) {
+  if (!value) return DEFAULT_TOOL_COLOR;
+  if (paletteColors.has(value)) return paletteColors.get(value);
+  let color = value;
+  if (/^#[0-9a-f]{3,4}$/i.test(color)) color = '#' + Array.from(color.slice(1, 4), character => character.repeat(2)).join('');
+  if (/^#[0-9a-f]{8}$/i.test(color)) color = color.slice(0, 7);
+  if (!/^#[0-9a-f]{6}$/i.test(color)) {
+    colorContext ||= document.createElement('canvas').getContext('2d');
+    if (colorContext) {
+      colorContext.fillStyle = DEFAULT_TOOL_COLOR; colorContext.fillStyle = value;
+      color = colorContext.fillStyle;
+      const rgb = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+      if (rgb) color = '#' + rgb.slice(1, 4).map(component => Number(component).toString(16).padStart(2, '0')).join('');
+    }
+  }
+  if (!/^#[0-9a-f]{6}$/i.test(color)) color = DEFAULT_TOOL_COLOR;
+  if (paletteColors.size >= 32) paletteColors.delete(paletteColors.keys().next().value);
+  paletteColors.set(value, color);
+  return color;
+}
 
 function toast(message) {
   if (disposed) return;
@@ -257,6 +301,7 @@ function renderWorkspace() {
     toast(error.message);
     return;
   }
+  if (board && !editable() && !['select', 'hand'].includes(board.tool)) board.setTool('select');
   // Projection contents are immutable; sorting is a personal presentation choice.
   snapshot = { ...snapshot, boards: [...snapshot.boards].sort((a, b) => (a.name === b.name ? (a.id < b.id ? -1 : 1) : a.name < b.name ? -1 : 1)) };
   const revisions = store.revisions();
@@ -278,6 +323,8 @@ function renderWorkspace() {
     appearanceUI.apply(roomAppearance);
     appearanceSignature = nextAppearanceSignature;
   }
+  const selected = snapshot.boards.find(item => item.id === activeBoardId)?.objects.find(item => item.id === board?.selectedId);
+  const colorTarget = editable() && !!selected && board.mayEdit(selected) && !['screen', 'image', 'diagram'].includes(selected.type);
   view.render({
     ...snapshot,
     activeBoardId,
@@ -311,6 +358,9 @@ function renderWorkspace() {
     canCreateRoom: sandbox,
     canStyle: editable() && (sandbox || session?.auth?.isAdmin),
     tool: board?.tool || 'select',
+    toolHint, readOnlyHint: readOnlyHint(),
+    toolColor: paletteColor(colorTarget ? selected.color : board?.color), colorTarget,
+    recordingReady: typeof agent?.openCapture === 'function',
     sharing: !!activeMedia()?.localStream,
     capture: activeMedia()?.getCaptureState(),
     captureSupport: displayCaptureSupport(),
@@ -726,7 +776,7 @@ async function exportWorkspace() {
   );
   if (disposed || workspaceAtStart !== workspaceGeneration) return;
   download(result.bytes, 'application/octet-stream', `common-spatial-${Date.now()}.common`);
-  toast('Replay archive downloaded with the room’s automatic history.');
+  toast('Full workspace history downloaded, including every board and live change.');
 }
 
 async function branchFromHistory() {
@@ -770,7 +820,13 @@ async function action(name, payload) {
   try {
     switch (name) {
       case 'tool':
-        if (editable() || ['select', 'hand'].includes(payload.tool)) board.setTool(payload.tool);
+        chooseTool(payload.tool);
+        break;
+      case 'color':
+        if (editable() && /^#[0-9a-f]{6}$/i.test(payload.color)) { board.setColor(payload.color); scheduleRender(); }
+        break;
+      case 'recording':
+        agent?.openCapture?.();
         break;
       case 'pose':
         if (editable()) store.updateBoard(payload.boardId, { pose: payload.pose });
@@ -896,6 +952,7 @@ function destroy() {
     board?.destroy();
     renderedEntities.clear();
     localEntityChanges.clear();
+    paletteColors.clear(); colorContext = null;
     modalCleanup?.();
     modalController.destroy();
     cleanupViewport();
@@ -982,10 +1039,10 @@ board = new Board({
     if (editable()) store.reorderEntity(activeBoardId, id, position);
   },
   onLockChange: (id, locked) => activeBoardModel?.patch(id, { locked }),
-  onStatus: toast,
-  onToolChange: scheduleRender,
+  onStatus: message => toast(message === 'Reconnect to edit the shared canvas.' ? readOnlyHint() : message),
+  onToolChange: id => { toolHint = hintForTool(id); scheduleRender(); },
   onViewChange: syncWatching,
-  onSelect: syncWatching,
+  onSelect: () => { syncWatching(); scheduleRender(); },
   onWatchScreen: id => {
     subscriptions.toggle(id);
     syncWatching();
@@ -997,6 +1054,7 @@ board = new Board({
   canEdit: entity =>
     entity.type !== 'screen' || sandbox || entity.participantId === ownId() || session?.auth?.isAdmin,
 });
+board.setColor(DEFAULT_TOOL_COLOR);
 const tools = [
   ['diagram', 'Diagram'],
   ['fit', 'Fit board'],
@@ -1010,10 +1068,10 @@ for (const [name, text] of tools) {
   button.dataset.betaAction = name;
   button.textContent = text;
   button.setAttribute('aria-label', name === 'zoom-in' ? 'Zoom in' : name === 'zoom-out' ? 'Zoom out' : text);
-  (name === 'diagram'
+  const host = name === 'diagram'
     ? view.toolExtrasHost || view.toolbarHost
-    : view.navigationHost || view.toolbarHost
-  ).append(button);
+    : view.navigationHost || view.toolbarHost;
+  host.insertBefore(button, name === 'diagram' ? host.querySelector('.beta-tool-color') : null);
 }
 personalMedia = new ScreenSharing({
   send: () => false,
@@ -1144,6 +1202,19 @@ view.boardHost.addEventListener(
   },
   { signal: events.signal },
 );
+document.addEventListener('keydown', event => {
+  if (disposed || event.defaultPrevented || event.isComposing || event.keyCode === 229
+    || event.ctrlKey || event.metaKey || event.altKey || modalController.isOpen || document.querySelector('dialog[open]')) return;
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest('input,textarea,select,[contenteditable="true"]')) return;
+  const inTools = target.closest('.beta-work-tools,.beta-tool-palette,.beta-navigation-panel');
+  if (!board.el.contains(target) && !inTools) return;
+  if (target.closest('button,a,[role="button"]') && !inTools) return;
+  const key = event.key.toLowerCase();
+  if (!Object.hasOwn(CANVAS_TOOL_SHORTCUTS, key)) return;
+  event.preventDefault();
+  chooseTool(CANVAS_TOOL_SHORTCUTS[key]);
+}, { signal: events.signal });
 document.addEventListener(
   'paste',
   event => {

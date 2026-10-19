@@ -120,5 +120,5 @@ export function installSpatialAgent({
   }
   signal?.addEventListener('abort', destroy, { once: true });
   ready(); refresh();
-  return Object.freeze({ api, open() { if (!destroyed) tools.open(); }, refresh, revoke, stop, getState, destroy });
+  return Object.freeze({ api, open() { if (!destroyed) tools.open(); }, openCapture(options) { if (!destroyed) tools.openCapture(options); }, refresh, revoke, stop, getState, destroy });
 }

@@ -1,5 +1,17 @@
 # Common releases
 
+## 1.8.0 — 2026-10-19
+
+A tool and interaction cleanup across classic, Space & Time, and portable module **0.8.0**. Classic remains the default.
+
+- Keep Select, Note, and Draw in a compact dock, with secondary tools, insertion, and color tucked into More tools. Share tool names, shortcuts, and contextual hints between experiences; keep the active secondary tool visible.
+- Scope tool shortcuts to canvas interaction, preserve native typing and controls, and improve keyboard entry/dismissal for tool and layer disclosures.
+- Clarify whether color affects selected content or new objects. Make zoom controls consistent, cancel unfinished pointer edits with Escape, and preserve layer-control focus through updates.
+- Keep image and diagram insertion bound to its intended canvas, with readable errors and recovery for work that could not be added.
+- Keep recording preparation cancellable and preserve visible capture controls on compact screens. Restore focus after recording and walkthrough transitions, and announce walkthrough steps.
+- Preserve actionable chat delivery/reconnect feedback while the mobile keyboard is open. Distinguish the guide's **I'll present** participation choice from **Share a window**, which opens the browser picker.
+- Serialize local media-worker connection/export operations, expose their busy state, and allow cancellation and retry without late responses replacing current feedback.
+
 ## 1.7.0 — 2026-10-19
 
 Text automatically fits its shared object box in classic and Space & Time, including portable module **0.7.0**.

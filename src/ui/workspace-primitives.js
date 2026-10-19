@@ -488,6 +488,18 @@ export function attachRovingToolbar(toolbar, { orientation = 'horizontal' } = {}
     else next = available[(index + direction + available.length) % available.length];
     refresh(next);
     next?.focus({ preventScroll: true });
+    // Keep the focused action visible in a narrow, scrollable toolbar without
+    // scrolling the surrounding canvas or changing its camera.
+    if (next) {
+      const bounds = toolbar.getBoundingClientRect(), item = next.getBoundingClientRect();
+      if (orientation === 'vertical') {
+        if (item.top < bounds.top) toolbar.scrollTop += item.top - bounds.top;
+        else if (item.bottom > bounds.bottom) toolbar.scrollTop += item.bottom - bounds.bottom;
+      } else {
+        if (item.left < bounds.left) toolbar.scrollLeft += item.left - bounds.left;
+        else if (item.right > bounds.right) toolbar.scrollLeft += item.right - bounds.right;
+      }
+    }
   }, { signal: abort.signal });
   const Observer = toolbar.ownerDocument.defaultView.MutationObserver;
   const observer = new Observer(() => refresh());
