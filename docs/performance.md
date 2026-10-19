@@ -1,6 +1,6 @@
 # Understanding performance
 
-Open **Canvas options → Performance** in the standard canvas, or **Room → Performance** in the spatial beta. The panel describes the current browser. It cannot report the health of every participant, the host server, or the whole room.
+Open **Canvas options → Performance** in the standard canvas, or **Room → Performance** in Space & Time. The panel describes the current browser. It cannot report the health of every participant, the host server, or the whole room.
 
 Measurements stay in this tab. There is no analytics service, account, or diagnostic upload. The same collector runs in local Bun installations and on Netlify.
 
@@ -23,7 +23,7 @@ The rolling window covers the most recent 60 seconds and keeps bounded samples. 
 
 Timed synchronous canvas renders, spatial renders/edits, object projection, historical reconstruction, and peer merges can also lower the index. They normally need five samples; a single measured stall of at least 250 ms is enough to count. Budgets live in [`src/performance-index.js`](../src/performance-index.js).
 
-**Object projection** (`state-projection`) measures actual beta presentation rebuilding, with 16 ms as its comfortable guide and 100 ms as its poor guide. It includes uncached historical projection work. Returning an already accepted cached projection does not add a sample; a missing sample can reflect cache reuse rather than missing instrumentation.
+**Object projection** (`state-projection`) measures actual Space & Time presentation rebuilding, with 16 ms as its comfortable guide and 100 ms as its poor guide. It includes uncached historical projection work. Returning an already accepted cached projection does not add a sample; a missing sample can reflect cache reuse rather than missing instrumentation.
 
 ## Find useful clues
 
@@ -44,7 +44,7 @@ Autosave and replay import/export include asynchronous waiting. A slow storage t
 5. Use Chrome DevTools **Performance** to record the specific action when the expensive call is unclear. Inspect the main-thread call tree and self time; use temporary numeric counters to check suspected repeated work. Capture this trace separately from the comparison runs because profiling adds overhead. Check idle periods, inactive boards, and hidden tabs for work that should have stopped or reused a cached result.
 6. For collaboration changes, repeat with two real browser profiles and the intended network. Compare local Bun and Netlify runs when the hosting boundary matters; reports from different devices are not interchangeable benchmarks.
 
-Timing boundaries matter. The [first developer investigation](performance-investigation.md) found beta edit preflight work outside the `spatial-edit` timer. A fast named operation can miss expensive work before or after it, and short delays may escape the responsiveness signals. Follow a suspicious action through the profiler rather than treating a healthy index as proof that it is cheap.
+Timing boundaries matter. The [first developer investigation](performance-investigation.md) found spatial edit preflight work outside the `spatial-edit` timer. A fast named operation can miss expensive work before or after it, and short delays may escape the responsiveness signals. Follow a suspicious action through the profiler rather than treating a healthy index as proof that it is cheap.
 
 The index does not measure video quality, GPU time, WebRTC bitrate, server capacity, or cross-device latency. A green index does not prove those systems are healthy.
 
@@ -66,7 +66,7 @@ This API observes the current experience; it does not grant canvas or agent perm
 
 ## Maintain the instrumentation
 
-Start with [`src/performance-index.js`](../src/performance-index.js) for collection, budgets, and bounded snapshots; [`src/performance-panel.js`](../src/performance-panel.js) owns presentation. Experience orchestration supplies lifecycle, workload context, and report build metadata. Board and beta-store hooks time the work they own.
+Start with [`src/performance-index.js`](../src/performance-index.js) for collection, budgets, and bounded snapshots; [`src/performance-panel.js`](../src/performance-panel.js) owns presentation. Experience orchestration supplies lifecycle, workload context, and report build metadata. Board and spatial-store hooks time the work they own.
 
 Use an existing allowlisted operation, or add a deliberately reviewed definition to the collector. Only synchronous work belongs in a responsiveness budget. Keep elapsed asynchronous work as supporting evidence. Do not accept arbitrary metric names, labels, identifiers, payloads, or error text.
 
@@ -87,7 +87,7 @@ For asynchronous work, finish after the awaited operation; do not mark time spen
 
 Avoid nested render samples, per-point serialization, document exports for counting, payload logging, and new idle animation loops. Reuse cached sizes and counters, and bound new collections. A sample started before reset or a visibility change must not finish in the new observation period.
 
-For beta presentation work, use `store.projection()` and the [presentation cache ownership rules](maintaining.md#keep-beta-presentation-caches-at-their-boundary). Compare changed-entity and changed-board work with whole-room work. Temporary numeric counters can reveal repeated normalization, preview rebuilding, and `Board.upsert()` calls even when the responsiveness score stays healthy. Keep whole-action measurements alongside operation timers so preflight, validation, and cache maintenance remain visible.
+For Space & Time presentation work, use `store.projection()` and the [presentation cache ownership rules](maintaining.md#keep-spatial-presentation-caches-at-their-boundary). Compare changed-entity and changed-board work with whole-room work. Temporary numeric counters can reveal repeated normalization, preview rebuilding, and `Board.upsert()` calls even when the responsiveness score stays healthy. Keep whole-action measurements alongside operation timers so preflight, validation, and cache maintenance remain visible.
 
 Stable references are valid only for accepted, deeply immutable projection values. Include rejected edits, no-op writes, live updates while viewing history, imports, source switches, and mutable preview input in a focused reproduction. Skipping required reconciliation can look fast while leaving stale content on screen.
 

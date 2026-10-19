@@ -15,7 +15,7 @@ const definitions = [
   ['guided-room', 'A phone joins a styled room with its password and becomes ready without capture.'],
   ['chat-and-reload', 'Chat and host-only room styling update both browsers; reload preserves identity and the plan.'],
   ['agent-consent', 'Visible consent controls agent edits; PNG preserves the room canvas colour and revocation blocks edits.'],
-  ['native-peers', 'Native peers share classic media and beta space/time; autosave, history, archives, and room cleanup work.'],
+  ['native-peers', 'Native peers share classic media and Space & Time; autosave, history, archives, and room cleanup work.'],
 ];
 
 const loadPlaywright = async playwrightModule => playwrightModule ? require(playwrightModule) : import('playwright-core');
@@ -379,20 +379,22 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         await page.locator('.beta-board-host .board-text-content[contenteditable="true"]').fill(text);
         await page.locator('.beta-current-board strong').click(); await betaSaved(page);
       };
-      await checkpoint('Hidden beta automatically saves personal work across reload', async () => {
-        await host.goto(`${origin.origin}/?beta=space`); await host.getByRole('region', { name: 'Common Space and Time beta' }).waitFor();
+      await checkpoint('Space & Time automatically saves personal work across reload', async () => {
+        await host.goto(origin.origin); await host.locator('#space-time-nav').click();
+        await host.getByRole('region', { name: 'Common Space and Time' }).waitFor();
+        assert.equal(new URL(host.url()).searchParams.get('experience'), 'space');
         await host.locator('.beta-board-link').first().click(); await betaNote(host, 'A beta thought saved on this device');
         await host.reload(); await betaSaved(host);
         await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'A beta thought saved on this device' }).waitFor();
         await screenshot(host, 'beta-personal-autosave');
       });
-      await checkpoint('Create and join a separate beta room with actual peer edits and shared spatial pose', async () => {
+      await checkpoint('Create and join a Space & Time room with actual peer edits and shared spatial pose', async () => {
         await betaMenuAction(host, 'create-room');
         await host.locator('#beta-create-form [name="name"]').fill('Spatial browser journey');
         await host.locator('#beta-create-form [name="displayName"]').fill('Spatial host'); await host.locator('#beta-create-form [name="password"]').fill(password);
         const creation = host.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/rooms' && response.ok());
         await host.locator('#beta-create-form button[type="submit"]').click(); const created = await (await creation).json();
-        betaToken = created.token; secrets.push(betaToken); betaRoomUrl = `${origin.origin}/room/${created.room.id}?beta=space`;
+        betaToken = created.token; secrets.push(betaToken); betaRoomUrl = `${origin.origin}/room/${created.room.id}?experience=space`;
         assert.equal(created.room.experience, 'spatial-beta');
         await host.locator('#beta-invite-link').waitFor(); assert.equal(await host.locator('#beta-invite-link').inputValue(), betaRoomUrl); await host.locator('#beta-invite-done').click();
         await phone.goto(betaRoomUrl); await phone.locator('#beta-join-form [name="displayName"]').fill('Spatial teammate'); await phone.locator('#beta-join-form [name="password"]').fill(password);
@@ -424,7 +426,7 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         await screenshot(host, 'beta-readonly-history'); await host.locator('.beta-return-live').click();
         await host.locator('.beta-workspace[data-history="live"]').waitFor(); await host.locator('.beta-board-host .type-sticky').filter({ hasText: 'The room kept moving while history was open' }).waitFor();
       });
-      await checkpoint('Inspect beta autosave and history timings without exposing shared content', async () => {
+      await checkpoint('Inspect spatial autosave and history timings without exposing shared content', async () => {
         await betaSaved(host); await betaMenuAction(host, 'performance');
         await performanceReport(host, {
           experience: 'spatial-beta', operations: ['canvas-render', 'spatial-render', 'history-read', 'autosave'],
@@ -432,7 +434,7 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         });
         await host.locator('.beta-workspace[data-history="live"]').waitFor();
       });
-      await checkpoint('Export the real spatial archive and end only the beta room created here', async () => {
+      await checkpoint('Export the real spatial archive and end only the spatial room created here', async () => {
         const [archive] = await Promise.all([host.waitForEvent('download'), betaMenuAction(host, 'export')]);
         assert.match(archive.suggestedFilename(), /^common-spatial-.*\.common$/);
         const filename = 'beta-workspace.common'; await archive.saveAs(path.join(artifactDir, filename));

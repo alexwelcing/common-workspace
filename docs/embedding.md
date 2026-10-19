@@ -2,14 +2,14 @@
 
 Common can run inside an existing Bun application as a canvas panel or a floating workspace. The host owns the HTTP listener, routes, WebSocket server, and authentication. Common mounts its assets and room service beneath one path; it does not start a second server or open a hidden port.
 
-The portable module is included in the [v1.5.2 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.5.2). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
+The portable module is included in the [v1.6.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.6.0). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
 
 ## Obtain the package
 
-Download `common-workspace-0.5.2.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.5.2), or obtain both from your administrator. Install that file in your Bun application:
+Download `common-workspace-0.6.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.6.0), or obtain both from your administrator. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.5.2.tgz
+bun add /absolute/path/common-workspace-0.6.0.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.5.2.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This builds the package and writes `artifacts/common-workspace-0.6.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
 
 The runnable host example is included in the package. After installing, try it directly from your Bun project:
 
@@ -112,7 +112,7 @@ const canvas = mountCommon({
 });
 ```
 
-Inline mode opens immediately; overlay mode starts closed and loads Common on its first opening. Calling `ready()` or an `agent` method also starts that load. Set `open: true` or `false` to choose visibility explicitly. Optional `roomId` opens an existing room's join view; it does not supply its password. Each mount has its own room identity, so two panels can join the same room without taking over each other's socket. Reloading the same iframe retains its identity; destroying and creating a new mount starts a new identity. `onReady(controller)`, `onError(error)`, and `onOpenChange(isOpen)` let your host reflect the panel's state. Readiness means the embedded interface is initialized, not that someone has joined a room or granted an agent access.
+Inline mode opens immediately; overlay mode starts closed and loads Common on its first opening. Calling `ready()` or an `agent` method also starts that load. Set `open: true` or `false` to choose visibility explicitly. Optional `experience: 'space'` opens a personal Space & Time workspace; the default is `experience: 'classic'`. Optional `roomId` opens an existing room's join view, where room metadata takes precedence over `experience`; it does not supply the password or convert the room. Each mount has its own room identity, so two panels can join the same room without taking over each other's socket. Reloading the same iframe retains its identity; destroying and creating a new mount starts a new identity. `onReady(controller)`, `onError(error)`, and `onOpenChange(isOpen)` let your host reflect the panel's state. Readiness means the embedded interface is initialized, not that someone has joined a room or granted an agent access.
 
 If your host has no browser bundler, serve the installed client export as a JavaScript module from your existing server:
 
@@ -181,9 +181,9 @@ The same-origin iframe is an integration boundary, not a separate security origi
 
 The module defaults to an in-memory room service and the private network profile. It does not write a room database unless you explicitly configure `dataFile`. Restarting an in-memory service removes its room access, presence, and chat state. Peer canvas content and shared images live in participating browsers; live video travels between peers. Personal-canvas browser storage is scoped to the installation's mount path.
 
-Each standard mounted canvas has its own local Focus view and personal Undo/Redo history. Focus changes no shared geometry. Undo applies inverse field edits only while those fields still belong to this browser's action; it preserves newer peer writes and respects current locks and edit access. Undoing deletion creates a new copy with a fresh ID, so integrations should inspect again before reusing an old object ID. Live screen objects are excluded from Undo history. Standard Undo history ends with the session or mount, is not persisted, and is bounded to 100 entries and 24 MiB of recorded actions, plus an active group capped at 24 MiB. Paste uses the browser's normal paste event and requires no clipboard-read policy or permission. The opt-in Space & time beta has its own persistent automatic history, described below.
+Each classic mounted canvas has its own local Focus view and personal Undo/Redo history. Focus changes no shared geometry. Undo applies inverse field edits only while those fields still belong to this browser's action; it preserves newer peer writes and respects current locks and edit access. Undoing deletion creates a new copy with a fresh ID, so integrations should inspect again before reusing an old object ID. Live screen objects are excluded from Undo history. Classic Undo history ends with the session or mount, is not persisted, and is bounded to 100 entries and 24 MiB of recorded actions, plus an active group capped at 24 MiB. Paste uses the browser's normal paste event and requires no clipboard-read policy or permission. Space & Time has its own persistent automatic history, described below.
 
-Chat drafts and reading position stay in the mounted iframe's memory through panel switches and transport reconnects. Reloading, entering a different room/session, or destroying the mount clears drafts. Draft text is not written to browser storage or sent before Send. Sending waits for this participant's server echo before clearing an unchanged draft; an uncertain send keeps it and does not retry automatically. A hidden tab or hidden Common mount retains unread messages. Dialog focus and inactive background state apply inside the iframe; the host controls focus outside that frame.
+In classic, chat drafts and reading position stay in the mounted iframe's memory through panel switches and transport reconnects. Reloading, entering a different room/session, or destroying the mount clears drafts. Draft text is not written to browser storage or sent before Send. Sending waits for this participant's server echo before clearing an unchanged draft; an uncertain send keeps it and does not retry automatically. A hidden tab or hidden Common mount retains unread messages. Space & Time does not yet expose chat. Dialog focus and inactive background state apply inside the iframe; the host controls focus outside that frame.
 
 The private profile uses bundled fonts and does not select public STUN or PlantUML services by default. Mermaid renders locally. Browsers connect directly by default; running the module requires no relay service or hosted account. Your host can explicitly configure organization STUN/TURN or a diagram renderer. A reachable host page does not guarantee a peer connection if firewall, NAT, or VPN policy blocks it; investigate the actual failure with Connection details before changing infrastructure. No SFU or automatic Cloudflare tunnel is included.
 
@@ -191,9 +191,9 @@ One service instance owns one process's room state. Mounting it on multiple unre
 
 Call `close()` during your application's shutdown to stop Common-owned sockets and state. It leaves your host listener under your control. Remove the browser mount when its host view is destroyed, so captures and connections do not survive an abandoned panel.
 
-## Guided sessions
+## Guided sessions in classic
 
-Create a room with a template inside the Common frame to enable the Session guide, optional expected-name list, personal checklists, and host-controlled featured window. Team walkthrough, Weekly check-in, and Design review seed the new canvas with prompts. Open canvas retains the freeform experience.
+Create a classic room with a template inside the Common frame to enable the Session guide, optional expected-name list, personal checklists, and host-controlled featured window. Team walkthrough, Weekly check-in, and Design review seed the new canvas with prompts. Open canvas retains the freeform experience. Space & Time has multi-board templates but does not yet expose participant checklists or featured-screen rotation.
 
 The host's first approved window is featured automatically; Feature and Next window choose later presenters. Each browser can follow or explore independently. Following updates a local view, keeps chat/caret focus, and respects paused video. It neither grants screen capture nor changes shared geometry. Each person must approve their own share through the browser picker. A shared canvas recording includes the focused view when following.
 
@@ -210,6 +210,7 @@ Use **Canvas options → Connection details** for transport and peer states, or 
 | `SDK_UNAUTHORIZED`, `SDK_FORBIDDEN`, or `SDK_SIGN_IN_REQUIRED` | Sign in through your host page first. Check the authorization hook; an embedded sign-in redirect is not a substitute for host authentication. |
 | `SDK_ROUTE_NOT_FOUND` or `SDK_READY_TIMEOUT` | Server and browser `basePath` must match, and Common's built assets must be installed. |
 | `SDK_STYLESHEET_ERROR` | Allow the mount's `embed.css` through host authentication and Content Security Policy. |
+| `SDK_INVALID_EXPERIENCE` | Pass `experience: 'classic'` or `experience: 'space'`, or omit it for classic. Existing room metadata still determines a `roomId` mount's experience. |
 | `UPGRADE_UNAVAILABLE` | Pass Bun's `server` argument to Common's fetch handler; the wrapper does this for you. |
 | `SDK_FRAME_RELOADED` or `SDK_DESTROYED` | Await the current frame's readiness, or create a new mount after destruction. Reconsider an interrupted command before retrying. |
 | `PERMISSION_DENIED` or `GRANT_EXPIRED` | Let the person review and grant the required agent permissions in Common. |
@@ -217,16 +218,27 @@ Use **Canvas options → Connection details** for transport and peer states, or 
 
 ## Shared room appearance
 
-The embedded app includes **Room style** during session creation and under **Canvas options**. Hosts can apply Meadow, Rose, Lagoon, or Lavender presets, custom accent/canvas colors, and dots/grid/plain patterns. The same appearance synchronizes across the room and survives reconnects; it is stored in the existing local room state. Inline and floating mounts style their own iframe document and leave the host application's colors unchanged. Destroying a mount restores its owned theme variables.
+The classic embedded app includes **Room style** during session creation and under **Canvas options**. Space & Time has **Room → Room style**, with appearance changes included in automatic history. Hosts can apply Meadow, Rose, Lagoon, or Lavender presets, custom accent/canvas colors, and dots/grid/plain patterns. The same appearance synchronizes across the room and survives reconnects. Inline and floating mounts style their own iframe document and leave the host application's colors unchanged. Destroying a mount restores its owned theme variables.
 
 Personal **Canvas style** stays in that Common mount's browser storage. Existing object colors are retained; snapshots, canvas recordings, and SVG export use the room background. Styles are bounded color/pattern data, with no custom CSS, remote fonts, or image URLs. Existing room files remain compatible and fall back to Meadow.
 
-## Space & time beta
+## Space & Time
 
-The package includes the separate, lazy-loaded beta. Open your Common mount directly with `?beta=space`, such as `/__common/?beta=space`, to try it and create a beta room. Its invitation links retain the mount prefix. A normal `mountCommon({ target, basePath, roomId })` can join that room: room metadata selects the beta automatically, with the existing password flow. There is no beta SDK option, and existing rooms remain in the standard experience.
+The package includes Space & Time as a regular, lazy-loaded option; classic remains the default. Open your Common mount directly with `?experience=space`, such as `/__common/?experience=space`, or select it when mounting:
 
-The beta edits one flat board at a time and provides a 3D overview and an automatically recorded timeline. Its per-board Loro documents and manifest synchronize directly between peers and autosave small edit records to IndexedDB, scoped to this installation's mount path. Occasional full-history snapshot compaction retains every revision; earlier device storage upgrades automatically. Destroying a mount stops collaboration and capture but leaves the device archive. Ending the room stops room access without deleting those device copies. Browser data removal or eviction can still lose them; **Export room** downloads a binary `.common` replay with history and optional built-in browser compression. Earlier JSON archives still import locally. The module requires no custom filesystem or additional storage process.
+```js
+const canvas = mountCommon({
+  target: document.querySelector('#collaboration-panel'),
+  basePath: '/__common/',
+  mode: 'inline',
+  experience: 'space',
+});
+```
 
-Existing opt-in agent canvas, walkthrough, snapshot, and recording tools act on the active flat board. They add no spatial-navigation or timeline commands. Past views are read-only, and past window pixels require an explicit recording. Agent grants and native browser capture permissions still apply. Both inline and floating mounts keep their beta theme inside the iframe.
+Invitations retain the mount prefix. An ordinary `mountCommon({ target, basePath, roomId })` joins an existing room with the password flow; that room's metadata overrides an `experience` preference. Older `?beta=space` links remain supported. Existing rooms, device authentication, IndexedDB history, and replay formats retain their compatibility names and need no new database or protocol migration.
 
-All board documents and their history are currently replicated to every browser; per-board documents do not yet provide selective loading. See [the beta guide](spatial-beta.md) for limits, storage behavior, and a short walkthrough. No additional server, account, relay, or cloud storage service is required.
+Space & Time edits one flat board at a time and provides multi-board templates, a 3D overview, and an automatically recorded timeline. Its per-board Loro documents and manifest synchronize directly between peers and autosave small edit records to IndexedDB, scoped to this installation's mount path. Occasional full-history snapshot compaction retains every revision; earlier device storage upgrades automatically. Destroying a mount stops collaboration and capture but leaves the device archive. Ending the room stops room access without deleting those device copies. Browser data removal or eviction can still lose them; **Export room** downloads a binary `.common` replay with history and optional built-in browser compression. Earlier JSON archives still import locally. The module requires no custom filesystem or additional storage process.
+
+Opt-in agent canvas, walkthrough, snapshot, and recording tools act on the active flat board. They add no spatial-navigation or timeline commands. Past views are read-only, and past window pixels require an explicit recording. Agent grants and native browser capture permissions still apply. Both inline and floating mounts keep their theme inside the iframe. Chat, guided participant checklists, and featured-screen rotation remain classic features; Space & Time does not yet expose those interfaces.
+
+All board documents and their history are currently replicated to every browser; per-board documents do not yet provide selective loading. See [the Space & Time guide](space-time.md) for limits, storage behavior, and a short walkthrough. No additional server, account, relay, or cloud storage service is required.

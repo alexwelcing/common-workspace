@@ -1,5 +1,6 @@
 /** Same-origin browser SDK. No room credentials or global app objects are exposed. */
 export type CommonMode = 'inline' | 'overlay' | 'floating';
+export type CommonExperience = 'classic' | 'space';
 export type CommonCapability = 'inspect' | 'canvas-write' | 'media-capture' | 'recording';
 export type CommonEditableEntityType = 'text' | 'sticky' | 'rectangle' | 'ellipse' | 'arrow' | 'draw' | 'image' | 'diagram';
 export interface CommonPoint { x: number; y: number; }
@@ -103,6 +104,8 @@ export interface MountCommonOptions {
   mode?: CommonMode;
   /** Default: true for inline, false for overlay/floating. */
   open?: boolean;
+  /** Personal workspace experience. Default: classic. Existing roomId metadata takes precedence. */
+  experience?: CommonExperience;
   roomId?: string;
   onReady?: (controller: CommonController) => void;
   onError?: (error: Error & { code?: string }) => void;

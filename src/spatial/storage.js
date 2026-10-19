@@ -1,3 +1,4 @@
+// Keep the original database name so promotion preserves existing device history.
 const DATABASE = 'common-spatial-beta';
 const VERSION = 2;
 const MAX_DOCUMENT_BYTES = 12 * 1024 * 1024;
@@ -92,10 +93,10 @@ export async function openSpatialStorage({ indexedDB = globalThis.indexedDB } = 
         document.segments.push({ id: segment.id, bytes: segment.bytes });
         totalBytes += segment.bytes.length;
         if (document.segments.length > MAX_DOCUMENT_SEGMENTS || totalBytes > MAX_WORKSPACE_BYTES) {
-          throw new Error('The saved edit journal exceeds the beta storage limit. Keep this tab open and download an archive.');
+          throw new Error('The saved edit journal exceeds the storage limit. Keep this tab open and download an archive.');
         }
       }
-      if (totalBytes > MAX_WORKSPACE_BYTES) throw new Error('This saved workspace exceeds the 64 MiB beta storage limit.');
+      if (totalBytes > MAX_WORKSPACE_BYTES) throw new Error('This saved workspace exceeds the 64 MiB storage limit.');
       return { metadata, documents: [...documents.values()] };
     },
     async save(id, { metadata, documents = [], updates = [], removeSegments = [] }) {

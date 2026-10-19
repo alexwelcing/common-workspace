@@ -8,19 +8,19 @@ The host retains its own `/api/health`, `/api/counter`, and `/echo` WebSocket. O
 
 If Common is already installed in your Bun project, this example is included: run `bun node_modules/common-workspace/example/server.mjs` and open `http://127.0.0.1:3100`. You can also copy that `example/` folder into your own project.
 
-Obtain `common-workspace-0.5.2.tgz` and its SHA-256 checksum from the [v1.5.2 release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.5.2), or ask its owner for both files. Release access requires read access to the private repository; installing an administrator-provided archive needs no cloud account or registry login. If you have the Common source checkout, build that tarball there first:
+Obtain `common-workspace-0.6.0.tgz` and its SHA-256 checksum from the [v1.6.0 release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.6.0), or ask its owner for both files. Release access requires read access to the private repository; installing an administrator-provided archive needs no cloud account or registry login. If you have the Common source checkout, build that tarball there first:
 
 ```sh
 bun install --frozen-lockfile
 bun run pack:module
 ```
 
-The resulting artifact is `artifacts/common-workspace-0.5.2.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
+The resulting artifact is `artifacts/common-workspace-0.6.0.tgz`. Copy this example into your own directory, then install that tarball by its actual path:
 
 ```sh
 cp -R /path/to/common/examples/bun-embed ./my-common-host
 cd my-common-host
-bun add /absolute/path/to/common-workspace-0.5.2.tgz
+bun add /absolute/path/to/common-workspace-0.6.0.tgz
 bun run start
 ```
 
@@ -61,8 +61,8 @@ The page displays SDK readiness and error codes beside the affected mount. If a 
 
 `controller.close()` hides a workspace while preserving its session; active sharing/recording remains indicated by the SDK launcher. `await controller.destroy()` releases that mount's media/session and removes its DOM. The example destroys controllers on page exit and before remounting. Its SIGINT/SIGTERM handlers close both server adapters and stop the host listener. `dataFile: null` keeps server room/session state in memory; restarting this sample removes that server state. A personal browser canvas remains browser-local under its own mount namespace.
 
-## Try Space & time beta
+## Choose Space & Time
 
-Open `http://127.0.0.1:3100/common-inline/?beta=space` to try the separate beta under the inline service's namespace. Start a shared beta room there and use its room ID in `mountCommon({ target, basePath: '/common-inline/', roomId })` to open it inside your host page; room metadata selects the beta automatically. Repeat under `/common-floating/` for that independent service. Existing rooms keep the standard canvas.
+The example's mounts default to classic. Open `http://127.0.0.1:3100/common-inline/?experience=space` for Space & Time under the inline service's namespace, or pass `experience: 'space'` to that mount's `mountCommon` options. Start a shared room there and use its room ID in `mountCommon({ target, basePath: '/common-inline/', roomId })` to open it inside your host page; room metadata takes precedence over the optional experience preference. Repeat under `/common-floating/` for that independent service. Existing rooms keep their experience, and earlier `?beta=space` links remain supported.
 
-Beta boards and their complete automatic history save as small edit records in this browser's IndexedDB. Hiding or destroying the mount leaves those device copies, while server access still ends when this in-memory example stops. Download **Export room** before removing browser data; **Import room** reopens a binary `.common` replay locally with its history and still accepts earlier JSON archives. The beta's spatial overview, timeline, current limits, and active-board agent behavior are covered in the [beta guide](https://github.com/alexwelcing/common-workspace/blob/main/docs/spatial-beta.md).
+Space & Time provides multiple boards, templates, a spatial overview, automatic history, and agent access to the active board. Chat, guided participant checklists, and featured-screen rotation are available in classic instead. Boards and their history save as small edit records in this browser's IndexedDB. Hiding or destroying the mount leaves those device copies, while server access still ends when this in-memory example stops. Download **Export room** before removing browser data; **Import room** reopens a binary `.common` replay locally with its history and still accepts earlier JSON archives. See the [Space & Time guide](https://github.com/alexwelcing/common-workspace/blob/main/docs/space-time.md) for controls, storage behavior, and limits.

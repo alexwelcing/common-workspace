@@ -18,6 +18,7 @@ import {DiagnosticLog, buildDiagnosticReport, mediaDiagnostics} from './diagnost
 import {createPerformanceIndex, createPerformanceReport, installPerformanceDebugApi} from './performance-index.js';
 import {openPerformancePanel, bindPerformanceIndicator} from './performance-panel.js';
 import {appBasePath, appPath, appURL, appWebSocketURL, appRoute, appStorageKey} from './app-path.js';
+import {isSpatialRoom, spacePath} from './experience.js';
 import {prepareImage, clipboardImages, MAX_IMAGE_BATCH} from './image-import.js';
 import {ModalController} from './modal-controller.js';
 import {SessionGuide} from './session-guide.js';
@@ -241,7 +242,7 @@ $('#app').innerHTML=`
 <aside class="sidebar">
  <a class="brand" href="${esc(appPath('/'))}" aria-label="Common home"><span class="brand-mark">${icon('Sprout',22)}</span>common</a>
  <button class="new-session primary" id="new-session" title="New session">${icon('Plus',17)} New session</button>
- <nav aria-label="Workspace"><button class="nav-item active" id="sandbox-nav" title="Your canvas">${icon('LayoutDashboard')} Your canvas</button><button class="nav-item" id="sessions-nav" title="Sessions">${icon('Layers')} Sessions <span class="recent-count">0</span></button></nav>
+ <nav aria-label="Workspace"><button class="nav-item active" id="sandbox-nav" title="Your canvas">${icon('LayoutDashboard')} Your canvas</button><button class="nav-item" id="sessions-nav" title="Sessions">${icon('Layers')} Sessions <span class="recent-count">0</span></button><button class="nav-item" id="space-time-nav" title="Space & time">${icon('Workflow')} Space &amp; time</button></nav>
  <div class="recent-block"><div class="nav-label">RECENT</div><div id="recent-rooms"></div></div>
  <div class="sidebar-bottom"><span class="sidebar-flower" aria-hidden="true">✳</span><button class="sidebar-help" id="how-it-works" title="How it works">${icon('CircleHelp',16)} How it works</button></div>
 </aside>
@@ -440,6 +441,7 @@ function setPanelOpen(open){if(!open)chatPanel?.setVisible(false);$('#right-pane
 $('#toggle-panel').onclick=()=>setPanelOpen($('#right-panel').classList.contains('collapsed'));
 $('#close-panel').onclick=()=>{setPanelOpen(false);$('#toggle-panel').focus({preventScroll:true})};
 $('#right-panel').addEventListener('keydown',event=>{if(event.key==='Escape'&&!event.defaultPrevented&&!event.isComposing){event.preventDefault();$('#close-panel').click()}},{signal:mainEvents.signal});
+$('#space-time-nav').onclick=()=>location.href=spacePath();
 $('#new-session').onclick=()=>createModal();$('#invite').onclick=()=>sandbox?createModal():inviteModal();$('#how-it-works').onclick=tour;$('#sessions-nav').onclick=showSessions;$('#sandbox-nav').onclick=()=>{if(sandbox)board.fit();else location.href=appPath('/')};
 $('#room-menu').onclick=roomMenu;
 cleanupPerformanceIndicator=bindPerformanceIndicator({monitor:performanceIndex,trigger:$('#room-menu')});
@@ -470,9 +472,49 @@ function createModal(){
   const unbindTemplate=bindSessionTemplates($('#create-form')),unbindStyle=bindAppearancePicker($('#create-form'));modalCleanup=()=>{unbindTemplate();unbindStyle()};
 }
 function inviteModal(){if(disposed||!auth)return;const url=appURL('/room/'+encodeURIComponent(auth.room.id));modal(`<span class="modal-symbol">${icon('UserPlus',25)}</span><h2 id="modal-title">Invite your team</h2><p>Anyone with this link and the session password can join. Windows load when you watch them.</p><label class="link-label">SESSION LINK<div class="copy-field"><input id="invite-link" readonly value="${esc(url)}"><button class="button" id="copy-link">${icon('Copy',16)} Copy</button></div></label><div class="invite-password">${icon('LockKeyhole',17)}<div><strong>Share the password separately.</strong><span>Your password is never included in the link.</span></div></div><button class="primary modal-submit" id="done-invite">Done ${icon('ArrowRight',16)}</button>`);const copyButton=$('#copy-link'),linkInput=$('#invite-link'),revision=modalRevision;copyButton.onclick=async()=>{const current=()=>!disposed&&modalRevision===revision&&copyButton.isConnected;try{await navigator.clipboard.writeText(url);if(!current())return;copyButton.innerHTML=icon('Check',16)+' Copied';toast('Session link copied')}catch{if(!current())return;linkInput.select();toast('Select and copy the session link')}};$('#done-invite').onclick=closeModal}
-async function joinFromPath(id){if(disposed)return;const lookup=++roomLookupGeneration,generation=sessionGeneration,revision=modalRevision,current=()=>!disposed&&lookup===roomLookupGeneration&&generation===sessionGeneration&&revision===modalRevision;const saved=savedAuth(id);if(saved){await enterRoom(saved);return}let room;try{({room}=await api('/api/rooms/'+encodeURIComponent(id)));if(!current())return}catch(err){if(!current())return;toast(err.message);if(!sandbox){location.replace(appPath('/'));return}history.replaceState(null,'',appPath('/'));return}modal(`<span class="modal-symbol">${icon('DoorOpen',26)}</span><h2 id="modal-title">${esc(room.name)}</h2><p>Enter your name and the session password.</p><form><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" autocomplete="given-name" required></label><label>Room password<input name="password" type="password" required autocomplete="current-password" placeholder="The password from your host"></label><button class="primary modal-submit">Join session ${icon('ArrowRight',17)}</button></form>`,async e=>{e.preventDefault();const form=e.target,b=form.querySelector('button'),current=dialogOperation(form);b.disabled=true;try{const vals=Object.fromEntries(new FormData(form));const result=await api('/api/rooms/'+encodeURIComponent(id)+'/join',vals);if(!current())return;result.displayName=vals.displayName;saveAuth(result);saveRoom(result.room);closeModal();await enterRoom(result)}catch(err){if(!current())return;formError(form,err.message);b.disabled=false}})}
+function useClassicRoom(room) {
+  if (!isSpatialRoom(room)) return true;
+  location.replace(spacePath('/room/' + encodeURIComponent(room.id)));
+  return false;
+}
+
+async function joinFromPath(id) {
+  if (disposed) return;
+  const lookup = ++roomLookupGeneration, generation = sessionGeneration, revision = modalRevision;
+  const current = () => !disposed && lookup === roomLookupGeneration && generation === sessionGeneration && revision === modalRevision;
+  const saved = savedAuth(id);
+  if (saved) { await enterRoom(saved); return; }
+  let room;
+  try {
+    ({ room } = await api('/api/rooms/' + encodeURIComponent(id)));
+    if (!current()) return;
+  } catch (error) {
+    if (!current()) return;
+    toast(error.message);
+    if (!sandbox) { location.replace(appPath('/')); return; }
+    history.replaceState(null, '', appPath('/'));
+    return;
+  }
+  if (!useClassicRoom(room)) return;
+  modal(`<span class="modal-symbol">${icon('DoorOpen',26)}</span><h2 id="modal-title">${esc(room.name)}</h2><p>Enter your name and the session password.</p><form><label>Your name<input name="displayName" placeholder="Your name" maxlength="60" autocomplete="given-name" required></label><label>Room password<input name="password" type="password" required autocomplete="current-password" placeholder="The password from your host"></label><button class="primary modal-submit">Join session ${icon('ArrowRight',16)}</button></form>`, async event => {
+    event.preventDefault();
+    const form = event.target, button = form.querySelector('button'), current = dialogOperation(form);
+    button.disabled = true;
+    try {
+      const values = Object.fromEntries(new FormData(form));
+      const result = await api('/api/rooms/' + encodeURIComponent(id) + '/join', values);
+      if (!current() || !useClassicRoom(result.room)) return;
+      result.displayName = values.displayName;
+      saveAuth(result); saveRoom(result.room); closeModal();
+      await enterRoom(result);
+    } catch (error) {
+      if (!current()) return;
+      formError(form, error.message); button.disabled = false;
+    }
+  });
+}
 async function enterRoom(result,isNew=false){
-  if(disposed)return;
+  if(disposed||!useClassicRoom(result.room))return;
   sessionGeneration++;
   agentPermissions?.revoke('session-changed');webMCP?.refresh();
   capture?.stop().catch(()=>{});walkthrough?.stop();
@@ -560,7 +602,8 @@ async function connect(){
   const runtime=getRuntimeConfig().available?getRuntimeConfig():await refreshRuntimeConfiguration();
   if(!current())return;
   try{
-    await api('/api/rooms/'+encodeURIComponent(roomAuth.room.id)+'/session',undefined,{headers:{Authorization:'Bearer '+roomAuth.token}});
+    const {room}=await api('/api/rooms/'+encodeURIComponent(roomAuth.room.id)+'/session',undefined,{headers:{Authorization:'Bearer '+roomAuth.token}});
+    if(!current()||!useClassicRoom(room))return;
   }catch(error){
     if(!current())return;
     if(error.status===401||error.status===404){
@@ -578,6 +621,7 @@ async function connect(){
     let m;try{m=JSON.parse(e.data)}catch{return}
     switch(m.type){
       case 'init':{
+        if(!useClassicRoom(m.room))return;
         diagnostics.record('request',{requestId:m.diagnostics?.requestId});
         auth.room=m.room;applyRoomAppearance(m.room.appearance);saveAuth(auth);
         sessionCapabilities=m.capabilities||{};workshop=m.workshop||null;participants=m.participants;auth.isAdmin=!!m.self?.isAdmin;saveAuth(auth);setConnection('connected');chat=m.chat||[];renderChat();
@@ -751,7 +795,7 @@ function downloadPerformanceReport(snapshot){
   const link=document.createElement('a');link.href=url;link.download='common-performance-report.json';link.click();
   objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);
 }
-function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="performance-menu">${icon('Sprout',17)} Performance</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#performance-menu').onclick=showPerformance;modalCleanup=bindPerformanceIndicator({monitor:performanceIndex,item:$('#performance-menu')});$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
+function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="space-time-menu">${icon('Workflow',17)} Open Space &amp; time</button><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="performance-menu">${icon('Sprout',17)} Performance</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#space-time-menu').onclick=()=>location.href=spacePath();$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#performance-menu').onclick=showPerformance;modalCleanup=bindPerformanceIndicator({monitor:performanceIndex,item:$('#performance-menu')});$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented||e.isComposing||disposed)return;
   if(e.key==='Escape'){
@@ -819,4 +863,4 @@ webMCP=installWebMCP({api:agentAPI,permissions:agentPermissions,onStatus:toast})
 window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:false}}));
 }
 loadAgentTools().catch(()=>toast('Agent tools could not be loaded. Reload to try again.'));
-const path=appRoute().match(/^\/room\/([^/]+)$/);if(path){let id;try{id=decodeURIComponent(path[1])}catch{}if(id&&/^[A-Za-z0-9_-]{1,100}$/.test(id))joinFromPath(id);else{history.replaceState(null,'',appPath('/'));toast('This session link is not valid. Ask the host for a new invitation.')}}
+const path=appRoute().match(/^\/room\/([^/]+)\/?$/);if(path){let id;try{id=decodeURIComponent(path[1])}catch{}if(id&&/^[A-Za-z0-9_-]{1,100}$/.test(id))joinFromPath(id);else{history.replaceState(null,'',appPath('/'));toast('This session link is not valid. Ask the host for a new invitation.')}}

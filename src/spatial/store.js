@@ -141,7 +141,7 @@ function normalBoardContents(data = {}, expectedId) {
   }
   const entities = data.entities ?? {};
   const deleted = data.deleted ?? {};
-  if (!entities || typeof entities !== 'object' || Array.isArray(entities) || Object.keys(entities).length > MAX_ENTITIES) throw new Error('A board exceeds the 1,000-object beta limit.');
+  if (!entities || typeof entities !== 'object' || Array.isArray(entities) || Object.keys(entities).length > MAX_ENTITIES) throw new Error('A board exceeds the 1,000-object limit.');
   if (!deleted || typeof deleted !== 'object' || Array.isArray(deleted) || Object.keys(deleted).length > MAX_ENTITIES
     || Object.entries(deleted).some(([id, value]) => !idValid(id) || value !== true)) {
     throw new Error('Invalid spatial object deletion history.');
@@ -162,7 +162,7 @@ function normalState(manifest, documents, { historical = false } = {}) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || Object.keys(manifest).some(key => !['boards', 'room'].includes(key))) throw new Error('Invalid spatial room manifest.');
   const boardRecords = manifest.boards ?? {};
   if (!boardRecords || typeof boardRecords !== 'object' || Array.isArray(boardRecords) || Object.keys(boardRecords).length > MAX_BOARDS) {
-    throw new Error('This workspace exceeds the 64-board beta limit.');
+    throw new Error('This workspace exceeds the 64-board limit.');
   }
   const boards = [];
   for (const [id, raw] of Object.entries(boardRecords)) {
@@ -296,7 +296,7 @@ class SpatialStore {
       },
       readBoardOrder: () => {
         const ids = Object.keys(this.manifest().getMap('boards').toJSON());
-        if (ids.length > MAX_BOARDS) throw new Error('This workspace exceeds the 64-board beta limit.');
+        if (ids.length > MAX_BOARDS) throw new Error('This workspace exceeds the 64-board limit.');
         return ids;
       },
       compareEntities: compareSharedEntities,
@@ -436,7 +436,7 @@ class SpatialStore {
     } else {
       this.documents.set('manifest', configure(new LoroDoc()));
       this.documentSizes.set('manifest', this.manifest().export({ mode: 'snapshot' }).length);
-      if (seed?.boards?.length > MAX_BOARDS) throw new Error('This workspace exceeds the 64-board beta limit.');
+      if (seed?.boards?.length > MAX_BOARDS) throw new Error('This workspace exceeds the 64-board limit.');
       if (!seed?.empty) {
         this.updateRoom({ title: seed?.title || 'Spatial workspace', appearance: seed?.appearance });
         for (const board of seed?.boards || [{ name: 'Main board' }]) this.addBoard(board);
@@ -498,9 +498,9 @@ class SpatialStore {
   }
 
   checkHistorySizes(replacements) {
-    for (const size of replacements.values()) if (size > MAX_DOCUMENT) throw new Error('This board history exceeds the 12 MiB beta limit. Download an archive and continue in a fresh branch.');
+    for (const size of replacements.values()) if (size > MAX_DOCUMENT) throw new Error('This board history exceeds the 12 MiB limit. Download an archive and continue in a fresh branch.');
     const total = [...this.documentSizes].reduce((sum, [id, size]) => sum + (replacements.has(id) ? 0 : size), 0) + [...replacements.values()].reduce((sum, size) => sum + size, 0);
-    if (total > MAX_WORKSPACE_HISTORY) throw new Error('This workspace history exceeds the 40 MiB beta limit. Download an archive and continue in a fresh branch.');
+    if (total > MAX_WORKSPACE_HISTORY) throw new Error('This workspace history exceeds the 40 MiB limit. Download an archive and continue in a fresh branch.');
   }
 
   queueUpdate(id, bytes) {
@@ -516,7 +516,7 @@ class SpatialStore {
       entries.clear();
       if (snapshot.length > MAX_DOCUMENT || this.pendingBytes + snapshot.length > MAX_ARCHIVE) {
         this.forceSnapshot.add(id);
-        this.status('error', 'Unsaved history exceeds the beta memory limit. Download an archive before continuing.');
+        this.status('error', 'Unsaved history exceeds the memory limit. Download an archive before continuing.');
         return;
       }
       bytes = snapshot;
@@ -667,14 +667,14 @@ class SpatialStore {
           if (!previousDocument?.bytes || this.forceSnapshot.has(id)
             || segments.length + updates.length >= COMPACT_SEGMENTS || journalBytes >= COMPACT_BYTES) {
             const bytes = this.documents.get(id).export({ mode: 'snapshot' });
-            if (bytes.length > MAX_DOCUMENT) throw new Error('This board history exceeds the beta storage limit. Download an archive and continue in a fresh branch.');
+            if (bytes.length > MAX_DOCUMENT) throw new Error('This board history exceeds the storage limit. Download an archive and continue in a fresh branch.');
             documents.push({ id, bytes, token: newId() });
             removeSegments.push(...segments.map(segment => ({ document: id, id: segment.id })));
             workspaceBytes += bytes.length - (previousDocument?.bytes?.length || 0) - segments.reduce((sum, segment) => sum + segment.bytes.length, 0);
           }
         }
         workspaceBytes += queued.reduce((sum, update) => sum + update.bytes.length, 0);
-        if (workspaceBytes > MAX_ARCHIVE) throw new Error('This autosaved workspace exceeds the 64 MiB beta limit. Download an archive and continue in a fresh branch.');
+        if (workspaceBytes > MAX_ARCHIVE) throw new Error('This autosaved workspace exceeds the 64 MiB limit. Download an archive and continue in a fresh branch.');
         await this.storage.save(this.id, {
           metadata: {
             version: SCHEMA,
@@ -728,7 +728,7 @@ class SpatialStore {
   }
 
   addBoard(value = {}) {
-    if (this.manifest().getMap('boards').keys().length >= MAX_BOARDS) throw new Error('The spatial beta supports up to 64 boards per workspace.');
+    if (this.manifest().getMap('boards').keys().length >= MAX_BOARDS) throw new Error('The spatial workspace supports up to 64 boards per workspace.');
     const id = idValid(value.id) ? value.id : newId();
     if (this.manifest().getMap('boards').get(id)) throw new Error('This board already exists.');
     const board = normalBoard(value, id);
@@ -799,7 +799,7 @@ class SpatialStore {
       for (const field of fields) if (input[field] !== undefined) candidate[field] = input[field];
       let contents;
       if (!previous) {
-        if (entities.keys().length >= MAX_ENTITIES) throw new Error('This board has reached its 1,000-object beta limit.');
+        if (entities.keys().length >= MAX_ENTITIES) throw new Error('This board has reached its 1,000-object limit.');
         contents = this.presentation.contents(boardId) || normalBoardContents(doc.toJSON(), boardId);
         candidate.orderKey ||= generateKeyBetween(contents.objects.at(-1)?.orderKey ?? null, null);
       }

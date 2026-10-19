@@ -1,26 +1,31 @@
 # Common
 
-A browser workspace for password-protected team sessions: invite links, a shared canvas, text, sticky notes, images, shapes, freehand drawing, Mermaid and PlantUML diagrams, chat, presence, simultaneous window sharing, and shared layer controls.
+A browser workspace for password-protected team sessions: invite links, a shared canvas, text, sticky notes, images, shapes, freehand drawing, Mermaid and PlantUML diagrams, presence, simultaneous window sharing, and shared layer controls. The default **classic canvas** also includes chat and guided team sessions. **Space & Time** is a regular optional experience for multiple boards and automatic history.
 
 Try the hosted app at [commonwork.netlify.app](https://commonwork.netlify.app/), or [run it on your own laptop](public/self-hosting.html). The standalone version needs Bun and a local room file; it needs no Netlify account, Postgres database, or hosted API key.
 
 WebAssembly runs the canvas geometry kernel for grid snapping and drawing simplification. The interface is JavaScript, with a JavaScript geometry fallback. Yjs synchronizes standard canvas content directly between browsers over a sparse WebRTC network. Video connections are selected separately, so joining a room does not require receiving everyone's screen. The standalone Bun server handles temporary room access, presence, chat, and connection signaling on your own machine. The optional Netlify deployment uses Functions and a small Postgres database for those same tasks. The frontend reads `/api/config` at startup, so the same built files select the local WebSocket or hosted polling transport at runtime.
 
-## Space & time beta
+## Choose your workspace
 
-Open [Space & time beta](https://commonwork.netlify.app/?beta=space), or add `?beta=space` to your local Common address. This separate, opt-in experience ships with the normal app; existing rooms keep their familiar canvas. Beta invitations open the right experience automatically.
+| Experience | Choose it for |
+| --- | --- |
+| **Classic canvas**, the default | A shared canvas with chat, participant checklists, and host-controlled featured-screen rotation. |
+| **Space & Time** | Multiple boards, board templates, a 3D overview, and persistent automatic history. Agents work on the active board; chat and guided participant checklists are not yet available in this experience. |
+
+Open [Space & Time](https://commonwork.netlify.app/?experience=space), or add `?experience=space` to your local Common address. Both experiences ship in the normal app. Existing rooms keep their experience, and invitations use room metadata to open the correct interface. The older `?beta=space` link remains supported.
 
 Use **Work** to edit a board, then **Space** to step outside and arrange boards along X, Y, and Z with independent rotations. The timeline records changes automatically as you work. Explore the read-only past while teammates continue live, **Return to live**, or **Branch from here** into a new local workspace. Each browser keeps its own view and time position.
 
 Boards and their history autosave as small edit records in this browser's IndexedDB and synchronize directly between connected peers using Loro's WebAssembly engine. The save indicator reports local persistence, not a server backup. **Export room** downloads a compact binary `.common` replay with history, optionally compressed by the browser; **Import room** opens it locally and still accepts earlier JSON archives. Clearing browser data or browser storage eviction can remove device copies, so export work you want to keep. Canvas replay reconstructs structured edits; past screen pixels require an explicit recording.
 
-See [the beta guide](docs/spatial-beta.md) for templates, themes, local use, embedding, agents, and current limits. The beta currently replicates every board and its history to each participant; it has no measured large-room capacity guarantee.
+See [the Space & Time guide](docs/space-time.md) for templates, themes, local use, embedding, agents, and current limits. Space & Time currently replicates every board and its history to each participant; it has no measured large-room capacity guarantee. It does not convert existing classic canvases into spatial rooms.
 
 ## Embed in an existing Bun tool
 
 Common includes a portable module for an inline canvas panel or a floating workspace inside your own application. `createCommon` from `common-workspace/bun` attaches to your existing fetch/WebSocket server; `mountCommon` from `common-workspace/client` loads the interface in a same-origin iframe. It opens no additional port, needs no UI framework, and defaults to private networking and in-memory rooms. Your authentication can protect the mount, while Common room passwords and visible agent grants still apply.
 
-Download the package and its SHA-256 checksum from the [v1.5.2 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.5.2), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.5.2.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
+Download the package and its SHA-256 checksum from the [v1.6.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.6.0), or obtain them from your administrator. Release assets require access to this private repository. Install the downloaded package with `bun add /absolute/path/common-workspace-0.6.0.tgz`. From a source checkout with read access, `bun run pack:module` builds that file under `artifacts/`; no registry publishing or Cloudflare account is required. See [the integration guide](docs/embedding.md) for server routing, browser mounting, capture permissions, and process lifetime, or the [complete Bun example](examples/bun-embed/README.md).
 
 The package includes the example: run `bun node_modules/common-workspace/example/server.mjs` in a project where you installed it, then open `http://127.0.0.1:3100`.
 
@@ -99,9 +104,9 @@ After the first deploy, open the HTTPS site in two separate browser profiles, cr
 
 For local Netlify development, authenticate the Netlify CLI, link the project, run `bun run dev:netlify`, then apply local migrations in a second terminal with `bunx netlify-cli@26.0.0 database migrations apply`. Netlify applies the committed migrations automatically on hosted deploys. The regular `bun run dev` uses the standalone Bun/WebSocket backend.
 
-## Guided team sessions
+## Guided team sessions in classic
 
-Choose **Team walkthrough**, **Weekly check-in**, or **Design review** when creating a session. Each preset starts a canvas with prompts and a **Session guide**. Add expected names and edit the checklist before starting, or choose **Open canvas** for a freeform room.
+In the classic canvas, choose **Team walkthrough**, **Weekly check-in**, or **Design review** when creating a session. Each preset starts a canvas with prompts and a **Session guide**. Add expected names and edit the checklist before starting, or choose **Open canvas** for a freeform room. Space & Time has separate board templates; it does not yet have this participant-checklist or featured-screen interface.
 
 1. The host shares the session link and password, then approves their main window with **Share a window**. The first host window is featured automatically.
 2. Each person joins, chooses their name in the plan (or joins as an additional participant), chooses **Share a window** or **Watch & contribute**, and completes their checklist. Watching does not require capture or count an unavailable window as shared. The host sees waiting names, joined people, shared-window status, and progress.
@@ -112,7 +117,7 @@ The planning list is not an identity check or invitation restriction. Everyone s
 
 ## Give a room its own style
 
-Choose **Room style** while creating a session, or open **Canvas options → Room style** afterward. Start with **Meadow**, **Rose**, **Lagoon**, or **Lavender**, then choose custom accent and canvas colors and a **Little dots**, **Quiet grid**, or **Plain canvas** background. The preview stays in the editor until you apply it.
+In classic, choose **Room style** while creating a session, or open **Canvas options → Room style** afterward. In Space & Time, open **Room → Room style**. Start with **Meadow**, **Rose**, **Lagoon**, or **Lavender**, then choose custom accent and canvas colors and a **Little dots**, **Quiet grid**, or **Plain canvas** background. The preview stays in the editor until you apply it.
 
 The host controls the shared style; everyone receives it when joining, reconnecting, or reloading. Room style works in freeform and guided rooms on Netlify, standalone Bun, and embedded installations. Participants can inspect the style, while only the host can apply changes. Existing rooms start in Meadow.
 
@@ -120,7 +125,7 @@ Room colors style the interface and background. Existing notes, drawings, and di
 
 ## Phones and tablets
 
-Join with the same link and password. Choose **Watch & contribute** in the Session guide to take part without sharing a window; complete your manual checklist items, chat, and edit the canvas. The host sees your participation choice and readiness. You can change that choice later without losing progress. Choosing a mode never opens a capture picker, stops capture, or resumes a paused video.
+Join with the same link and password. In a classic guided room, choose **Watch & contribute** in the Session guide to take part without sharing a window; complete your manual checklist items, chat, and edit the canvas. The host sees your participation choice and readiness. You can change that choice later without losing progress. Choosing a mode never opens a capture picker, stops capture, or resumes a paused video. Space & Time uses its board and timeline interface instead of the classic Session guide and chat.
 
 Use two fingers to pan and pinch to zoom. With one finger, drag objects or use a drawing tool; select an object and tap **Edit** to write. Starting a pinch cancels the unfinished one-finger edit. **Focus** enlarges a window or note for your view and hides the mobile drawing tools; **Back to canvas** restores them. Pinching leaves Focus so you can explore independently. Touch controls have larger targets, and People/chat has its own close button.
 
@@ -130,10 +135,12 @@ Screen capture and recording depend on the actual browser APIs, rather than a ph
 
 ## Sharing and collaboration
 
+The canvas controls below describe classic. Space & Time shares the drawing and window-capture foundations, with its own [board, overview, and history controls](docs/space-time.md#work-in-space-and-time).
+
 - Rooms have no fixed participant admission cap. Authentication, rate limits, connection leases, canvas budgets, and hosting resources still apply. See the scaling limits below before choosing a room size.
 - Each participant can share one selected window or screen at a time. The browser requires a click and its native capture picker. An operating system window cannot be dragged directly into a web page to grant capture access. Image files can be dropped onto the canvas.
 - Screen sharing is video-only. Use **Watch window** or **Pause view** on a remote screen tile to choose the video this browser receives. The frontend defaults to watching up to four remote windows, or two when reported memory or CPU resources are low; a hidden tab pauses its remote video subscriptions. Pausing is local and does not stop the presenter's capture or change shared annotations. Sharing pixels does not provide remote control of another participant's computer.
-- Standard rooms use Yjs with a shared map for each object property. Reordering an object merges with another person’s resize or text change. Concurrent changes to the same property resolve deterministically. Canvas updates are forwarded across a sparse network, with five-second state-vector checks between neighbors to repair missed updates; the canvas does not promise offline editing. Space & time beta uses separate Loro documents and automatic history, described above.
+- Classic rooms use Yjs with a shared map for each object property. Reordering an object merges with another person’s resize or text change. Concurrent changes to the same property resolve deterministically. Canvas updates are forwarded across a sparse network, with five-second state-vector checks between neighbors to repair missed updates; the canvas does not promise offline editing. Space & Time uses separate Loro documents and automatic history, described above.
 - Select an object to use Bring to front, Bring forward, Send backward, Send to back, and Lock position. Open Layers at the top right of the canvas to select a covered object. Position locks prevent accidental dragging/resizing for everyone; participants can unlock the object. Text remains editable. Screen tiles remain under their owner’s control.
 - Use **Focus** or F to enlarge a selected object just in your browser; Escape or **Back to canvas** restores your previous view. Other objects are hidden locally during Focus. It respects paused windows, and canvas snapshots/recordings capture that focused view. SVG export still includes the whole canvas.
 - Move and resize with the mouse or pointer; hold Shift while resizing to preserve proportions. Resize targets stay usable at every zoom. Arrow keys move a selected object, Alt + arrows resize it, and Shift makes 10-pixel steps. Use **Edit** or Enter for text and diagram editing. Ctrl/Cmd + ] or [ moves a layer one place, with Shift moving it to the front/back.
@@ -141,7 +148,7 @@ Screen capture and recording depend on the actual browser APIs, rather than a ph
 - Drop up to five images at the pointer, pick multiple files, or paste a screenshot onto the canvas without clipboard-read access. Batches are spaced apart and undo together. Text and editable-field paste remain unchanged; an import finishing after a session change is discarded.
 - Chat keeps your draft and cursor through incoming messages, participant updates, panel switches, and reconnects. Enter sends; Shift + Enter adds a line. Drafts live only in this mounted tab/session and are lost on reload or room change. Sending keeps the draft until the server echoes the message; uncertain delivery keeps it for review, without automatic retries. Unread badges and a new-message jump let you read earlier messages without being scrolled away.
 - Dialogs keep keyboard focus inside, support Escape, and return to their opening control. Replacing a dialog keeps the original opener. Background controls stay inactive until dismissal, and destructive session confirmation starts on **Keep session open**.
-- New room canvas documents live in browser memory, including shared images, layer order and locks. A late joiner gets the document from connected participants. Once every participant closes the room, its canvas is gone unless someone exported it. The personal canvas still saves on the current device.
+- New classic room canvas documents live in browser memory, including shared images, layer order and locks. A late joiner gets the document from connected participants. Once every participant closes the room, its canvas is gone unless someone exported it. The personal canvas still saves on the current device. Space & Time also saves its boards and history to each participating browser's IndexedDB.
 - Screen tiles are removed when their owner disconnects. The room service retains room metadata and recent chat for the room's short lifetime. Ending a room revokes access. Only the standalone Bun service supports older rooms with server-based canvas storage.
 - Mermaid renders locally. PlantUML requires explicit consent to send the complete diagram source to the public `plantuml.com` renderer. Avoid confidential source in external diagrams.
 
@@ -181,7 +188,7 @@ bun run start
 
 Open **Canvas options → Connection details** to see the effective profile/build, connected canvas neighbors, watched windows, queued bytes, and configured relay status. **Download connection report** saves counts, connection states, and generated request IDs for correlation, without room IDs, canvas content, credentials, or recordings.
 
-Open **Canvas options → Performance**, or **Room → Performance** in the spatial beta, for a local responsiveness index, measured work, and workload context. Measurements stay in the browser; reports download only when requested. See the [performance guide](docs/performance.md) for coverage, interpretation, and comparing changes.
+Open **Canvas options → Performance**, or **Room → Performance** in Space & Time, for a local responsiveness index, measured work, and workload context. Measurements stay in the browser; reports download only when requested. See the [performance guide](docs/performance.md) for coverage, interpretation, and comparing changes.
 
 `/api/config` identifies the effective transport, profile, protocol, and build; `/api/health` checks the hosting adapter's health. The public configuration contains STUN settings and a TURN-availability flag, never credentials. Both adapters share validation and session policy. Hosted polling delivers targeted batches, skips unchanged rosters, catches up immediately when more events remain, and retries only idempotent signaling when the server advertises support. Chat is not retried automatically.
 
@@ -222,7 +229,7 @@ Run `bun run doctor`, then `bun run local` for a fresh build and a private local
 
 For code boundaries, lifecycle and data invariants, troubleshooting, and the release checklist, see the [maintainer guide](docs/maintaining.md).
 
-The spatial beta's compact controls use shared, framework-free [workspace UI primitives](docs/workspace-ui.md) for shape, motion, keyboard behavior, and lifecycle cleanup.
+Space & Time's compact controls use shared, framework-free [workspace UI primitives](docs/workspace-ui.md) for shape, motion, keyboard behavior, and lifecycle cleanup.
 
 Use `bun run check` for the default quality check: one build and five real desktop/phone journeys, with the failing step, readable report, and screenshots if something breaks. It starts and cleans up its own temporary local app. Existing Chrome/Chromium works; otherwise install a browser once with `bunx playwright-core install chromium`. Deeper checks are explicit, such as `bun run check:deep canvas` or `bun run check:deep hosted`. See [the validation guide](docs/validation.md) for setup, hosted checks, failure evidence, and the short real-device walkthrough. `bun run test` runs the same lean default.
 

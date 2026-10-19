@@ -98,16 +98,6 @@
   white-space: nowrap;
 }
 
-.beta-label > span {
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: var(--sage, #e7eddf);
-  color: var(--beta-accent-ink);
-  font-size: 8px;
-  font-weight: 650;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
 
 .beta-room-heading {
   flex: 1;
@@ -685,6 +675,118 @@
   color: var(--ink, #34483b);
   border: 1px solid var(--border, #e3dfd3);
   font-size: 10px;
+}
+
+.beta-share-control[aria-busy='true'] {
+  background: #f4e8c3;
+  color: #6c5c35;
+}
+
+.beta-capture-status {
+  position: absolute;
+  z-index: 92;
+  right: 18px;
+  bottom: 87px;
+  width: 330px;
+  max-width: calc(100% - 36px);
+  max-height: max(82px, calc(100% - 165px));
+  overflow: auto;
+  padding: 13px 43px 13px 15px;
+  border-radius: 16px 5px 16px 16px;
+  color: var(--ink, #34483b);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.beta-capture-copy strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.beta-capture-copy p {
+  margin: 3px 0 0;
+  color: var(--muted, #626f5e);
+  overflow-wrap: anywhere;
+}
+
+.beta-capture-help {
+  margin-top: 6px;
+  color: var(--muted, #626f5e);
+}
+
+.beta-capture-help summary {
+  width: fit-content;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.beta-capture-help ul {
+  margin: 8px 0;
+  padding-left: 17px;
+}
+
+.beta-capture-help li + li {
+  margin-top: 6px;
+}
+
+.beta-capture-help a,
+.beta-capture-help small {
+  display: block;
+  margin-top: 6px;
+}
+
+.beta-capture-help a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.beta-capture-help small {
+  font-size: 10px;
+}
+
+.beta-capture-dismiss {
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 22px;
+}
+
+[data-beta-mode='space'] .beta-capture-status {
+  bottom: 202px;
+  max-height: max(82px, calc(100% - 280px));
+}
+
+@media (pointer: coarse), (max-width: 680px) {
+  .beta-capture-status {
+    right: 11px;
+    max-width: calc(100% - 22px);
+    padding-right: 49px;
+  }
+
+  .beta-capture-dismiss {
+    width: 44px;
+    height: 44px;
+  }
+
+  .beta-capture-help summary,
+  .beta-capture-help a {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  [data-beta-mode='space'] .beta-capture-status {
+    bottom: 242px;
+    max-height: max(82px, calc(100% - 320px));
+  }
 }
 
 .beta-navigation-panel {
@@ -1293,10 +1395,6 @@
     gap: 4px;
   }
 
-  .beta-label > span {
-    padding: 1px 4px;
-    font-size: 6px;
-  }
 
   .beta-room-heading {
     text-align: right;

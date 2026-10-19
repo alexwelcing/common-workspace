@@ -41,7 +41,7 @@ function jsonValue(value, depth = 0) {
 }
 
 /** Mount the same-origin Common Bun application without touching host globals. */
-export function mountCommon({ target, basePath = '/__common/', mode = 'overlay', open: initialOpen, roomId,
+export function mountCommon({ target, basePath = '/__common/', mode = 'overlay', open: initialOpen, roomId, experience = 'classic',
   onReady, onError, onOpenChange,
 } = {}) {
   const document = target?.ownerDocument;
@@ -49,11 +49,14 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
   if (!window || !(target instanceof window.Element) || typeof target.append !== 'function') throw error('SDK_INVALID_TARGET', 'mountCommon needs a browser Element as its target. Call it after the host page has mounted.');
   if (mode === 'floating') mode = 'overlay';
   if (!['overlay', 'inline'].includes(mode)) throw error('SDK_INVALID_MODE', 'Common mode must be inline or overlay.');
+  if (!['classic', 'space'].includes(experience)) throw error('SDK_INVALID_EXPERIENCE', 'Common experience must be classic or space.');
   if (initialOpen !== undefined && typeof initialOpen !== 'boolean') throw error('SDK_INVALID_OPTIONS', 'Common open must be a boolean.');
   try { basePath = normalizeBasePath(basePath); } catch { throw error('SDK_INVALID_BASE_PATH', 'Common basePath must be an absolute same-origin path such as /__common/.'); }
   if (window.location.origin === 'null') throw error('SDK_INVALID_ORIGIN', 'Common embedding requires an HTTP or HTTPS host origin.');
   if (roomId !== undefined && (typeof roomId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(roomId))) throw error('SDK_INVALID_ROOM_ID', 'Common roomId must be a valid room identifier from an invitation.');
   const route = new URL(basePath + (roomId ? `room/${encodeURIComponent(roomId)}` : ''), window.location.origin);
+  // Personal mounts choose a view; existing rooms select their own document engine.
+  if (!roomId && experience === 'space') route.searchParams.set('experience', 'space');
   const AbortControllerClass = window.AbortController || globalThis.AbortController;
   const setTimer = window.setTimeout.bind(window), clearTimer = window.clearTimeout.bind(window);
   const host = document.createElement('div'); host.setAttribute('data-common-embed', ''); host.dataset.mode = mode;
