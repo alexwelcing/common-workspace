@@ -4,17 +4,17 @@ import { Walkthrough } from '../walkthrough.js';
 import { installAgentTools } from '../agent-tools.js';
 import { installWebMCP } from '../webmcp.js';
 
-/** Opt-in tools for the selected flat board. Spatial navigation stays with the beta UI. */
-export function installBetaAgent({
+/** Opt-in tools for the selected flat board. Spatial navigation stays with the spatial UI. */
+export function installSpatialAgent({
   getBoard, getModel, getContext, getSession = getModel,
   getWindowStream = () => null, onStatus = () => {}, onChange = () => {},
   buttonParent = document.body, onRequestWindowShare = () => {},
   getSharingState = () => ({}), signal,
 } = {}) {
   for (const getter of [getBoard, getModel, getContext, getSession]) {
-    if (typeof getter !== 'function') throw new TypeError('Beta agent tools need board, model, context, and session getters.');
+    if (typeof getter !== 'function') throw new TypeError('Spatial agent tools need board, model, context, and session getters.');
   }
-  if (signal?.aborted) throw new DOMException('Beta agent tools were canceled.', 'AbortError');
+  if (signal?.aborted) throw new DOMException('Spatial agent tools were canceled.', 'AbortError');
   if (Object.getOwnPropertyDescriptor(window, 'commonAgent')) throw new Error('Agent tools are already installed in this browser. Close them before opening another canvas.');
 
   let destroyed = false, enabled = false, refreshing = false;

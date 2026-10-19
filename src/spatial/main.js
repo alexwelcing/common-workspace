@@ -8,19 +8,21 @@ import {
   readAppearancePicker,
 } from '../room-appearance.js';
 import { restoreAppearance } from '../../lib/room-appearance.mjs';
-import { appPath, appURL, appRoute, appStorageKey } from '../app-path.js';
+import { appPath, appRoute, appStorageKey } from '../app-path.js';
+import { isSpatialRoom, spacePath } from '../experience.js';
 import { ModalController } from '../modal-controller.js';
 import { installMobileViewport } from '../mobile-viewport.js';
 import { prepareImage, clipboardImages, MAX_IMAGE_BATCH } from '../image-import.js';
 import { ScreenSharing } from '../media.js';
+import { displayCaptureSupport } from '../browser-permissions.js';
 import { ScreenSubscriptions } from '../screen-subscriptions.js';
 import { loadRuntimeConfig, getRuntimeConfig, cancelRuntimeConfigLoad } from '../runtime-config.js';
 import { createSpatialStore, parseSpatialArchive } from './store.js';
 import { openSpatialStorage } from './storage.js';
 import { writeReplayArchive, readReplayArchive } from './archive.js';
-import { mountBetaView } from './view.js';
-import { createBetaSession } from './session.js';
-import { installBetaAgent } from './agent.js';
+import { mountSpatialView } from './view.js';
+import { createSpatialSession } from './session.js';
+import { installSpatialAgent } from './agent.js';
 import { createWorkspaceTemplate } from './templates.js';
 import { mediaDiagnostics } from '../diagnostics.js';
 import { createPerformanceIndex, createPerformanceReport, installPerformanceDebugApi } from '../performance-index.js';
@@ -54,6 +56,8 @@ let visible = true;
 let disposed = false;
 let storageStatus = { state: 'loading', message: 'Opening your autosaved room…' };
 let participants = [];
+let pendingRoom = null;
+let roomLookupError = '';
 
 // Workspace changes cancel old room/import work; selection changes cancel board-local work.
 let workspaceGeneration = 0;
@@ -285,12 +289,20 @@ function renderWorkspace() {
       ? revisions.findIndex(item => item.id === selectedRevisionId)
       : revisions.length - 1,
     pendingChanges,
+    terminal,
+    canJoin: !sandbox && !terminal && !roomLookupError && !session?.auth && !!pendingRoom,
+    canRetry: !sandbox && !terminal && !!roomLookupError,
+    admitted: !!session?.auth,
     connection: sandbox ? 'local' : connected ? 'connected' : 'disconnected',
     canEdit: editable(),
     saveState: storageStatus.state,
     saveMessage: storageStatus.message,
     notice: terminal
       ? 'This session is closed. Its autosaved history remains on this device.'
+      : roomLookupError
+        ? `${roomLookupError} Your history is available here. Open Room → Retry connection to try again.`
+      : pendingRoom && !session?.auth
+        ? 'Join this room to collaborate. Open Room → Join room when you are ready.'
       : !sandbox && !connected
         ? 'Connecting to teammates. Existing history is available while the room reconnects.'
         : '',
@@ -300,6 +312,9 @@ function renderWorkspace() {
     canStyle: editable() && (sandbox || session?.auth?.isAdmin),
     tool: board?.tool || 'select',
     sharing: !!activeMedia()?.localStream,
+    capture: activeMedia()?.getCaptureState(),
+    captureSupport: displayCaptureSupport(),
+    personal: sandbox,
   });
   const media = mediaDiagnostics(activeMedia());
   performanceIndex.setContext({
@@ -439,8 +454,9 @@ async function shareWindow() {
     boardId = activeBoardId;
   // Stopping stays available in history or Space, even when creating new content is blocked.
   if (media?.localStream || media?.getCaptureState().requestPending) {
-    await media.stop();
+    const stopping = media.stop();
     stoppedSharing();
+    await stopping;
     return;
   }
   if (!editable() || !activeBoardId) {
@@ -471,10 +487,14 @@ async function shareWindow() {
       width: 640,
       height: 390,
     };
-    store.setEntity(boardId, entity);
+    if (!store.setEntity(boardId, entity)) throw new Error('The room could not add this shared window. Choose another board and try again.');
     streamReceived(ownId(), stream);
     publishState();
   } catch (error) {
+    const stopping = media.stop();
+    if (!disposed && workspaceAtStart === workspaceGeneration) stoppedSharing();
+    await stopping;
+    if (disposed || workspaceAtStart !== workspaceGeneration) return;
     toast(error.message || 'The window could not be shared.');
   }
 }
@@ -523,9 +543,10 @@ function pickImages() {
   input.click();
 }
 function roomForm(join = null) {
+  if (join) { pendingRoom = join; scheduleRender(); }
   const title = join ? join.name : 'Start a spatial room';
   modal(
-    `<h2 id="modal-title">${esc(title)}</h2><p>${join ? 'Join this beta room with the name and password from your host.' : 'Your room, its boards, and automatic history are shared directly between browsers.'}</p><form id="${join ? 'beta-join-form' : 'beta-create-form'}">${join ? '' : '<label>Session name<input name="name" maxlength="60" required value="A spatial room"></label><label>Start with<select name="template"><option value="current">Your current boards</option><option value="walkthrough">Team walkthrough</option><option value="review">Design review</option><option value="open">Open room</option></select></label>'}<label>Your name<input name="displayName" maxlength="60" required autocomplete="given-name"></label><label>Room password<input name="password" type="password" minlength="8" maxlength="128" required autocomplete="${join ? 'current-password' : 'new-password'}"></label><button class="primary modal-submit" type="submit">${join ? 'Join room' : 'Create room'}</button></form>`,
+    `<h2 id="modal-title">${esc(title)}</h2><p>${join ? 'Join this room with the name and password from your host.' : 'Your room, its boards, and automatic history are shared directly between browsers.'}</p><form id="${join ? 'beta-join-form' : 'beta-create-form'}">${join ? '' : '<label>Session name<input name="name" maxlength="60" required value="A spatial room"></label><label>Start with<select name="template"><option value="current">Your current boards</option><option value="walkthrough">Team walkthrough</option><option value="review">Design review</option><option value="open">Open room</option></select></label>'}<label>Your name<input name="displayName" maxlength="60" required autocomplete="given-name"></label><label>Room password<input name="password" type="password" minlength="8" maxlength="128" required autocomplete="${join ? 'current-password' : 'new-password'}"></label><button class="primary modal-submit" type="submit">${join ? 'Join room' : 'Create room'}</button></form>`,
     async event => {
       event.preventDefault();
       const form = event.target,
@@ -553,10 +574,9 @@ function roomForm(join = null) {
 }
 function invite() {
   if (!session.auth) return;
-  const url = new URL(appURL(`/room/${encodeURIComponent(session.auth.room.id)}`));
-  url.searchParams.set('beta', 'space');
+  const url = new URL(spacePath(`/room/${encodeURIComponent(session.auth.room.id)}`), location.origin);
   modal(
-    `<h2 id="modal-title">Invite your team</h2><p>This invitation opens Space & time beta. Share the password separately.</p><label>Session link<input id="beta-invite-link" readonly value="${esc(url.href)}"></label><button class="button" id="beta-copy-invite">Copy link</button><button class="primary modal-submit" id="beta-invite-done">Done</button>`,
+    `<h2 id="modal-title">Invite your team</h2><p>This invitation opens Space & time. Share the password separately.</p><label>Session link<input id="beta-invite-link" readonly value="${esc(url.href)}"></label><button class="button" id="beta-copy-invite">Copy link</button><button class="primary modal-submit" id="beta-invite-done">Done</button>`,
   );
   $('#beta-copy-invite').onclick = async () => {
     try {
@@ -611,7 +631,7 @@ function addBoard() {
 }
 function confirmEnd() {
   modal(
-    '<h2 id="modal-title">End this session?</h2><p>Everyone will disconnect. Each device keeps its autosaved beta history.</p><button class="primary danger-fill modal-submit" id="beta-confirm-end">End session for everyone</button><button class="button modal-submit" id="beta-cancel-end">Keep session open</button>',
+    '<h2 id="modal-title">End this session?</h2><p>Everyone will disconnect. Each device keeps its autosaved history.</p><button class="primary danger-fill modal-submit" id="beta-confirm-end">End session for everyone</button><button class="button modal-submit" id="beta-cancel-end">Keep session open</button>',
   );
   $('#beta-confirm-end').onclick = () => {
     if (session.end()) closeModal();
@@ -662,7 +682,7 @@ async function deviceWorkspaces() {
         await store?.flush().catch(() => {});
         if (id.startsWith(roomPrefix)) {
           const roomId = id.slice(roomPrefix.length);
-          if (/^[A-Za-z0-9_-]{1,100}$/.test(roomId)) location.href = appPath(`/room/${roomId}?beta=space`);
+          if (/^[A-Za-z0-9_-]{1,100}$/.test(roomId)) location.href = spacePath(`/room/${roomId}`);
         } else await openLocal({ existingId: id });
       };
   } catch (error) {
@@ -677,8 +697,10 @@ async function openLocal(options) {
   sandbox = true;
   connected = false;
   terminal = false;
+  pendingRoom = null;
+  roomLookupError = '';
   streams.clear();
-  session = createBetaSession(sessionOptions);
+  session = createSpatialSession(sessionOptions);
   const rawId = options?.existingId
     ? options.existingId.slice(appStorageKey('').length)
     : options
@@ -690,7 +712,7 @@ async function openLocal(options) {
   } catch {
     /* The store reports browser persistence separately. */
   }
-  history.replaceState(null, '', appPath('/?beta=space'));
+  history.replaceState(null, '', spacePath());
   await openWorkspace(id, options || { seed: seedWorkspace() });
 }
 async function exportWorkspace() {
@@ -763,6 +785,17 @@ async function action(name, payload) {
         break;
       case 'create-room':
         roomForm();
+        break;
+      case 'retry': {
+        const match = appRoute().match(/^\/room\/([A-Za-z0-9_-]{1,100})\/?$/);
+        if (match) await lookupRoom(match[1]);
+        break;
+      }
+      case 'join':
+        if (pendingRoom && !session.auth && !terminal) roomForm(pendingRoom);
+        break;
+      case 'local':
+        await openLocal();
         break;
       case 'invite':
         invite();
@@ -897,7 +930,7 @@ Object.defineProperty(window, 'commonEmbedLifecycle', {
   configurable: false,
 });
 const cleanupViewport = installMobileViewport();
-view = mountBetaView(root, {
+view = mountSpatialView(root, {
   onSelectBoard: selectBoard,
   onModeChange: value => {
     finishActiveSelection();
@@ -910,7 +943,7 @@ view = mountBetaView(root, {
   onAction: action,
 });
 view.render({ canEdit: false, saveState: 'loading', saveMessage: 'Opening your autosaved room…' });
-view.element.querySelector('.beta-brand').href = appPath('/?beta=space');
+view.element.querySelector('.beta-brand').href = spacePath();
 const performanceMenuItem = document.createElement('button');
 performanceMenuItem.type = 'button';
 performanceMenuItem.dataset.betaAction = 'performance';
@@ -998,6 +1031,8 @@ const sessionOptions = {
     finishActiveSelection();
     personalMedia.stop();
     sandbox = false;
+    pendingRoom = null;
+    roomLookupError = '';
     terminal = false;
     connected = false;
     streams.clear();
@@ -1006,7 +1041,7 @@ const sessionOptions = {
       ? { ...(createSeed || seedWorkspace()), title: auth.room.name, appearance: auth.room.appearance }
       : { empty: true, boards: [] };
     createSeed = null;
-    history.replaceState(null, '', appPath(`/room/${auth.room.id}?beta=space`));
+    history.replaceState(null, '', spacePath(`/room/${auth.room.id}`));
     await openWorkspace(appStorageKey(`common.spatial.room.${auth.room.id}`), { seed });
   },
   onConnection: value => {
@@ -1058,8 +1093,8 @@ const sessionOptions = {
     };
   },
 };
-session = createBetaSession(sessionOptions);
-agent = installBetaAgent({
+session = createSpatialSession(sessionOptions);
+agent = installSpatialAgent({
   getBoard: () => (disposed ? null : board),
   getModel: () => (disposed ? null : activeBoardModel),
   getSession: () => `${workspaceGeneration}:${activeBoardId}:${selectedRevisionId || 'live'}`,
@@ -1148,6 +1183,29 @@ const syncTimer = setInterval(() => {
   }
 }, 5000);
 
+async function lookupRoom(id) {
+  const targetSession = session;
+  const current = () => !disposed && session === targetSession && !sandbox;
+  roomLookupError = '';
+  scheduleRender();
+  try {
+    const room = await targetSession.lookup(id);
+    if (!current()) return;
+    if (!isSpatialRoom(room)) {
+      location.replace(appPath(`/room/${id}`));
+      return;
+    }
+    pendingRoom = room;
+    if (!(await targetSession.resume(id)) && current()) roomForm(room);
+  } catch (error) {
+    if (!current() || error.name === 'AbortError') return;
+    terminal = error.status === 404;
+    roomLookupError = terminal ? '' : error.message || 'The session server could not be reached.';
+    toast(`${error.message} Any history autosaved on this device is still available here.`);
+    render();
+  }
+}
+
 async function start() {
   void loadRuntimeConfig();
   let current = 'common.spatial.personal';
@@ -1164,22 +1222,11 @@ async function start() {
     await openWorkspace(appStorageKey(`common.spatial.room.${match[1]}`), {
       seed: { empty: true, boards: [] },
     });
-    try {
-      const room = await session.lookup(match[1]);
-      if (room.experience !== 'spatial-beta') {
-        location.replace(appPath(`/room/${match[1]}`));
-        return;
-      }
-      if (!(await session.resume(match[1]))) roomForm(room);
-    } catch (error) {
-      terminal = true;
-      toast(`${error.message} Any history autosaved on this device is still available here.`);
-      render();
-    }
+    await lookupRoom(match[1]);
   } else await openWorkspace(appStorageKey(current), { seed: seedWorkspace() });
 }
 start().catch(error => {
-  storageStatus = { state: 'error', message: error.message || 'This beta workspace could not open.' };
+  storageStatus = { state: 'error', message: error.message || 'This workspace could not open.' };
   view.render({
     saveState: 'error',
     saveMessage: storageStatus.message,

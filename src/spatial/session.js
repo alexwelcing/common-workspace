@@ -1,9 +1,9 @@
 import { ScreenSharing } from '../media.js';
+import { SPATIAL_EXPERIENCE, isSpatialRoom } from '../experience.js';
 import { PollingSessionTransport } from '../session-transport.js';
 import { getRuntimeConfig, loadRuntimeConfig } from '../runtime-config.js';
 import { appPath, appStorageKey, appWebSocketURL } from '../app-path.js';
 
-const EXPERIENCE = 'spatial-beta';
 const ROOM_ID = /^[A-Za-z0-9_-]{1,100}$/;
 const noop = () => {};
 const failure = (code, message, status) => Object.assign(new Error(message), { code, ...(status ? { status } : {}) });
@@ -14,7 +14,7 @@ function roomId(value) {
   return value;
 }
 function requireSpatial(room) {
-  if (!room || room.experience !== EXPERIENCE || room.collaboration !== 'peer') {
+  if (!room || !isSpatialRoom(room) || room.collaboration !== 'peer') {
     throw failure('WRONG_EXPERIENCE', 'This is a regular canvas room. Open its original invitation to join it.');
   }
   roomId(room.id);
@@ -22,7 +22,7 @@ function requireSpatial(room) {
 }
 
 /** Admission and native peer transport only. Canvas content stays in the spatial document. */
-export class BetaSession {
+export class SpatialSession {
   constructor(options = {}) {
     this.callbacks = Object.fromEntries([
       'onAdmitted', 'onParticipants', 'onData', 'onPeerOpen', 'onPeerClose', 'onStream', 'onCaptureState',
@@ -80,7 +80,7 @@ export class BetaSession {
     try { value = this._window?.sessionStorage.getItem(key) ?? value; } catch { /* Use tab memory. */ }
     try {
       const auth = JSON.parse(value);
-      if (auth?.room?.id === id && auth.room.experience === EXPERIENCE && auth.room.collaboration === 'peer' &&
+      if (auth?.room?.id === id && isSpatialRoom(auth.room) && auth.room.collaboration === 'peer' &&
         typeof auth.token === 'string' && auth.token && typeof auth.participantId === 'string' && auth.participantId) return auth;
     } catch { /* Invalid or unavailable admission needs a fresh password. */ }
     this._forget(id); return null;
@@ -154,7 +154,7 @@ export class BetaSession {
 
   async create({ name, displayName, password, appearance } = {}) {
     const generation = this._reset();
-    const result = await this._request('/api/rooms', { body: { name, displayName, password, appearance, experience: EXPERIENCE, collaboration: 'peer' } }, generation);
+    const result = await this._request('/api/rooms', { body: { name, displayName, password, appearance, experience: SPATIAL_EXPERIENCE, collaboration: 'peer' } }, generation);
     requireSpatial(result.room);
     return this._admit({ ...result, displayName }, { isNew: true }, generation);
   }
@@ -328,4 +328,4 @@ export class BetaSession {
   }
 }
 
-export const createBetaSession = options => new BetaSession(options);
+export const createSpatialSession = options => new SpatialSession(options);

@@ -1,6 +1,6 @@
 # Workspace UI primitives
 
-The spatial beta uses a small internal UI library in `src/ui/workspace-primitives.js` and `.css`. It provides shared interaction behavior and a few recognizable shapes without a component-framework dependency.
+Space & Time uses a small internal UI library in `src/ui/workspace-primitives.js` and `.css`. It provides shared interaction behavior and a few recognizable shapes without a component-framework dependency.
 
 Use the same shapes for the same purpose:
 

@@ -1,5 +1,16 @@
 # Common releases
 
+## 1.6.0 — 2026-10-19
+
+Space & Time becomes a regular optional experience in the app and portable module **0.6.0**. The classic canvas remains the default.
+
+- Use `?experience=space` for Space & Time or SDK `experience: 'space'` for a personal embedded workspace. Existing room metadata takes precedence over either preference. Earlier `?beta=space` links, room authentication, device history, and replay archives remain compatible.
+- Resolve room selection before initializing its document engine, preventing conflicting entry preferences and delayed room lookups from opening the wrong experience.
+- Move the spatial implementation to `src/spatial/` with Spatial-named entry points. Keep the `spatial-beta` wire value and existing authentication/storage identifiers; this promotion requires no new database or protocol migration.
+- Display capture progress, cancellation, permission errors, source/audience, and browser help in the compact Space & Time interface. Stop controls remain available in Space and history; failed canvas insertion releases the approved stream. Browser capture approval and agent grants remain separate.
+- Restore a clear join action after dismissing the password dialog. Distinguish temporarily unreachable rooms, with an in-place retry, from closed rooms with retained read-only history.
+- Publish the Space & Time guide and update local/embedded entry examples and package links. Make the choice explicit: classic includes chat, guided participant checklists, and featured-screen rotation; Space & Time includes multi-board templates, automatic history, and active-board agent support, without those classic session interfaces yet.
+
 ## 1.5.2 — 2026-10-18
 
 The spatial beta updates changed objects and boards without repeatedly reconstructing the room. Included in portable module **0.5.2**.

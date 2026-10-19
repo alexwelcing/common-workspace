@@ -2,6 +2,8 @@
 
 On 2026-10-18 we used the local index to investigate the application, then used Chromium CPU profiles and temporary numeric counters to attribute the work. The baseline was commit `c65e2683c8f7e5eedf916ab3d07cce00426c0f18` (1.5.0); the resulting fixes ship in 1.5.1 / module 0.5.1.
 
+The spatial experience was then named the beta; it is now the regular [Space & Time option](space-time.md). Historical labels and release measurements below retain their original scope.
+
 These are paired observations from one managed Linux browser running headless Chromium against Bun/Vite, not production benchmarks or participant capacity claims. Runs were serialized, with the same synthetic scenes and viewport. Source saves were frozen for final comparisons to prevent hot reload from restarting observation. Each case has one before/after workload run; startup and store comparisons include the same CPU-profiler overhead on both sides. The isolated view timings were collected separately from CPU profiles. See the [numeric evidence](performance-investigation.json) and [investigation workflow](performance.md#compare-a-change).
 
 ## Standard canvas restoration
@@ -57,7 +59,7 @@ The complete app still reported index **0**: spatial-render p95 **98.1 ms**, spa
 
 Uncached historical reconstruction of the 16-board store also remained around **131 ms p95** across ten reads. It reconstructs the whole causal workspace. Those reads were measured after the editing-phase index snapshot, so the healthy store editing score does not include their cost.
 
-No large-participant, video quality, physical-phone, or cross-network capacity result follows from these scenes. All beta peers still receive every board and its history.
+No large-participant, video quality, physical-phone, or cross-network capacity result follows from these scenes. All Space & Time peers still receive every board and its history.
 
 ## Follow-up: object-level projection in 1.5.2
 
