@@ -326,6 +326,9 @@ export function installAgentTools({
   const liveText = button('', 'agent-recording-open');
   liveText.setAttribute('aria-label', 'Open recording controls');
   const liveStop = button('Stop recording', 'agent-recording-stop');
+  liveStop.addEventListener('pointerdown', event => {
+    if (document.querySelector('.board-is-writing')) event.preventDefault();
+  });
   live.append(liveDot, liveText, liveStop);
   document.body.append(live);
 

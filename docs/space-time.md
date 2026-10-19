@@ -1,6 +1,6 @@
 # Space & Time
 
-Space & Time is a regular optional experience in Common 1.6.0 and portable module 0.6.0. Classic remains the default. Choose Space & Time for multiple boards, board templates, a 3D overview, and automatic history; choose classic for chat, guided participant checklists, and featured-screen rotation. Space & Time does not yet have those classic session controls. It loads only when selected and requires no extra account or hosting service.
+Space & Time is a regular optional experience in Common 1.6.1 and portable module 0.6.1. Classic remains the default. Choose Space & Time for multiple boards, board templates, a 3D overview, and automatic history; choose classic for chat, guided participant checklists, and featured-screen rotation. Space & Time does not yet have those classic session controls. It loads only when selected and requires no extra account or hosting service.
 
 ## Open it
 
@@ -16,6 +16,10 @@ You start with a local workspace. Choose **Start a shared room** in the room-act
 - **Branch from here** creates a new local workspace from the selected past state, with fresh board and object IDs and its own automatic history. It leaves the original room running. Active screen shares are excluded from the new branch.
 
 The walkthrough board template has a **Demo stage**, **Our flow**, and **Questions & decisions**. These are board prompts, not the classic Session guide or participant checkboxes. Design review supplies review prompts; Open room starts with one empty board. Add boards to suit the session. **Room style** offers Meadow, Rose, Lagoon, and Lavender, custom accent/canvas colors, and dots, grid, or plain backgrounds. Style and board-placement changes join the automatic history; existing objects retain their chosen colors.
+
+## Write on a phone
+
+Select a text object or note and tap **Edit**. A focused writing view keeps the text readable independently of board zoom and follows the space available above the keyboard. The room header, board tabs, drawing tools, and timeline tuck away until editing finishes; active sharing/recording Stop controls remain available. Tap **Done** to return to the board. Writing changes the same object through the existing live-edit and autosave flow; it does not resize objects or move your camera. Desktop text editing stays inline on the board.
 
 ## Autosave and archives
 

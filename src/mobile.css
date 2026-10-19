@@ -78,3 +78,125 @@
   .canvas-toolbar .tool-divider { display: none; }
   .canvas-wrap .canvas-bottom { bottom: auto; top: 6px; justify-content: flex-start; }
 }
+
+/* Board owns writing mode before the keyboard opens. The app already follows
+   the visual viewport, so reclaim chrome without subtracting keyboard height. */
+#app:has(.main .common-board.board-is-writing) > .sidebar,
+.main:has(.common-board.board-is-writing) :is(
+  .canvas-bar, #session-guide-root, .sharing-strip, .footer, .right-panel,
+  .canvas-toolbar, .canvas-bottom, .canvas-top-hint, #remote-cursors, .drop-overlay
+) {
+  display: none !important;
+}
+
+.main:has(.common-board.board-is-writing) {
+  position: relative;
+  min-height: 0;
+}
+
+.main:has(.common-board.board-is-writing) .topbar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 98;
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+}
+
+.main:has(.common-board.board-is-writing) .session-heading,
+.main:has(.common-board.board-is-writing) .top-actions > :not(#share-screen),
+.main:has(.common-board.board-is-writing) #share-screen:not([aria-pressed='true']):not([aria-busy='true']) {
+  display: none !important;
+}
+
+.main:has(.common-board.board-is-writing) .top-actions {
+  display: contents;
+}
+
+.main:has(.common-board.board-is-writing) #share-screen:is([aria-pressed='true'], [aria-busy='true']) {
+  position: absolute;
+  top: max(8px, env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid #d9bca9;
+  border-radius: 12px 4px 12px 12px;
+  background: var(--surface, #fffef9);
+  color: #934f3e;
+  font-size: 0;
+  pointer-events: auto;
+}
+
+.main:has(#share-screen:is([aria-pressed='true'], [aria-busy='true'])) .common-board.board-is-writing {
+  --board-writing-leading-space: 52px;
+}
+
+/* Agent panels live beside #app. Keep only the active recording Stop control,
+   beside Stop sharing when both captures are running. */
+body:has(#app .common-board.board-is-writing) :is(.agent-tools-panel, .agent-walkthrough) {
+  display: none !important;
+}
+
+body:has(#app .common-board.board-is-writing) .agent-recording-live:not([hidden]) {
+  position: fixed;
+  z-index: 98;
+  top: calc(var(--common-viewport-top, 0px) + max(8px, env(safe-area-inset-top)));
+  left: max(8px, env(safe-area-inset-left));
+  right: auto;
+  bottom: auto;
+  width: 44px;
+  max-width: 44px;
+  height: 44px;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+body:has(#app .common-board.board-is-writing) .agent-recording-live :is(.agent-recording-dot, .agent-recording-open) {
+  display: none;
+}
+
+body:has(#app .common-board.board-is-writing) .agent-recording-stop {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid #d9bca9;
+  border-radius: 12px 4px 12px 12px;
+  background: var(--surface, #fffef9);
+  color: #934f3e;
+  font-size: 0;
+}
+
+body:has(#app .common-board.board-is-writing) .agent-recording-stop::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+body:has(.agent-recording-live:not([hidden])) #app .common-board.board-is-writing {
+  --board-writing-leading-space: 52px;
+}
+
+body:has(.agent-recording-live:not([hidden])) #app:has(
+  :is(#share-screen, .beta-share-control):is([aria-pressed='true'], [aria-busy='true'])
+) .common-board.board-is-writing {
+  --board-writing-leading-space: 104px;
+}
+
+body:has(#app .common-board.board-is-writing):has(
+  #app :is(#share-screen, .beta-share-control):is([aria-pressed='true'], [aria-busy='true'])
+) .agent-recording-live:not([hidden]) {
+  left: calc(max(8px, env(safe-area-inset-left)) + 52px);
+}

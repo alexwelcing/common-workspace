@@ -176,9 +176,9 @@ function bindActiveBoardModel() {
 }
 function flushDraft() {
   clearTimeout(draftTimer);
-  if (!editable() || !board?.editingId || !store) return;
+  if (!editable() || !board?.editingId || board.editingComposing || !store) return;
   const entity = board.entities.get(board.editingId);
-  const content = board.nodes.get(board.editingId)?.querySelector('[contenteditable="true"]');
+  const content = board.editingContent;
   if (entity && content)
     try {
       store.setEntity(activeBoardId, { ...entity, text: content.innerText.slice(0, 20000) }, ['text']);
@@ -316,6 +316,7 @@ function renderWorkspace() {
     captureSupport: displayCaptureSupport(),
     personal: sandbox,
   });
+  board?.setWritingStatus(storageStatus);
   const media = mediaDiagnostics(activeMedia());
   performanceIndex.setContext({
     objects: snapshot.boards.reduce((count, item) => count + item.objects.length, 0),
@@ -1123,6 +1124,10 @@ view.boardHost.addEventListener(
   },
   { signal: events.signal },
 );
+view.boardHost.addEventListener('compositionend', () => {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(flushDraft, 300);
+}, { signal: events.signal });
 view.boardHost.addEventListener(
   'dragover',
   event => {

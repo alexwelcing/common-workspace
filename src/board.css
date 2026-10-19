@@ -28,6 +28,51 @@
 .board-text-content { width: 100%; height: 100%; padding: 5px 4px; box-sizing: border-box; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; outline: none; color: var(--ink, #34483b); }
 .type-text .board-text-content:empty::before, .type-sticky .board-text-content:empty::before { content: 'Type something…'; color: #747866; pointer-events: none; }
 .board-text-content[contenteditable="true"] { user-select: text; cursor: text; overflow: auto; }
+
+/* The mobile writing surface keeps the same editor outside the zoomed stage.
+   It lasts for the editing session, including rotation and keyboard animation. */
+.common-board.board-is-writing { touch-action: pan-y; }
+.board-is-writing > .board-stage,
+.board-is-writing > .board-selection-tools,
+.board-is-writing > .board-selection-hint,
+.board-is-writing > .board-focus-bar,
+.board-is-writing > .board-layers-control { visibility: hidden; pointer-events: none; }
+.board-writing-surface {
+  position: absolute; inset: 0; z-index: 96; display: flex;
+  flex-direction: column; min-width: 0; min-height: 0;
+  color: var(--ink, #34483b); background: var(--paper, #fbf8f0);
+  touch-action: pan-y;
+}
+.board-writing-bar {
+  display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between;
+  gap: 12px; min-height: 56px; box-sizing: border-box;
+  padding: max(6px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 6px
+    calc(max(16px, env(safe-area-inset-left)) + var(--board-writing-leading-space, 0px));
+  border-bottom: 1px solid var(--border, #e3dfd3);
+}
+.board-writing-heading { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.board-writing-heading strong { font: 400 20px/1.25 Georgia, serif; }
+.board-writing-status { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--muted, #697565); font-size: 11px; line-height: 1.3; }
+.board-writing-status[data-state='error'], .board-writing-status[data-state='unsaved'] { color: #934f3e; }
+.board-writing-done {
+  flex-shrink: 0; min-width: 60px; min-height: 44px; padding: 8px 12px;
+  border: 1px solid var(--border, #e3dfd3); border-radius: 18px 18px 8px 18px;
+  color: var(--green, #365d49); background: var(--surface, #fffef9);
+  font-size: 14px; font-weight: 550; cursor: pointer;
+}
+.board-writing-done:focus-visible { outline: 2px solid var(--green, #365d49); outline-offset: 2px; }
+.board-writing-body { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.board-writing-surface .board-writing-text {
+  position: relative; inset: auto; display: block; box-sizing: border-box;
+  width: 100%; height: 100%; min-height: 0; margin: 0;
+  padding: 20px max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  overflow: auto; overscroll-behavior: contain; touch-action: pan-y;
+  color: var(--ink, #34483b) !important; font-size: 18px !important;
+  font-weight: 400; letter-spacing: normal; line-height: 1.6; text-align: left;
+  white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; outline: none;
+  scroll-padding-block: 16px;
+}
+.board-writing-text:empty::before { content: 'A little room for your thoughts…'; color: var(--muted, #697565); pointer-events: none; }
 .board-text-grip { position: absolute; top: -22px; left: 50%; transform: translateX(-50%) rotate(90deg); opacity: 0; color: #74816d; width: 20px; height: 20px; }
 .board-entity:hover > .board-text-grip, .board-entity.is-selected > .board-text-grip { opacity: 1; }
 .type-text { min-width: 40px; }

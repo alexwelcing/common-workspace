@@ -1827,3 +1827,57 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Agent consent sits above spatial controls and below modal dialogs. */
+body:has(.beta-workspace) .agent-tools-panel { z-index: 99; }
+
+/* Writing takes the available viewport before a mobile keyboard is detected.
+   Board owns the editor; room chrome returns as soon as its writing class ends. */
+.beta-workspace:has(.common-board.board-is-writing) :is(
+  .beta-header, .beta-sidebar, .beta-history, .beta-view-bar,
+  .beta-work-tools, .beta-tool-palette, .beta-navigation-trigger,
+  .beta-navigation-panel, .beta-camera, .beta-space-hint, .beta-past-banner,
+  .beta-position-panel, .beta-room-menu, .beta-capture-status, .beta-notice
+) {
+  display: none !important;
+}
+
+.beta-workspace:has(.common-board.board-is-writing) .beta-body {
+  display: flex;
+  min-height: 0;
+}
+
+.beta-workspace:has(.common-board.board-is-writing) .beta-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.beta-workspace:has(.common-board.board-is-writing) .beta-share-control:not([aria-pressed='true']):not([aria-busy='true']) {
+  display: none !important;
+}
+
+.beta-workspace:has(.common-board.board-is-writing) .beta-share-control:is([aria-pressed='true'], [aria-busy='true']) {
+  z-index: 98;
+  top: max(8px, env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  right: auto;
+  bottom: auto;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid #d9bca9;
+  border-radius: 12px 4px 12px 12px;
+  background: var(--surface, #fffef9);
+  color: #934f3e;
+}
+
+.beta-workspace:has(.common-board.board-is-writing) .beta-share-control::after {
+  display: none;
+}
+
+.beta-workspace:has(.beta-share-control:is([aria-pressed='true'], [aria-busy='true'])) .common-board.board-is-writing {
+  --board-writing-leading-space: 52px;
+}
