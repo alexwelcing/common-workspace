@@ -1,5 +1,13 @@
 # Common releases
 
+## 1.6.1 — 2026-10-19
+
+Mobile writing gets a focused view in the app and portable module **0.6.1**. Classic remains the default; Space & Time remains a regular option.
+
+- Keep text and notes readable while typing on a phone, independent of canvas zoom, using the same live editor and available keyboard viewport.
+- Tuck away room navigation, tools, and the Space & Time timeline during writing. **Done** returns to the board; active sharing/recording Stop controls stay available.
+- Preserve shared object geometry and the personal camera. Desktop text editing remains inline, with existing edit, synchronization, and persistence behavior.
+
 ## 1.6.0 — 2026-10-19
 
 Space & Time becomes a regular optional experience in the app and portable module **0.6.0**. The classic canvas remains the default.

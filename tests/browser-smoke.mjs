@@ -175,7 +175,8 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
     await page.locator('[data-tool="sticky"]').click();
     await page.locator('#board-viewport')[touch ? 'tap' : 'click']({ position: { x: 130, y: 145 } });
     await page.locator('.board-text-content[contenteditable="true"]').fill(text);
-    await page.locator('#room-title').click();
+    const done = page.getByRole('button', { name: 'Done editing', exact: true });
+    if (await done.isVisible()) await done.click(); else await page.locator('#room-title').click();
     return page.locator('.type-sticky').filter({ hasText: text });
   };
   const rtc = page => page.evaluate(async () => Promise.all(window.__journey.peers.map(async peer => {
@@ -377,7 +378,9 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         await page.locator('.beta-work-tools [data-beta-tool="sticky"]').click();
         await page.locator('.beta-board-host')[touch ? 'tap' : 'click']({ position: { x: 115, y: 130 } });
         await page.locator('.beta-board-host .board-text-content[contenteditable="true"]').fill(text);
-        await page.locator('.beta-current-board strong').click(); await betaSaved(page);
+        const done = page.getByRole('button', { name: 'Done editing', exact: true });
+        if (await done.isVisible()) await done.click(); else await page.locator('.beta-current-board strong').click();
+        await betaSaved(page);
       };
       await checkpoint('Space & Time automatically saves personal work across reload', async () => {
         await host.goto(origin.origin); await host.locator('#space-time-nav').click();

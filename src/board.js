@@ -66,6 +66,7 @@ function signature(entity) {
   const { x: _x, y: _y, width: _width, height: _height, z: _z, orderKey: _orderKey, locked: _locked, updatedAt: _updatedAt, updatedBy: _updatedBy, ...content } = entity;
   return JSON.stringify(content);
 }
+const useWritingSurface = () => window.matchMedia('(max-width: 760px), (pointer: coarse)').matches;
 function finite(value, fallback = 0) { return Number.isFinite(Number(value)) ? Number(value) : fallback; }
 function pointList(points) { return (points || []).map(p => Array.isArray(p) ? { x: p[0], y: p[1] } : p); }
 
@@ -153,7 +154,10 @@ export class Board {
     document.addEventListener('keydown', e => this.keyDown(e), { signal });
     document.addEventListener('keyup', e => { if (e.code === 'Space') { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); } }, { signal });
     window.addEventListener('blur', () => { this.spaceHeld = false; this.el.classList.remove('board-space-pan'); this.cancelPointers(); }, { signal });
-    this.resizeObserver = new ResizeObserver(() => { if (this.focusedId) this.fitFocusedEntity(); else this.updateSelectionTools(); }); this.resizeObserver.observe(this.el);
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.editingId) { this.revealWritingCaret?.(); return; }
+      if (this.focusedId) this.fitFocusedEntity(); else this.updateSelectionTools();
+    }); this.resizeObserver.observe(this.el);
     this.updateView();
     initGeometry().catch(() => {});
   }
@@ -322,7 +326,7 @@ export class Board {
         if (this.activePointerId != null && this.el.hasPointerCapture(this.activePointerId)) this.el.releasePointerCapture(this.activePointerId);
         this.activePointerId = null; this.endHistoryGroup();
       }
-      if (this.readOnly && this.editingId) this.nodes.get(this.editingId)?.querySelector('[contenteditable="true"]')?.blur();
+      if (this.readOnly && this.editingId) this.finishTextEdit?.(false);
       for (const entity of this.entities.values()) this.renderEntity(entity);
       this.updateSelectionTools(); this.updateLayers();
       failed = false;
@@ -501,8 +505,9 @@ export class Board {
   editSelected() {
     const entity = this.entities.get(this.selectedId);
     if (!entity || !this.mayEdit(entity) || !this.editableContent(entity)) return false;
-    if (this.focusedId) this.exitFocus();
-    this.revealEntity(entity.id);
+    const writing = entity.type !== 'diagram' && useWritingSurface();
+    if (this.focusedId) this.exitFocus({ restoreFocus: false, preserveView: writing });
+    if (!writing) this.revealEntity(entity.id);
     if (entity.type === 'diagram') { if (this.onEditDiagram) this.onEditDiagram(entity); else this.editDiagram(entity); }
     else this.editText(entity.id);
     return true;
@@ -937,21 +942,123 @@ export class Board {
     this.editSelected();
   }
 
+  setWritingStatus(value) {
+    this.writingStatus = { state: value?.state || '', message: value?.message || '' };
+    if (!this.writingStatusNode) return;
+    if (this.writingStatusNode.textContent !== this.writingStatus.message) this.writingStatusNode.textContent = this.writingStatus.message;
+    this.writingStatusNode.title = this.writingStatus.message;
+    this.writingStatusNode.dataset.state = this.writingStatus.state;
+    this.writingStatusNode.hidden = !this.writingStatus.message;
+  }
+
+  // Move the live editor, not a copy of its text. Canvas geometry and camera
+  // remain untouched, while native selection, paste, and composition stay owned
+  // by the same contenteditable throughout this session.
+  openWritingSurface(content, entity, signal, complete) {
+    const parent = content.parentNode, next = content.nextSibling;
+    const originalAttributes = ['role', 'aria-label', 'aria-multiline'].map(name => [name, content.getAttribute(name)]);
+    const surface = element('section', 'board-writing-surface');
+    const bar = element('header', 'board-writing-bar');
+    const heading = element('div', 'board-writing-heading');
+    const label = entity.type === 'sticky' ? 'Note' : entity.type === 'text' ? 'Text' : 'Label';
+    heading.append(element('strong', '', label));
+    this.writingStatusNode = element('span', 'board-writing-status');
+    this.writingStatusNode.setAttribute('role', 'status');
+    heading.append(this.writingStatusNode);
+    const done = element('button', 'board-writing-done', 'Done');
+    done.type = 'button'; done.setAttribute('aria-label', 'Done editing');
+    // Keep the live editor focused until completion; a pointer blur must not
+    // remove its Done button before the click is dispatched.
+    done.addEventListener('pointerdown', event => event.preventDefault(), { signal });
+    done.addEventListener('click', () => {
+      content.blur();
+      complete();
+      this.el.focus({ preventScroll: true });
+    }, { signal });
+    bar.append(heading, done);
+    const body = element('div', 'board-writing-body');
+    body.append(content); surface.append(bar, body);
+    content.classList.add('board-writing-text');
+    content.setAttribute('role', 'textbox'); content.setAttribute('aria-multiline', 'true');
+    content.setAttribute('aria-label', `${label} text`);
+    this.layersPanel.hidden = true; this.layersToggle.setAttribute('aria-expanded', 'false');
+    this.el.classList.add('board-is-writing'); this.el.append(surface);
+    this.setWritingStatus(this.writingStatus);
+    for (const type of ['pointerdown', 'dblclick', 'wheel'])
+      surface.addEventListener(type, event => event.stopPropagation(), { signal });
+
+    let frame;
+    const reveal = () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        if (this.editingContent !== content || this.editingComposing || !content.isConnected) return;
+        const selection = document.getSelection();
+        if (!selection?.rangeCount || !selection.isCollapsed || !content.contains(selection.focusNode)) return;
+        const caret = selection.getRangeAt(0).getBoundingClientRect();
+        if (!caret.height) return;
+        const bounds = content.getBoundingClientRect(), viewport = window.visualViewport;
+        const top = Math.max(bounds.top, viewport?.offsetTop || 0) + 16;
+        const bottom = Math.min(bounds.bottom, viewport ? viewport.offsetTop + viewport.height : innerHeight) - 16;
+        if (bottom <= top) return;
+        if (caret.bottom > bottom) content.scrollTop += caret.bottom - bottom;
+        else if (caret.top < top) content.scrollTop += caret.top - top;
+      });
+    };
+    this.revealWritingCaret = reveal;
+    for (const type of ['input', 'compositionend']) content.addEventListener(type, reveal, { signal });
+    document.addEventListener('selectionchange', reveal, { signal });
+    window.visualViewport?.addEventListener('resize', reveal, { signal });
+    window.visualViewport?.addEventListener('scroll', reveal, { signal });
+    window.addEventListener('resize', reveal, { signal });
+    reveal();
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      this.revealWritingCaret = null; this.writingStatusNode = null;
+      content.classList.remove('board-writing-text');
+      for (const [name, value] of originalAttributes) {
+        if (value === null) content.removeAttribute(name); else content.setAttribute(name, value);
+      }
+      parent.insertBefore(content, next?.parentNode === parent ? next : null);
+      surface.remove(); this.el.classList.remove('board-is-writing');
+    };
+  }
+
   editText(id) {
-    const entity = this.entities.get(id); const node = this.nodes.get(id); const content = node?.querySelector('[data-editable]');
-    if (!entity || !content || !this.mayEdit(entity)) return;
-    if (this.editingId === id) return;
+    const entity = this.entities.get(id), node = this.nodes.get(id);
+    const content = node?.querySelector('[data-editable]');
+    if (!entity || !content || !this.mayEdit(entity) || this.editingId === id) return;
     this.finishTextEdit?.();
     this.beginHistoryGroup('edit text');
-    this.editingId = id; this.select(id); this.updateSelectionTools();
-    content.contentEditable = 'true'; node.classList.add('is-editing'); content.focus();
+    this.editingId = id; this.editingContent = content; this.editingComposing = false;
+    this.select(id); this.updateSelectionTools();
     const originalText = content.innerText.slice(0, 20000);
-    const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(content); range.collapse(false); selection.removeAllRanges(); selection.addRange(range);
     const editEvents = new AbortController();
+    const mobile = useWritingSurface();
+    let completionFrame, compositionFrame, compositionSettling = false, completionRequested = false;
+    const complete = () => {
+      if (this.finishTextEdit !== finish) return;
+      completionRequested = true;
+      // A native IME owns unfinished composition. Wait for compositionend, then
+      // one settling frame for final input; lifecycle cleanup remains synchronous.
+      if (this.editingComposing) return;
+      if (compositionSettling) {
+        if (completionFrame === undefined) completionFrame = requestAnimationFrame(() => {
+          completionFrame = undefined;
+          if (!this.editingComposing) finish();
+        });
+      } else finish();
+    };
+    const restore = mobile ? this.openWritingSurface(content, entity, editEvents.signal, complete) : () => {};
     const finish = (save = true) => {
-      if (this.editingId !== id) return;
-      editEvents.abort(); content.removeEventListener('blur', onBlur); content.contentEditable = 'false'; node.classList.remove('is-editing');
-      const text = content.innerText.slice(0, 20000); this.editingId = null; this.finishTextEdit = null;
+      if (this.finishTextEdit !== finish) return;
+      if (completionFrame !== undefined) cancelAnimationFrame(completionFrame);
+      if (compositionFrame !== undefined) cancelAnimationFrame(compositionFrame);
+      const text = content.innerText.slice(0, 20000);
+      editEvents.abort(); content.removeEventListener('blur', onBlur);
+      content.contentEditable = 'false'; node.classList.remove('is-editing');
+      restore();
+      this.editingId = null; this.editingContent = null; this.editingComposing = false; this.finishTextEdit = null;
       const current = this.entities.get(id);
       if (save && current && text !== originalText) this.commit({ ...current, text }, { text });
       else if (current) {
@@ -961,10 +1068,36 @@ export class Board {
       }
       this.endHistoryGroup(); this.updateSelectionTools();
     };
-    const onBlur = () => finish(); this.finishTextEdit = finish;
-    content.addEventListener('blur', onBlur, { once: true });
-    content.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); content.blur(); this.el.focus({ preventScroll: true }); } }, { signal: editEvents.signal });
-    content.addEventListener('paste', event => { event.preventDefault(); const text = event.clipboardData.getData('text/plain').slice(0, 20000); document.execCommand('insertText', false, text); }, { signal: editEvents.signal });
+    const onBlur = event => {
+      if (event.relatedTarget?.closest('.board-writing-surface')) return;
+      complete();
+    };
+    this.finishTextEdit = finish;
+    content.addEventListener('blur', onBlur);
+    content.addEventListener('compositionstart', () => { this.editingComposing = true; }, { signal: editEvents.signal });
+    content.addEventListener('compositionend', () => {
+      this.editingComposing = false; compositionSettling = true;
+      if (compositionFrame !== undefined) cancelAnimationFrame(compositionFrame);
+      compositionFrame = requestAnimationFrame(() => { compositionFrame = undefined; compositionSettling = false; });
+      this.revealWritingCaret?.();
+      if (completionRequested) complete();
+    }, { signal: editEvents.signal });
+    content.addEventListener('keydown', event => {
+      event.stopPropagation();
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Escape') { event.preventDefault(); content.blur(); this.el.focus({ preventScroll: true }); }
+    }, { signal: editEvents.signal });
+    content.addEventListener('paste', event => {
+      event.preventDefault();
+      const text = event.clipboardData.getData('text/plain').slice(0, 20000);
+      document.execCommand('insertText', false, text);
+    }, { signal: editEvents.signal });
+    content.contentEditable = 'true'; node.classList.add('is-editing');
+    content.focus({ preventScroll: mobile });
+    const selection = window.getSelection(), range = document.createRange();
+    range.selectNodeContents(content); range.collapse(false);
+    selection.removeAllRanges(); selection.addRange(range);
+    this.revealWritingCaret?.();
   }
   editDiagram(entity) {
     this.closeDiagramEditor({ restoreFocus: false });

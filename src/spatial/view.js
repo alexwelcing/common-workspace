@@ -231,6 +231,10 @@ export function mountSpatialView(root, handlers = {}) {
     }),
   ];
   const toolbarCleanup = attachRovingToolbar(toolbarHost);
+  boardHost.addEventListener('focusin', event => {
+    if (event.target.closest('.board-writing-surface')) closePopovers();
+  }, { signal });
+
   function closePopovers() {
     for (const popover of popovers) popover.close({ restoreFocus: false });
   }
@@ -293,6 +297,14 @@ export function mountSpatialView(root, handlers = {}) {
   imageButton.append(icon('image'), element('span', '', 'Add image'));
   toolExtrasHost.append(imageButton);
 
+  shell.addEventListener(
+    'pointerdown',
+    event => {
+      if (event.target.closest('.beta-share-control') && boardHost.classList.contains('board-is-writing'))
+        event.preventDefault();
+    },
+    { signal },
+  );
   shell.addEventListener(
     'click',
     event => {

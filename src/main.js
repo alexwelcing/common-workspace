@@ -361,7 +361,7 @@ function receiveCanvas(action){receivingCanvas=true;try{return shared.withoutHis
 function updateHistoryControls(){
   if(disposed)return;
   const state=shared?.getHistoryState(),enabled=!disposed&&!board?.readOnly&&(sandbox||connected);
-  const editor=board?.nodes.get(board.editingId)?.querySelector('[contenteditable="true"]');
+  const editor=board?.editingContent;
   const pendingText=editor&&editor.innerText.slice(0,20000)!==(shared?.get(board.editingId)?.text||'');
   for(const direction of ['undo','redo']){
     const button=$('#'+direction+'-canvas');if(!button)continue;
@@ -444,6 +444,9 @@ $('#right-panel').addEventListener('keydown',event=>{if(event.key==='Escape'&&!e
 $('#space-time-nav').onclick=()=>location.href=spacePath();
 $('#new-session').onclick=()=>createModal();$('#invite').onclick=()=>sandbox?createModal():inviteModal();$('#how-it-works').onclick=tour;$('#sessions-nav').onclick=showSessions;$('#sandbox-nav').onclick=()=>{if(sandbox)board.fit();else location.href=appPath('/')};
 $('#room-menu').onclick=roomMenu;
+$('#share-screen').addEventListener('pointerdown',event=>{
+  if(board?.el.classList.contains('board-is-writing'))event.preventDefault();
+},{signal:mainEvents.signal});
 cleanupPerformanceIndicator=bindPerformanceIndicator({monitor:performanceIndex,trigger:$('#room-menu')});
 document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{rightPanel=b.dataset.panel;document.querySelectorAll('[data-panel]').forEach(e=>{const active=e===b;e.classList.toggle('active',active);e.setAttribute('aria-pressed',String(active))});renderPanel()});
 function ensureConversation(){
