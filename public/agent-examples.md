@@ -1,197 +1,178 @@
-# Make something together: Common agent recipes
+# Make something together
 
-Use Common as the place where people can see, question, and edit an agent's work.
-These recipes combine a live canvas with the tools your agent already uses.
-Each one names a concrete result and gives you a prompt to adapt.
+Bring a feature, a tricky bug, or a rough idea. Here are six things you and your
+agent can make with Common. Pick one, try the prompt, and make it your own.
 
-## Choose your connection
+## Get ready
 
-| Connection | How it participates |
-| --- | --- |
-| Browser API | Use `window.commonAgent` inside the Common tab, the visible JSON command runner, or `controller.agent` from an existing embedded mount. |
-| Experimental WebMCP | Supporting browsers expose granted tools such as `common_canvas_add`. This is an in-browser adapter; Common does not currently provide a remote MCP server. |
-| Your agent's other MCP servers | Bring PR context, issue details, or observability findings into the workflow through connections your agent already has. Common supplies the shared canvas, rather than those integrations. |
-| A2A handoffs | Coordinate specialists through your own agent system, then let a presenter write their results into Common. The handoff recipe below is an integration design; this main checkout does not implement an A2A transport or Agent Card. |
+1. Open a personal canvas, or join a room with your team.
+2. In **Agent tools**, choose **Read the canvas** and **Edit and present**.
+   Add capture and recording access for examples that need them, then select
+   **Allow selected access**.
+3. To include your product, choose **Share a window** and select it in the
+   browser picker. Sharing a window and granting agent access are separate steps.
 
-Start on a personal canvas or join a room with the people who should participate.
-In **Agent tools**, the person grants **Read the canvas** and **Edit and present**.
-Add capture and recording permissions when the recipe needs them. To include a
-product window, the person selects it through **Share a window** and the browser
-picker. These are separate approvals.
+Start with the examples below, or jump to the [working API example](#try-the-api-create-a-bug-board).
+The [connection notes](#how-the-tools-connect) explain where MCP, the API, and A2A fit.
 
-Canvas edits are shared with admitted peers. View focus, walkthrough playback,
-snapshots, and recordings belong to the presenting tab. In Space & Time, agent
-commands act on the active board; people select boards and navigate history.
-See the [API reference](agent-api.md) for schemas and exact limits.
+## 1. Make a 90-second feature demo
 
-## 1. Turn a feature branch into a 90-second release film
+Your feature is running. Give your agent the PR description, or let it read the
+PR through its existing GitHub connection. Share the product window and build
+three captions beside it: **Before**, **What changed**, and **Why it matters**.
+Use a three-step walkthrough to present and record the feature.
 
-**You bring:** a running feature, its PR description, and a shared product window.
-Your agent can obtain the PR through its existing GitHub tools or use text you
-provide. Its normal browser tools operate the product.
+**Prompt to copy:**
 
-**Make together:** place three captions beside the live screen: **Before**,
-**What changed**, and **Why it matters**. Draw a box around the new interaction,
-then load a walkthrough using the actual screen and caption object IDs. Present
-the feature and record the canvas as the view moves between those objects.
+> Help me show this feature to someone seeing it for the first time. Read the PR
+> context and inspect the canvas. Add Before, What changed, and Why it matters
+> captions beside the shared window. Load three walkthrough steps using the
+> actual object IDs. Wait for me to say ready, then record the canvas. Stop and
+> download the clip when we're done. Keep the annotations for discussion.
 
-**Take away:** a short annotated video and an editable explanation your reviewer
-can question directly on the canvas. Common records video only; put essential
-captions on canvas objects because the walkthrough text overlay is outside the
-recorded canvas. Download the clip before reloading or closing the tab.
+**You’ll have:** a short demo to share and an editable explanation to discuss.
 
-**Give your agent this prompt:**
+Common records video only. Put captions on canvas objects; the walkthrough text
+bar is outside the recording. Download the clip before closing or reloading.
 
-> Help me demonstrate this feature to someone who has never seen it. Inspect the
-> canvas and the PR context I provide. Keep the shared product window central.
-> Add Before, What changed, and Why it matters captions without covering it.
-> Load three walkthrough steps using the actual object IDs. Wait for me to say
-> ready before recording the canvas. After the demonstration, stop and download
-> the clip. Keep the annotations for discussion.
+**For developers:** use GitHub tools for PR context and the agent’s browser tools
+to operate the product. Common’s `canvas.add`, `walkthrough.load`, and recording
+commands handle the presentation.
 
-**Connect it:** browser/WebMCP canvas tools plus your agent's existing PR and
-browser tools. Common actions: `canvas.inspect`, `canvas.add`, `walkthrough.load`,
-`walkthrough.next`, `recording.start`, `recording.stop`, `recording.download`.
+## 2. Catch an intermittent bug
 
-## 2. Make a disappearing bug leave an evidence kit
+Imagine a staging checkout where changing the delivery country sometimes leaves
+the old tax total on screen. Share the window and reproduce it. Have your agent
+organize four areas: **Expected**, **Observed**, **Steps**, and **Still unknown**.
+Keep what happened separate from what might explain it.
 
-**You bring:** a staging checkout where changing the delivery country sometimes
-leaves the previous tax total visible. This is a sample scenario, not a reported
-Common defect.
+**Prompt to copy:**
 
-**Make together:** reproduce the behavior in a shared window. Keep four distinct
-areas: **Expected**, **Observed**, **Steps**, and **Still unknown**. Put an
-annotation next to the stale total. Have the agent record what it actually saw,
-including which attempt reproduced it, rather than inventing a root cause.
+> Help me capture this intermittent checkout bug. Set up Expected, Observed,
+> Steps, and Still unknown areas. After I reproduce it, write the exact sequence
+> and visible result. Mark hypotheses clearly. Once the shared video is playing,
+> capture a PNG of the evidence. Leave unrelated objects alone.
 
-**Take away:** a PNG with the approved, decoded window and annotations, an optional
-short video, and a structured summary for the engineer who will investigate.
-An SVG/JSON canvas export preserves board content but excludes live video frames.
+**You’ll have:** an annotated screenshot and a clear reproduction summary for
+the next engineer. Record a short clip too if the sequence matters.
 
-**Give your agent this prompt:**
+**For developers:** use `canvas.add`, `canvas.update`, and `capture.snapshot`.
+[Try the working API example](#try-the-api-create-a-bug-board) to create the four cards.
 
-> Help me turn this intermittent checkout issue into something another engineer
-> can investigate. Set up Expected, Observed, Steps, and Still unknown areas.
-> After I reproduce it, write the exact sequence and visible result. Keep
-> observations separate from hypotheses. Capture a PNG of the evidence and
-> summarize the unresolved question. Leave unrelated objects alone.
+## 3. Explore three versions of a screen
 
-**Connect it:** browser API or WebMCP for annotation and capture. A handoff to a
-coding agent can carry the summary and downloaded evidence through your existing
-orchestration. Common actions: `canvas.add`, `canvas.update`, `capture.snapshot`.
+Take an onboarding screen with one goal: a new user should understand the next
+action at a glance. Ask your agent’s image generator for three directions:
+a checklist, a single next-action card, and an empty state with an example.
+Place them side by side in Common and invite your team to annotate them.
 
-## 3. Compare three futures for the same screen
+**Prompt to copy:**
 
-**You bring:** an onboarding screen and one constraint: a first-time user should
-understand the next action without reading a paragraph.
+> Generate these three onboarding directions with your image tool and import
+> them into Common in a row. Under each, add one benefit, one tradeoff, and one
+> question about first-use comprehension. Label the images as concepts. Wait
+> for our choice before making another version, and keep the originals visible.
 
-**Make together:** ask a design agent to generate three raster mockups with its
-own image tool: a guided checklist, a single next-action card, and an empty state
-with an example. Import them side by side. Have a reviewer place one benefit,
-one tradeoff, and one question under each. People move and annotate the candidates,
-then select one direction for a second iteration.
+**You’ll have:** three possibilities, the feedback on each, and a reason for
+the direction you choose.
 
-**Take away:** a comparison board that retains the alternatives and the reason
-for the decision, along with the selected image.
+**For developers:** the agent’s image tool supplies the files; Common imports
+them through `image.add`. Use notes and layers to organize the comparison.
+See the [supported formats and image limits](agent-api.md#generated-images).
 
-**Give your agent this prompt:**
+## 4. Make an incident easier to understand
 
-> Use your image generator to explore these three onboarding directions. Import
-> the resulting raster images into Common in a row. Below each, add a benefit,
-> a tradeoff, and a question about first-use comprehension. Label generated
-> concepts clearly. Wait for our choice before producing another iteration;
-> keep the original candidates visible.
+Checkout is slow, and the team is looking at different dashboards. Give an
+investigator agent a trace excerpt or access through your existing observability
+MCP connection. Ask a diagramming agent to turn its findings into a Mermaid map:
+browser → checkout API → payment provider. Keep **Observed**, **Hypotheses**, and
+**Next action** areas beside the map.
 
-**Connect it:** your agent's image generator supplies files; `image.add` imports
-them. Use `canvas.add`, `canvas.layer`, and `canvas.lock` for labels and layout.
-Common accepts inline raster images within the [documented image limits](agent-api.md#generated-images).
+**Prompt to copy:**
 
-## 4. Give an incident room an evidence map
+> Use the supplied traces or your authorized observability tools to explain
+> this slow checkout. Add timestamps and source references to facts. Draw the
+> request path in Mermaid and highlight measured delays. Keep hypotheses
+> separate. Update your existing notes as evidence changes, then ask the
+> incident lead to choose the next action.
 
-**You bring:** a slow checkout, a dashboard window, and an agent with an existing
-observability MCP connection or a supplied trace excerpt.
+**You’ll have:** one shared picture of the evidence and a clear next step.
 
-**Make together:** arrange **Observed**, **Hypotheses**, and **Next action** areas.
-An investigator gathers request durations and timestamps. A diagramming agent
-turns those findings into a Mermaid path such as browser → checkout API → payment
-provider. Highlight the measured slow hop and label unverified explanations as
-hypotheses. Update existing objects as new evidence arrives.
+**For developers:** your MCP connection supplies the evidence. Common renders
+Mermaid diagram objects and accepts updates through `canvas.update`. A coordinator
+can pass the investigator’s findings to the diagramming agent.
 
-**Take away:** a service map with evidence references and one explicit next
-investigation step, visible to the human incident lead and other participants.
+## 5. Add an “Explain this” panel to your Bun app
 
-**Give your agent this prompt:**
+An order says “accepted,” but payment confirmation is still pending. A support
+colleague wants to know what to do. Embed Common beside the order and have a
+host-page button send selected state to your agent. The agent draws a small
+state diagram and adds **What happened**, **What is pending**, and **What I can
+do next** notes.
 
-> Use the trace evidence I provide or your authorized observability tools to
-> explain this slow checkout. Put timestamps and source references beside facts.
-> Diagram the request path in Mermaid and highlight measured delays. Keep
-> hypotheses separate. Update your existing findings by object ID as evidence
-> changes. Ask the incident lead to choose the next action.
+**Prompt to copy:**
 
-**Connect it:** an external MCP connection supplies evidence; Common renders
-`canvas.add` diagram objects with `language: "mermaid"` and accepts `canvas.update`
-for subsequent findings. An A2A coordinator could hand investigator findings to
-the diagrammer using the pattern below.
+> Explain this supplied order state in Common. Draw a small Mermaid state
+> diagram and add What happened, What is pending, and What I can do next notes.
+> Point out missing information. Keep the explanation editable. When I supply
+> new state, refresh only the objects you created.
 
-## 5. Add “Explain this state” to an existing Bun application
+**You’ll have:** an explanation beside the application, ready to edit or share
+with a colleague.
 
-**You bring:** an internal order-management app. An order says “accepted” while
-payment confirmation is pending, and new support staff keep asking what to do.
-
-**Make together:** embed Common as a floating workspace using the
+**For developers:** your host app supplies the state and invokes the agent.
+The mounted Common controller exposes `agent.execute()` and `agent.batch()`;
+the person grants access in the panel. See the
 [Bun integration guide](https://github.com/alexwelcing/common-workspace/blob/main/docs/embedding.md)
-(repository access required). A host-page button supplies a selected
-state summary to your agent. The agent draws the relevant state machine and adds
-three notes: **What happened**, **What is pending**, and **What I can do next**.
-The person can rearrange the explanation beside the live application.
+(repository access required). This also works with local Bun hosting.
 
-**Take away:** an explanation tied to the current task, with editable reasoning
-rather than another static help page.
+## 6. Let specialist agents review a design together
 
-**Give your agent this prompt:**
+**Bring your own A2A coordinator.** This is an integration design for connecting
+your agent system to Common.
 
-> Explain this supplied order state in the Common panel. Draw a small Mermaid
-> state diagram and add What happened, What is pending, and What I can do next
-> notes. Name missing information rather than guessing. Keep the explanation
-> editable. Refresh only the objects you created when I supply a new state.
+Start with a brief: “Invite a teammate, assign their role, and show the first
+useful task.” A **Builder** proposes the flow. A **Skeptic** looks for confusing
+steps and accessibility problems. A **Presenter** draws their findings in Common.
+Your team discusses the proposal and decides what to change.
 
-**Connect it:** the host owns the selected state and agent invocation. Use the
-mounted controller's asynchronous `agent.execute()` or `agent.batch()` proxy.
-Mounting the panel does not grant access or connect a model automatically.
-The panel and command registry work with local Bun hosting.
+**Prompt to copy:**
 
-## 6. Run an A2A design relay with a visible human decision
+> Ask the Builder for an invitation flow and its assumptions. Pass the proposal
+> to the Skeptic for three concrete failure cases and possible remedies. Have
+> the Presenter draw the flow and numbered objections in Common. Keep each
+> contribution identifiable. Ask us what to change, and check for our canvas
+> edits before applying a revision.
 
-**Integration design:** bring your own A2A coordinator and specialist agents.
-Common is their shared presentation surface, not the dispatcher.
+**You’ll have:** a proposal, useful objections, and a visible human decision
+with its rationale.
 
-**You bring:** a brief: “Invite a teammate, assign their role, and show the first
-useful task.” Assign three roles: a **Builder** proposes the flow, a **Skeptic**
-looks for abandonment and accessibility problems, and a **Presenter** turns their
-findings into canvas objects. A person makes the final decision.
+**For developers:** use your A2A system for agent coordination and Common’s
+browser API for presentation. The [handoff example](#pass-findings-between-agents)
+below gives you a small artifact to adapt.
 
-**Make together:** the Builder returns a flow and assumptions. The Skeptic
-returns specific objections and alternatives tied to the Builder's findings.
-The Presenter creates a Mermaid flow, numbered objection notes, and a **Decision
-needed** box. When a person changes the brief on the board, the Presenter asks
-the coordinator for a revision rather than overwriting that edit blindly.
+## How the tools connect
 
-**Take away:** a reviewable proposal, its strongest objections, and an explicit
-human decision with rationale. The intermediate work remains visible.
+| Connection | What it does |
+| --- | --- |
+| Browser API | Edit Common through `window.commonAgent` in its tab, the JSON command runner, or `controller.agent` in an embedded app. |
+| Experimental WebMCP | Supporting browsers expose granted tools such as `common_canvas_add`. Common’s adapter runs in the browser; a remote MCP server is not included. |
+| Your other MCP connections | Supply PR context, issues, or observability findings through tools your agent already uses. |
+| A2A | Your coordinator passes work between agents. Common currently has no built-in A2A transport or Agent Card. |
 
-**Give your coordinating agent this prompt:**
+Canvas edits are shared with people in the room. View changes, walkthrough playback,
+snapshots, and recordings stay with the presenting tab. In Space & Time, agents
+work on the active board; people choose boards and navigate history.
 
-> Run a design relay for this teammate-invitation flow. Ask the Builder for a
-> proposal and assumptions. Pass that result to the Skeptic for three concrete
-> failure cases and possible remedies. Have the Presenter draw the proposal and
-> objections in Common, then ask us to choose what to change. Keep each agent's
-> contribution identifiable. Re-inspect before revising a human-edited object.
+For a still image that includes a shared window, wait until its video is playing,
+then capture a PNG. SVG and JSON exports preserve board content but exclude live
+video frames. The [API reference](agent-api.md) covers commands and limits.
 
-### A small handoff to adapt
+## Pass findings between agents
 
 Use your A2A library for discovery, task messages, status, and artifact delivery.
-The following is **application-defined artifact content**, not an A2A wire
-envelope or a built-in Common command:
+This JSON is **application-defined artifact content** to carry between agents.
+It is separate from the A2A wire format and Common’s command API:
 
 ```json
 {
@@ -211,25 +192,27 @@ envelope or a built-in Common command:
 }
 ```
 
-Keep one Presenter as the canvas writer for a review. It maps artifact findings
-to a namespaced set of object IDs and retains that mapping in your coordinator.
-Other agents send findings rather than issuing conflicting canvas commands.
-The Presenter uses the authorized browser API or embedded controller in the
-current tab. Remote agents do not gain canvas access from an artifact or a room
-link. On a grant or session change, stop and obtain fresh human authorization.
-Re-inspect before applying a delayed response; inspection and updates are not an
-atomic conflict check, so present overlapping human changes for review.
+Let one Presenter write to the canvas. Other agents return findings, and your
+coordinator keeps the mapping from those findings to Common object IDs. This
+keeps specialists from overwriting each other’s layout.
 
-Common's [discovery manifest](.well-known/agent.json) describes its browser tools;
-it is not an A2A Agent Card. Locate or add your A2A adapter separately.
+The Presenter needs an authorized browser API or embedded controller in the
+current tab. A room link or artifact does not grant access. Stop on a grant or
+session change and ask the person to authorize the new context.
 
-## Try the API: create the bug exhibit
+Before applying delayed findings, inspect the canvas again. If someone has edited
+the same object, bring the proposed revision back for review. Inspection does not
+lock the object against further edits.
 
-This creates a new example exhibit below the existing objects on the active
-canvas each time you invoke it.
-It uses the existing API, not a server-side room write endpoint. Run it in the
-Common tab after granting read/edit access, or pass `controller.agent` from an
-existing host integration. The sample text is fictional and remains editable.
+Common’s [discovery manifest](.well-known/agent.json) describes its browser tools;
+your A2A adapter supplies its own Agent Card and transport.
+
+## Try the API: create a bug board
+
+This starter adds four editable cards below existing content and brings them
+into view. Run it in the Common tab after granting read/edit access. For an
+embedded app, replace the final call with `await createBugExhibit(controller.agent)`.
+The checkout text is sample content. Each invocation creates a new exhibit.
 
 ```js
 async function createBugExhibit(api) {
@@ -271,15 +254,15 @@ async function createBugExhibit(api) {
 const objectIds = await createBugExhibit(window.commonAgent);
 ```
 
-Batches run in order and can partially succeed; inspect each result. For an
-identical retry, retain the original commands and request IDs within the same
-grant/session instead of invoking the function again. Keep returned object IDs
-to update your exhibit without touching another participant's work.
+A batch can partially succeed. Check every result before retrying. For an
+identical retry in the same grant/session, keep the original commands and request
+IDs; calling the function again creates another exhibit. Keep the returned
+object IDs to update your cards later.
 
-### The same edit through WebMCP
+### Try WebMCP: add a question
 
-In a supporting browser, discover the granted tool `common_canvas_add` and supply
-these arguments. This is tool argument data, not a call to an HTTP endpoint:
+In a supporting browser, discover the granted `common_canvas_add` tool and pass
+these arguments. Adjust the coordinates to place the note in a clear area.
 
 ```json
 {
@@ -296,7 +279,9 @@ these arguments. This is tool argument data, not a call to an HTTP endpoint:
 }
 ```
 
-Parse the returned JSON string and check `ok`. With the browser API, add
-`action: "canvas.add"` to that object and pass it to `execute()`. With the visible
-JSON runner, paste that command and choose **Run command**. Use a fresh object ID
-for another note; reuse a request ID only for an identical retry.
+Parse the tool’s returned JSON string and check `ok`.
+
+To use the browser API instead, add `action: "canvas.add"` to the argument object
+and pass it to `execute()`. You can also paste that command into **Agent command**
+in the visible panel and choose **Run command**. Give each new note a fresh object
+ID; reuse a request ID only for an identical retry.
