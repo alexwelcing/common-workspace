@@ -300,7 +300,7 @@ export function mountSpatialView(root, handlers = {}) {
   shell.addEventListener(
     'pointerdown',
     event => {
-      if (event.target.closest('.beta-share-control') && boardHost.querySelector('.board-is-writing'))
+      if (event.target.closest('.beta-share-control') && boardHost.classList.contains('board-is-writing'))
         event.preventDefault();
     },
     { signal },
