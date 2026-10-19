@@ -176,12 +176,12 @@ function bindActiveBoardModel() {
 }
 function flushDraft() {
   clearTimeout(draftTimer);
-  if (!editable() || !board?.editingId || board.editingComposing || !store) return;
+  if (!editable() || !board?.editingId || !board.editingDirty || board.editingComposing || !store) return;
   const entity = board.entities.get(board.editingId);
   const content = board.editingContent;
   if (entity && content)
     try {
-      store.setEntity(activeBoardId, { ...entity, text: content.innerText.slice(0, 20000) }, ['text']);
+      store.setEntity(activeBoardId, { ...entity, text: board.getEditingText() }, ['text']);
     } catch (error) {
       toast(error.message);
     }

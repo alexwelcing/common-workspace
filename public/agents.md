@@ -36,7 +36,7 @@ Stable interface selectors:
 Add a walkthrough heading:
 
 ```json
-{"action":"canvas.add","requestId":"walkthrough-title-1","entity":{"id":"walkthrough-title","type":"text","x":80,"y":80,"width":700,"height":90,"text":"Product walkthrough","fontSize":36}}
+{"action":"canvas.add","requestId":"walkthrough-title-1","entity":{"id":"walkthrough-title","type":"text","x":80,"y":80,"width":700,"height":90,"text":"Product walkthrough"}}
 ```
 
 Draw a box and annotation as separate commands:

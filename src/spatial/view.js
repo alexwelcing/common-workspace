@@ -1,6 +1,7 @@
 import './style.css';
 import { attachPopover, attachRovingToolbar } from '../ui/workspace-primitives.js';
 import { isSpatialProjection } from './projection.js';
+import { createTextLayout } from '../text-layout.js';
 
 const clamp = (value, low, high, fallback = 0) =>
   Number.isFinite(Number(value)) ? Math.min(high, Math.max(low, Number(value))) : fallback;
@@ -198,6 +199,14 @@ export function mountSpatialView(root, handlers = {}) {
   const planes = new Map();
   const boardButtons = new Map();
   const previewStates = new Map();
+  const textLayout = createTextLayout({ documentImpl: root.ownerDocument });
+  const unsubscribeTextLayout = textLayout.subscribe(() => {
+    if (destroyed) return;
+    // Font loading changes measured glyph widths without changing shared objects.
+    // Keep the planes themselves, and refresh previews only while they are visible.
+    previewStates.clear();
+    if (state.mode === 'space') renderBoards();
+  });
   const placementDetails = $('.beta-placement');
   const placementPanel = $('.beta-position-panel');
   // Keep the inspector out of the canvas clipping region and in the same safe
@@ -534,6 +543,35 @@ export function mountSpatialView(root, handlers = {}) {
       path.setAttribute('stroke-width', '3');
       svg.append(path);
       node.append(svg);
+    } else if (['text', 'sticky', 'rectangle', 'ellipse'].includes(object.type)) {
+      const layout = textLayout.layout(object);
+      node.style.padding = '0';
+      node.style.boxSizing = 'border-box';
+      node.style.fontFamily = layout.fontFamily;
+      node.style.fontWeight = String(layout.fontWeight);
+      node.style.fontSize = `${layout.fontSize}px`;
+      node.style.lineHeight = `${layout.lineHeight}px`;
+      node.style.letterSpacing = `${layout.letterSpacing}px`;
+      node.style.fontKerning = 'normal';
+      node.style.fontOpticalSizing = layout.fontOpticalSizing;
+      if (object.type === 'rectangle' || object.type === 'ellipse') {
+        // An inset stroke preserves the existing frame without consuming the
+        // shared layout's entity-local coordinates inside a CSS border box.
+        node.style.border = '0';
+        node.style.boxShadow = 'inset 0 0 0 2px currentColor';
+      }
+      const text = element('span', 'beta-preview-fitted-text', layout.lines.join('\n'));
+      const renderScale = layout.renderScale || 1;
+      Object.assign(text.style, {
+        position: 'absolute', display: 'block', boxSizing: 'border-box',
+        left: `${layout.domX}px`, top: `${layout.domY}px`,
+        width: `${layout.domWidth}px`,
+        height: `${layout.textHeight / renderScale}px`,
+        fontSize: `${layout.renderFontSize}px`, lineHeight: `${layout.renderLineHeight}px`,
+        transformOrigin: '0 0', transform: `scale(${layout.renderScale})`,
+        whiteSpace: 'pre', overflowWrap: 'normal', overflow: 'visible', textAlign: layout.align,
+      });
+      node.append(text);
     } else {
       node.textContent = object.text || object.title || '';
       node.style.fontSize = `${clamp(object.fontSize, 8, 240, 24)}px`;
@@ -941,6 +979,8 @@ export function mountSpatialView(root, handlers = {}) {
       destroyed = true;
       abort.abort();
       observer.disconnect();
+      unsubscribeTextLayout();
+      textLayout.destroy();
       for (const popover of popovers) popover.destroy();
       toolbarCleanup();
       shell.remove();
