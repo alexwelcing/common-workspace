@@ -1,12 +1,29 @@
 # Common session API
 
-The standalone Vite client proxies `/api` and `/ws` to port 3001. Standalone production runs `bun server.mjs` and serves `dist/`. Netlify uses the same room REST paths with a polling transport, described below. JSON errors use `{error,code}`. Passwords must contain 8–128 characters; names 1–60. There is no fixed participant admission cap; authentication, rate, payload, lease, canvas, and hosting resource limits still apply. Room links use `/room/:id`.
+Use this reference when building a room client or hosting adapter. It covers room admission, membership, signaling, chat, room styles, and guided-session metadata. To let an agent read or edit an open browser canvas, start with the [browser agent API guide](AGENT_API.md).
+
+## Find your starting point
+
+| Task | Reference |
+| --- | --- |
+| Connect through Netlify | [Polling connection flow and lifecycle](#netlify-transport) |
+| Connect to a standalone Bun server | [Room routes and WebSocket connection](#standalone-bun-transport) |
+| Create a Space & Time room | [Experience selection and admission](#space--time-admission) |
+| Add room styles or a guided session | [Room appearance](#room-appearance) · [Guided-session protocol](#guided-session-protocol) |
+| Read runtime settings or connection diagnostics | [Public runtime configuration](#public-runtime-configuration) · [Correlation and observability](#correlation-and-optional-observability) |
+| Send a session message | [Message envelopes and canvas fields](#session-messages) |
+
+The standalone Vite client proxies `/api` and `/ws` to port 3001. Standalone production runs `bun server.mjs` and serves `dist/`. Netlify uses the same room REST paths with a polling transport, described below.
+
+JSON errors use `{error,code}`. Passwords must contain 8–128 characters; names 1–60. Room links use `/room/:id`. There is no fixed participant admission cap; authentication, rate, payload, lease, canvas, and hosting resource limits still apply.
 
 ## Netlify transport
 
 The browser reads `/api/config` before opening a session. Netlify returns `transport:'polling'`; the standalone Bun server returns `'websocket'`, so the same frontend build works on either host. The modern Function at `/api/*` uses Postgres for room access, membership leases, chat, guided-session metadata and ordered signaling events. It accepts peer rooms only; public room metadata includes `collaboration:'peer',transport:'poll'`. Every canvas initialization has `entities:[]`; canvas writes return `409 PEER_CANVAS`.
 
 Room creation, join, metadata, saved-session validation, and ICE configuration follow the REST shapes below. `GET /api/health` checks database availability; Netlify's CDN may answer it for up to 15 seconds. `GET /api/ice` without a `room` parameter returns the profile's STUN configuration without credentials. Room creation and joining run as separate Functions with Netlify rate limits of 15 creates and 30 joins per visitor IP per minute; excess requests receive `429` before reaching the database. Authenticated ICE configuration includes `expiresAt` in epoch milliseconds when using expiring TURN credentials.
+
+### Connect, receive, and send
 
 After obtaining a room token:
 
@@ -15,11 +32,15 @@ After obtaining a room token:
 3. `POST /api/rooms/:id/messages` with the same authorization and connection header sends a JSON message envelope from the list below: `signal`, `chat`, `cursor`, `workshop`, `ping`, or host-only `appearance` and `end`. Signals can only target active participants in the same room. With advertised `signalIdempotency`, a signal may include `requestId` matching `[A-Za-z0-9_-]{8,100}`. Identical retries within the same member/connection produce one retained event; different payloads with that key return `409 REQUEST_ID_REUSED`. Keys last with the ten-minute event history. The client retries eligible signals at most twice after network/5xx failures; it does not retry chat automatically. Sends are serialized, cursor requests coalesced to one per second, and requests limited to 128 KiB.
 4. `POST /api/rooms/:id/leave` with the same headers and `{}` explicitly revokes that participant's token and removes its active presence. A reload only stops polling; it preserves the token. Undelivered leaves expire through the presence lease.
 
+### Leases, expiry, and reconnecting
+
 Room writes lock the room row to serialize admission and allocate event sequence numbers. There is no participant-count admission check. Polling reads without that lock and renews the lease at most every 30 seconds. A scheduled Function runs every minute to remove expired rooms, expired events and stale connections; connects and room creation also clean up, because scheduled Functions only run on the published deploy. Connected presence expires after a two-minute lease without polling or accepted activity. Initial admission leases last one minute before the first connection; they do not reserve seats. An expired presence lease requires `/connect` with a valid token to become active again. Tokens last 24 hours and are renewed on connect; room expiry remains 24 hours from creation. Event history expires after ten minutes; an outdated cursor returns `409 RESYNC_REQUIRED`, requiring reconnect. Replaced connections return `409 CONNECTION_REPLACED`; expired tokens return `401 SESSION_EXPIRED`. Ending a room immediately denies further admission and lets active pollers receive `ended`.
 
 ## Standalone Bun transport
 
 Use `bun run local` to build and start the private local profile, or build with `bun run build:local` and start with `bun run start` using your own environment. `/api/config` selects WebSocket transport at runtime regardless of the build's inherited transport setting. The [self-hosting guide](public/self-hosting.html) covers the launcher, diagnostics, a shared LAN/VPN HTTPS origin, and Caddy.
+
+### Room routes
 
 * `POST /api/rooms` with `{name,displayName,password,collaboration?:'peer'|'server',appearance?:{...},workshop?:{...}}` returns `{room,token,participantId,isAdmin:true,workshop?}` (201). New browser sessions request `collaboration:'peer'`. Omitted mode defaults to `server` for existing clients. Other values return 400 `INVALID_COLLABORATION`. Peer room metadata is `{id,name,createdAt,appearance,collaboration:'peer'}`; legacy/server metadata is `{id,name,createdAt,appearance}`. The mode is fixed when the room is created and appears consistently in room, join, session, and socket initialization responses. The optional appearance and guided-session fields are described below; room creation accepts at most 64 KiB of JSON.
 * `GET /api/rooms/:id` returns `{room:{id,name,createdAt,appearance,...}}` (404 after end). Appearance is public presentation metadata, including before admission.
@@ -27,6 +48,8 @@ Use `bun run local` to build and start the private local profile, or build with 
 * `POST /api/rooms/:id/join` with `{displayName,password}` returns the creation authentication shape, with `isAdmin:false` (200). Keep the token and participant identity scoped to the room; the browser client uses sessionStorage and excludes the workshop plan from that saved authentication record. Password stays out of the URL and storage.
 * `GET /api/ice` returns the active profile's STUN configuration without credentials. `GET /api/ice?room=ID` with `Authorization: Bearer TOKEN` also returns configured TURN credentials to authenticated room participants. Configure `TURN_URLS` and `TURN_SECRET` for time-limited coturn-compatible HMAC credentials (`TURN_TTL_SECONDS`, default 3600, bounds 60–86400). Alternatively set `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` for a dedicated static account. Never distribute the shared secret to browsers.
 * Open `ws(s)://HOST/ws?room=ROOM_ID&token=TOKEN`. Tokens last 24 hours and are renewed on a successful connection. Each participant has one socket (new connection replaces the old one). No seat reservation or participant-count admission check is involved; heartbeat cleanup removes dead sockets, while valid tokens permit reconnecting.
+
+### Connection initialization
 
 All socket messages are JSON objects. Server sends an initial `{type:'init', room, self:{id,name,color,isAdmin,checklist?}, workshop?, participants:[...], entities:[...], chat:[...], capabilities:{protocolVersion:1,transport:'websocket',guidedSessions:1,guidedParticipation:1,roomStyling:1}}`. `room.appearance` holds the canonical room style. `participants` entries are `{id,name,color,isAdmin,checklist?}`. Server then broadcasts `{type:'participants',participants:[...]}` on presence changes. Both adapters share admission/chat/signal/cursor validation and session policy from `lib/session-protocol.mjs`.
 
@@ -142,7 +165,7 @@ Both hosting adapters emit `X-Common-Request-Id`, `X-Common-Build`, `X-Common-Pr
 
 Text in `text`, `sticky`, `rectangle`, and `ellipse` objects automatically fits the shared `width` and `height` in both browser experiences. Fitting preserves raw text and geometry; resizing the box controls the visual text size. The legacy `fontSize` field remains accepted and stored for compatibility but does not control fitted text size.
 
-Client → server:
+### Client → server
 
 * `{type:'upsert',entity}` is available in server rooms only. The entity is `{id,type,x,y,width,height,...}`. Type is `text`, `sticky`, `rectangle`, `ellipse`, `arrow`, `draw`, `image`, `diagram`, or `screen`. Allowed fields: `text`, `color`, `fill`, `fontSize`, `points:[{x,y}]`, `url` (image data URL only), `source`, `language:'mermaid'|'plantuml'`, `externalConsent` (boolean, defaults false), `participantId` (screen must match sender), `title`, `streamId`, `screenId`, `z`, `orderKey` (1–200 ASCII letters/digits), and `locked` (boolean). `orderKey` carries fractional layer ordering; `locked` prevents accidental position/size edits in the interface and is not an authorization boundary. Server adds `updatedBy` and `updatedAt`. Each screen has one stream and optional screenId. Coordinates may range −100000…100000; positive width/height ≤10000. Max image ~2 MB base64; max text/source 20000 characters. Peer rooms return `PEER_CANVAS` without accepting the entity.
 * `{type:'delete',id}` removes an entity in server rooms only. Only the screen owner can edit a screen; its owner or the host can remove it. Any participant can edit board content. Peer rooms return `PEER_CANVAS`, even if the ID is unknown.

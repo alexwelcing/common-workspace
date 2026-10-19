@@ -1,0 +1,46 @@
+name: Something is not working
+description: Tell us what you tried and what happened.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A short report is useful. Start with what you saw; add details you have.
+        Review attachments and leave out passwords, tokens, and private canvas content.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were you trying to do?
+      placeholder: I wanted to share a window and add notes beside it.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened?
+      description: Include the visible error, if there is one, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we see it?
+      description: A few steps, a screenshot, or a short clip can help. An intermittent problem is worth reporting too.
+  - type: dropdown
+    id: hosting
+    attributes:
+      label: Where are you running Common?
+      options:
+        - Hosted app
+        - Standalone Bun
+        - Embedded in another Bun app
+        - Not sure
+  - type: input
+    id: environment
+    attributes:
+      label: Browser, device, and workspace
+      placeholder: Safari on iPhone, Space & Time; or Chrome on macOS, Classic.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Anything else that helps?
+      description: A version/build ID or a reviewed connection or performance report is useful if available.
