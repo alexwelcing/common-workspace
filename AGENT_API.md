@@ -2,6 +2,8 @@
 
 Read the [full API reference](public/agent-api.md), also served at `/agent-api.md` on each installation. Browser-agent instructions are at [agents.md](public/agents.md), served at `/agents.md` on the same origin. The [self-hosting guide](public/self-hosting.html) explains laptop and team setup without Netlify.
 
+Start with the [agent workflow recipes](public/agent-examples.md) for feature demos, bug evidence, image comparisons, incident maps, embedded explanations, and an A2A design relay. The guide includes a working canvas API starter and distinguishes current interfaces from proposed agent handoffs.
+
 Agent access uses a timed, per-tab grant with separate inspect, edit, capture, and recording capabilities. The default grant permits inspection and editing for 15 minutes. Public API version 1 remains `describe`, `state`, `execute`, and `batch`; it cannot grant itself access.
 
 The build generates `/agent-tools.json` from the same schemas used by the optional experimental WebMCP adapter. The normal UI/JavaScript interfaces work without WebMCP or a hosted MCP endpoint. Consult the full reference for permissions, commands, recording limits, and local deployment behavior.
