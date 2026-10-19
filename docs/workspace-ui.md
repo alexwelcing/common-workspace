@@ -1,6 +1,6 @@
 # Workspace UI primitives
 
-Space & Time uses a small internal UI library in `src/ui/workspace-primitives.js` and `.css`. It provides shared interaction behavior and a few recognizable shapes without a component-framework dependency.
+Classic and Space & Time use a small internal UI library in `src/ui/workspace-primitives.js` and `.css`. It provides shared interaction behavior and a few recognizable shapes without a component-framework dependency. Shared tool definitions live in [`src/canvas-tools.js`](../src/canvas-tools.js); the [tool design review](tool-design-review.md) maps controls and their interaction behavior.
 
 Use the same shapes for the same purpose:
 

@@ -2,6 +2,9 @@ import './style.css';
 import './board.css';
 import './chat.css';
 import './mobile.css';
+import './ui/workspace-primitives.css';
+import {attachPopover,attachRovingToolbar} from './ui/workspace-primitives.js';
+import {CANVAS_TOOLS,PRIMARY_TOOL_IDS,CANVAS_TOOL_SHORTCUTS,DEFAULT_TOOL_COLOR} from './canvas-tools.js';
 import {ChatPanel} from './chat-panel.js';
 import {createElement, Check, Plus, LayoutDashboard, UsersRound, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, Palette, X} from 'lucide';
 const icons={Check, Plus, LayoutDashboard, UsersRound, ArrowUpRight, LockKeyhole, UserPlus, CircleHelp, Ellipsis, MonitorUp, CloudUpload, PanelRight, MousePointer2, Hand, Pencil, Type, StickyNote, Square, MoveUpRight, ImagePlus, Workflow, Copy, Minus, Scan, Sprout, MessagesSquare, ArrowUp, ArrowRight, DoorOpen, CloudOff, Sunset, MonitorX, Link, Download, LogOut, CircleStop, Circle, Undo2, Redo2, Palette, X};
@@ -51,7 +54,8 @@ const uid=()=>crypto.randomUUID();
 let shared=null, peerCanvas=null, receivingCanvas=false, restoringSandboxCanvas=false;
 let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null, sharingControls=null;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
-let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor='#305e48', chatPanel=null;
+let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor=DEFAULT_TOOL_COLOR, chatPanel=null;
+let toolPopover=null,cleanupToolDock=null,cleanupToolPalette=null,pendingImageImport=null,imageImportInFlight=false,imageImportJob=null,diagramDialog=null,pickerContext=null;
 let workshop=null,sessionGuide=null,featuredSession=null,sessionCapabilities={},cleanupViewport=null;
 const appearanceUI=new RoomAppearance();
 let appearance=restoreAppearance(),appearanceDialog=null,pendingAppearance=null,modalCleanup=null;
@@ -74,7 +78,7 @@ function embedState(){
 let lastEmbedState='';
 function publishEmbedState(){const state=embedState(),key=JSON.stringify(state);if(key===lastEmbedState)return;lastEmbedState=key;for(const listener of Array.from(embedListeners))try{listener(state)}catch{}}
 function fitInitialCanvas(){if(!disposed&&initialFitNeeded&&board?.el.clientWidth>0&&board.el.clientHeight>0){board.fit();initialFitNeeded=false}}
-function setEmbedVisible(visible){if(disposed)return embedState();embedVisible=Boolean(visible);performanceIndex.setVisible(embedVisible&&!document.hidden);if(!embedVisible&&media?.getCaptureState().requestPending)media.stop();if(embedVisible&&initialFitNeeded)nextFrame(fitInitialCanvas);syncScreenSubscriptions();for(const listener of Array.from(visibilityListeners))try{listener(new Event('visibilitychange'))}catch{}publishEmbedState();return embedState()}
+function setEmbedVisible(visible){if(disposed)return embedState();embedVisible=Boolean(visible);if(!embedVisible)toolPopover?.close({restoreFocus:false});performanceIndex.setVisible(embedVisible&&!document.hidden);if(!embedVisible&&media?.getCaptureState().requestPending)media.stop();if(embedVisible&&initialFitNeeded)nextFrame(fitInitialCanvas);syncScreenSubscriptions();for(const listener of Array.from(visibilityListeners))try{listener(new Event('visibilitychange'))}catch{}publishEmbedState();return embedState()}
 function destroyCommon(){
   if(destroyPromise)return destroyPromise;
   let finish;destroyPromise=new Promise(resolve=>{finish=resolve});
@@ -93,6 +97,7 @@ function destroyCommon(){
   visibilityListeners.clear();
   media?.destroy();for(const track of localStream?.getTracks?.()||[])track.stop();localStream=null;
   sharingControls?.destroy();chatPanel?.destroy();sessionGuide?.destroy();featuredSession?.destroy();
+  toolPopover?.destroy();cleanupToolDock?.();cleanupToolPalette?.();clearPendingImages();pickerContext=null;
   peerCanvas?.destroy();shared?.destroy();board?.destroy();
   for(const url of objectUrls)URL.revokeObjectURL(url);objectUrls.clear();
   closeModal();$('#toasts').replaceChildren();$('#app').inert=true;
@@ -141,8 +146,8 @@ const savedRooms=()=>{
 const ownParticipantId=()=>sandbox?'local':auth?.participantId;
 const saveRoom=r=>{if(disposed)return;writeStored('localStorage',appStorageKey('common.rooms'),JSON.stringify([{id:r.id,name:r.name},...savedRooms().filter(x=>x.id!==r.id)].slice(0,8)));renderRecent()};
 function toast(message,action,key){if(disposed)return;if(key)document.querySelectorAll('[data-toast-key]').forEach(el=>{if(el.dataset.toastKey===key)el.remove()});const el=document.createElement('div');el.className='toast';if(key)el.dataset.toastKey=key;el.innerHTML=icon('Check',16);el.append(document.createTextNode(message));if(action){const button=document.createElement('button');button.type='button';button.className='toast-action';button.textContent=action.label;button.onclick=()=>{el.remove();action.run()};el.append(button);el.dataset.historyAction='true'}$('#toasts').append(el);later(()=>el.remove(),4500)}
-function modal(html,onSubmit){if(disposed)return;modalCleanup?.();modalCleanup=null;appearanceDialog=null;clearPendingAppearance();modalRevision++;const root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);modalController.activate()}
-function closeModal(){modalCleanup?.();modalCleanup=null;appearanceDialog=null;clearPendingAppearance();modalRevision++;modalController.close({restoreFocus:!disposed});if(!disposed)chatPanel?.refreshVisibility()}
+function modal(html,onSubmit){if(disposed)return;toolPopover?.close();modalCleanup?.();modalCleanup=null;appearanceDialog=null;diagramDialog=null;clearPendingAppearance();modalRevision++;const root=$('#modal-root');root.innerHTML=`<div class="modal-overlay"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button close-modal" aria-label="Close dialog">${icon('X')}</button>${html}</section></div>`;root.querySelector('.close-modal').onclick=closeModal;root.querySelector('.modal-overlay').onclick=e=>{if(e.target===e.currentTarget)closeModal()};root.querySelector('form')?.addEventListener('submit',onSubmit);modalController.activate()}
+function closeModal(){modalCleanup?.();modalCleanup=null;appearanceDialog=null;diagramDialog=null;clearPendingAppearance();modalRevision++;modalController.close({restoreFocus:!disposed});if(!disposed)chatPanel?.refreshVisibility()}
 function dialogOperation(form){const revision=modalRevision,generation=sessionGeneration;return()=>!disposed&&form.isConnected&&modalRevision===revision&&sessionGeneration===generation}
 function formError(form,msg){if(disposed)return;let e=form.querySelector('.form-error');if(!e){e=document.createElement('p');e.className='form-error';e.setAttribute('role','alert');form.append(e)}e.textContent=msg}
 function clearPendingAppearance(){if(pendingAppearance)cancelLater(pendingAppearance.timer);pendingAppearance=null}
@@ -253,7 +258,14 @@ $('#app').innerHTML=`
  <section class="workspace-area">
  <div class="canvas-wrap"><div id="board-viewport" aria-label="Collaborative canvas"></div><div id="remote-cursors"></div>
  <div class="canvas-top-hint"><span class="hint-icon">${icon('MousePointer2',13)}</span><span id="canvas-hint">Drag to move · Enter to edit · Paste a screenshot</span></div>
- <div class="canvas-toolbar" role="toolbar" aria-label="Canvas tools">${[['select','MousePointer2','Select (V)'],['hand','Hand','Pan (H)'],['draw','Pencil','Draw (P)'],['text','Type','Text (T)'],['sticky','StickyNote','Sticky note (N)'],['rectangle','Square','Rectangle (R)'],['arrow','MoveUpRight','Arrow (A)'],['image','ImagePlus','Upload image'],['diagram','Workflow','Add diagram']].map(([id,i,label],n)=>`${n===2||n===7?'<span class="tool-divider"></span>':''}<button class="tool ${id==='select'?'selected':''}" data-tool="${id}" aria-label="${label}" aria-pressed="${id==='select'}" title="${label}">${icon(i,20)}</button>`).join('')}<span class="tool-divider"></span><input type="color" value="#305e48" id="tool-color" title="Drawing color" aria-label="Drawing color"></div>
+ <div class="canvas-toolbar cw-pebble-dock" role="toolbar" aria-label="Canvas tools">${PRIMARY_TOOL_IDS.map(id=>{const tool=CANVAS_TOOLS.find(tool=>tool.id===id);return `<button class="tool cw-quiet-button" data-tool="${id}" aria-label="${tool.label} (${tool.shortcut.toUpperCase()})" aria-keyshortcuts="${tool.shortcut}" aria-pressed="${id==='select'}" title="${tool.label} (${tool.shortcut.toUpperCase()})">${icon(tool.icon,19)}<span class="tool-label">${tool.label}</span></button>`}).join('')}<button class="tool tool-more cw-quiet-button" id="canvas-more-tools" aria-label="More canvas tools" aria-describedby="canvas-current-tool" title="More canvas tools">${icon('Ellipsis',19)}<span class="tool-label">More</span></button></div>
+ <section class="canvas-tools-panel cw-folded-menu" id="canvas-tools-panel" role="dialog" aria-label="More canvas tools" hidden>
+  <div class="canvas-palette-heading"><strong>A few more ways to make</strong><span id="canvas-palette-state" role="status"></span></div>
+  <div class="canvas-tool-modes" role="toolbar" aria-label="More drawing tools">${CANVAS_TOOLS.filter(tool=>!PRIMARY_TOOL_IDS.includes(tool.id)).map(tool=>`<button class="canvas-palette-tool cw-quiet-button" data-tool="${tool.id}" aria-label="${tool.label} (${tool.shortcut.toUpperCase()})" aria-keyshortcuts="${tool.shortcut}" aria-pressed="false" title="${tool.label} (${tool.shortcut.toUpperCase()})">${icon(tool.icon,19)}<span>${tool.label}</span><kbd>${tool.shortcut.toUpperCase()}</kbd></button>`).join('')}</div>
+  <div class="canvas-insert-actions"><button class="canvas-palette-tool cw-quiet-button" data-tool="image">${icon('ImagePlus',19)}<span>Upload image</span></button><button class="canvas-palette-tool cw-quiet-button" data-tool="diagram">${icon('Workflow',19)}<span>Add diagram</span></button></div>
+  <div class="canvas-color-control"><label for="tool-color" id="canvas-color-label">New object color</label><input type="color" value="${DEFAULT_TOOL_COLOR}" id="tool-color" aria-describedby="canvas-color-help"><p id="canvas-color-help">For new text, notes, drawings, and shapes.</p></div>
+  <div class="canvas-image-retry" id="canvas-image-retry" hidden><p id="canvas-image-status" role="status"></p><div><button class="button" id="retry-canvas-images">Retry images</button><button class="button" id="discard-canvas-images">Discard</button></div></div>
+ </section><span class="sr-only" id="canvas-current-tool" role="status" aria-live="polite"></span>
  <span id="engine-label" class="sr-only">Canvas ready</span><div class="canvas-bottom"><div class="zoom-controls"><button class="icon-button" id="zoom-out" aria-label="Zoom out">${icon('Minus',15)}</button><button id="zoom-label" title="Reset zoom" aria-label="Reset zoom">100%</button><button class="icon-button" id="zoom-in" aria-label="Zoom in">${icon('Plus',15)}</button><span></span><button class="icon-button" id="fit-canvas" aria-label="Fit canvas to view">${icon('Scan',16)}</button></div></div>
  <div class="drop-overlay" id="drop-overlay">${icon('ImagePlus',40)}<strong>Drop images onto the canvas</strong></div>
  </div>
@@ -278,11 +290,18 @@ board=new Board({
   onLayerAction:(id,action)=>shared?.reorder(id,action),
   onLockChange:(id,locked)=>shared?.patch(id,{locked}),
   onCursor:({x,y})=>{if(!sandbox&&connected)send({type:'cursor',x,y})},
-  onSelect:()=>{agentTools?.refresh();scheduleScreenSubscriptions()},
+  onSelect:()=>{refreshToolControls();agentTools?.refresh();scheduleScreenSubscriptions()},
   onWatchScreen:id=>{screenSubscriptions.toggle(id);syncScreenSubscriptions();refreshSessionGuide()},
   onStatus:toast,onToolChange:next=>chooseTool(next),
-  onViewChange:view=>{if(disposed)return;$('#zoom-label').textContent=Math.round(view.zoom*100)+'%';featuredSession?.viewChanged();scheduleScreenSubscriptions()}
+  onViewChange:view=>{if(disposed)return;$('#zoom-label').textContent=Math.round(view.zoom*100)+'%';$('#zoom-in').disabled=view.zoom>=2.5;$('#zoom-out').disabled=view.zoom<=.15;featuredSession?.viewChanged();scheduleScreenSubscriptions()}
 });
+board.setColor(activeColor);
+// The fixed fallback must stay outside the canvas's clipping/containment box.
+$('.main').append($('#canvas-tools-panel'));
+toolPopover=attachPopover({trigger:$('#canvas-more-tools'),panel:$('#canvas-tools-panel'),placement:'top-end',initialFocus:()=>$('#canvas-tools-panel [aria-pressed="true"]')});
+cleanupToolDock=attachRovingToolbar($('.canvas-toolbar'));
+cleanupToolPalette=attachRovingToolbar($('.canvas-tool-modes'));
+board.el.addEventListener('focusin',event=>{if(event.target.closest('.board-writing-surface'))toolPopover.close({restoreFocus:false})},{signal:mainEvents.signal});
 featuredSession=new FeaturedSession({board,onChange:()=>{sessionGuide?.update();scheduleScreenSubscriptions()},onStatus:toast});
 sessionGuide=new SessionGuide({el:$('#session-guide-root'),getContext:guideContext,
   onShare:()=>$('#share-screen').click(),onSend:message=>{const sent=send(message);if(sent&&message.action==='feature')sessionGuide?.setOpen(false);return sent},
@@ -327,7 +346,7 @@ function syncScreenSubscriptions(){
   board.setScreenSubscriptions(ids,ownParticipantId());
   media.setSubscriptions(ids);sessionGuide?.update();refreshPerformanceContext({includeMedia:true});
 }
-document.addEventListener('visibilitychange',()=>{performanceIndex.setVisible(embedVisible&&!document.hidden);syncScreenSubscriptions();publishEmbedState()},{signal:mainEvents.signal});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)toolPopover?.close({restoreFocus:false});performanceIndex.setVisible(embedVisible&&!document.hidden);syncScreenSubscriptions();publishEmbedState()},{signal:mainEvents.signal});
 window.addEventListener('resize',scheduleScreenSubscriptions,{signal:mainEvents.signal});
 function stopDeletedLocalScreen(){
   if(localStream&&!shared?.all().some(e=>e.type==='screen'&&e.participantId===ownParticipantId())){
@@ -340,7 +359,7 @@ function makeCanvasModel(){
   shared=new SharedCanvas({
     onChange:entity=>{
       if(restoringSandboxCanvas)return;
-      board.upsert(entity);board.setLayerOrder(shared.getOrder());refreshPerformanceContext();
+      board.upsert(entity);board.setLayerOrder(shared.getOrder());refreshPerformanceContext();refreshToolControls();
       if(entity.type==='screen'){scheduleScreenSubscriptions();refreshSessionGuide()}
       if(sandbox)saveSandbox();else if(!isPeerRoom()&&!receivingCanvas)send({type:'upsert',entity});
     },
@@ -432,11 +451,69 @@ loadSandbox();
 setupMedia();
 initGeometry().then(()=>{if(!disposed){$('#engine-label').textContent='Canvas ready';$('#engine-label').title=geometryBackend()}});
 
-function chooseTool(next){if(disposed)return;if(next==='image'){$('#image-input').click();return}if(next==='diagram'){diagramModal();return}board.setTool(next);document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>{const selected=e.dataset.tool===next;e.classList.toggle('selected',selected);e.setAttribute('aria-pressed',String(selected))});const touch=window.matchMedia?.('(pointer: coarse)')?.matches;$('#canvas-hint').textContent=(touch?{select:'Drag to move · Pinch to zoom · Select, then Edit',hand:'Drag to pan · Pinch to zoom',draw:'Drag to draw · Two fingers to move',text:'Tap to add text',sticky:'Tap to add a note',rectangle:'Drag to draw a box',arrow:'Drag to draw an arrow'}:{select:'Drag to move · Enter to edit · Paste a screenshot',hand:'Drag to pan the canvas',draw:'Click and drag to draw',text:'Click to add text',sticky:'Click to add a note',rectangle:'Click and drag to draw a box',arrow:'Click and drag to draw an arrow'})[next]||''}
+function canvasEditable(){return !disposed&&!!board&&!board.readOnly&&(sandbox||connected)}
+function colorableSelection(){const entity=board?.entities.get(board.selectedId);return entity&&['text','sticky','draw','rectangle','ellipse','arrow'].includes(entity.type)?entity:null}
+function pickerColor(value){
+  if(/^#[\da-f]{6}$/i.test(value||''))return value;
+  if(/^#[\da-f]{3}$/i.test(value||''))return '#'+value.slice(1).split('').map(char=>char+char).join('');
+  // Imported objects may use named colors; the native picker requires RGB hex.
+  const context=pickerContext||=document.createElement('canvas').getContext('2d');
+  if(context){context.fillStyle=activeColor;context.fillStyle=value;const normalized=context.fillStyle;if(/^#[\da-f]{6}$/i.test(normalized))return normalized}
+  return activeColor;
+}
+function toolText(selector,text){const node=$(selector);if(node.textContent!==text)node.textContent=text}
+function refreshToolControls(){
+  if(disposed||!board)return;
+  const editable=canvasEditable();
+  if(!editable&&!['select','hand'].includes(board.tool))board.setTool('select');
+  const current=CANVAS_TOOLS.find(tool=>tool.id===board.tool)||CANVAS_TOOLS[0];
+  document.querySelectorAll('.canvas-toolbar button[data-tool],#canvas-tools-panel button[data-tool]').forEach(button=>{
+    const id=button.dataset.tool,mode=CANVAS_TOOLS.some(tool=>tool.id===id),selected=id===current.id;
+    if(mode){button.classList.toggle('selected',selected);if(button.getAttribute('aria-pressed')!==String(selected))button.setAttribute('aria-pressed',String(selected))}
+    const disabled=(!editable&&!['select','hand'].includes(id))||(id==='image'&&imageImportInFlight);
+    if(button.disabled!==disabled)button.disabled=disabled;
+  });
+  const secondary=!PRIMARY_TOOL_IDS.includes(current.id),more=$('#canvas-more-tools');
+  const moreKey=secondary?current.id:'more';
+  if(more.dataset.currentTool!==moreKey){more.dataset.currentTool=moreKey;more.innerHTML=icon(secondary?current.icon:'Ellipsis',19)+`<span class="tool-label">${secondary?current.label:'More'}</span>`}
+  more.classList.toggle('selected',secondary);more.title=secondary?`More canvas tools · ${current.label} selected`:'More canvas tools';
+  const touch=window.matchMedia?.('(pointer: coarse)')?.matches;
+  const hint=editable?(touch?current.touchHint:current.hint):'Reconnecting · Select, pan, and zoom still work';
+  toolText('#canvas-hint',hint);toolText('#canvas-current-tool',`${current.label}. ${hint}`);
+  toolText('#canvas-palette-state',editable?(imageImportInFlight?'Preparing images…':''):'Reconnecting · view controls remain available');
+  const selected=colorableSelection(),text=selected&&['text','sticky'].includes(selected.type);
+  const color=$('#tool-color');color.disabled=!editable;color.value=pickerColor(selected?.color||activeColor);
+  toolText('#canvas-color-label',selected?(text?'Text color':'Stroke color'):'New object color');
+  toolText('#canvas-color-help',selected?'Changes the selected '+(text?'text':'stroke')+' and ink for new objects.':'For new text, notes, drawings, and shapes.');
+  const pending=pendingImageImport?.files.length||0;
+  $('#canvas-image-retry').hidden=!pending;
+  toolText('#canvas-image-status',pending?`${pending} ${pending===1?'image is':'images are'} kept in this tab. ${editable?'Retry when there is room on the canvas.':'Reconnect to finish adding them.'}`:'');
+  $('#retry-canvas-images').disabled=!editable||imageImportInFlight;
+  toolText('#discard-canvas-images',imageImportInFlight?'Cancel import':'Discard');
+  if(diagramDialog){diagramDialog.button.disabled=!editable;diagramDialog.status.textContent=editable?'Your source stays here until the diagram is added.':'Reconnecting… Your source is kept here.'}
+}
+function chooseTool(next){
+  if(disposed)return;
+  if(!['select','hand'].includes(next)&&!canvasEditable()){toast('Reconnect to add or edit canvas objects.');return}
+  if(next==='image'){toolPopover?.close();$('#image-input').value='';$('#image-input').click();return}
+  if(next==='diagram'){diagramModal();return}
+  if(!CANVAS_TOOLS.some(tool=>tool.id===next))return;
+  board.setTool(next);refreshToolControls();
+}
 chooseTool('select');
-document.querySelectorAll('.canvas-toolbar [data-tool]').forEach(e=>e.onclick=()=>chooseTool(e.dataset.tool));
-$('#tool-color').oninput=e=>{activeColor=e.target.value;board.setColor(activeColor)};
-$('#zoom-in').onclick=()=>board.setZoom(Math.min(2,board.getView().zoom+.1));$('#zoom-out').onclick=()=>board.setZoom(Math.max(.25,board.getView().zoom-.1));$('#zoom-label').onclick=()=>board.setZoom(1);$('#fit-canvas').onclick=()=>board.fit();
+document.querySelectorAll('.canvas-toolbar button[data-tool],#canvas-tools-panel button[data-tool]').forEach(button=>button.onclick=()=>{
+  const palette=!!button.closest('#canvas-tools-panel'),id=button.dataset.tool;
+  chooseTool(id);
+  if(palette&&CANVAS_TOOLS.some(tool=>tool.id===id)){toolPopover.close({restoreFocus:false});board.el.focus({preventScroll:true})}
+});
+$('#tool-color').oninput=event=>{
+  if(!canvasEditable())return;
+  activeColor=event.target.value;board.setColor(activeColor);
+  refreshToolControls();
+};
+$('#retry-canvas-images').onclick=()=>{const pending=pendingImageImport;if(pending)void addImages(pending.files,pending)};
+$('#discard-canvas-images').onclick=()=>{clearPendingImages();refreshToolControls()};
+$('#zoom-in').onclick=()=>board.setZoom(board.getView().zoom+.1);$('#zoom-out').onclick=()=>board.setZoom(board.getView().zoom-.1);$('#zoom-label').onclick=()=>board.setZoom(1);$('#fit-canvas').onclick=()=>board.fit();
 function setPanelOpen(open){if(!open)chatPanel?.setVisible(false);$('#right-panel').classList.toggle('collapsed',!open);$('#toggle-panel').setAttribute('aria-expanded',String(open));if(open&&rightPanel==='chat')chatPanel?.setVisible(true)}
 $('#toggle-panel').onclick=()=>setPanelOpen($('#right-panel').classList.contains('collapsed'));
 $('#close-panel').onclick=()=>{setPanelOpen(false);$('#toggle-panel').focus({preventScroll:true})};
@@ -518,7 +595,7 @@ async function joinFromPath(id) {
 }
 async function enterRoom(result,isNew=false){
   if(disposed||!useClassicRoom(result.room))return;
-  sessionGeneration++;
+  sessionGeneration++;clearPendingImages();toolPopover?.close({restoreFocus:false});
   agentPermissions?.revoke('session-changed');webMCP?.refresh();
   capture?.stop().catch(()=>{});walkthrough?.stop();
   intentionalClose=true;cancelLater(reconnectTimer);socket?.close();media?.destroy();
@@ -577,7 +654,7 @@ function updateCanvasStatus(){
 function setConnection(status){
   if(disposed)return;
   diagnostics.record('connection',{state:status,participants:participants.length});
-  connected=status==='connected';board.setReadOnly(!sandbox&&!connected);updateHistoryControls();
+  connected=status==='connected';board.setReadOnly(!sandbox&&!connected);updateHistoryControls();refreshToolControls();
   chatPanel?.setContext({sandbox,connected,participantId:auth?.participantId});
   $('#connection-status').classList.toggle('disconnected',!connected);updateCanvasStatus();
   scheduleScreenSubscriptions();
@@ -707,38 +784,78 @@ function updateShareButton(){
   capture?.syncSource();agentTools?.refresh();refreshSessionGuide();
   publishEmbedState();
 }
-function diagramModal(){if(disposed)return;modal(`<span class="modal-symbol">${icon('Workflow',25)}</span><h2 id="modal-title">Add a diagram</h2><p>Use Mermaid or PlantUML syntax.</p><form><label>Diagram language<select name="language" id="diagram-language"><option value="mermaid">Mermaid · renders in your browser</option><option value="plantuml" ${getRuntimeConfig().plantUml.enabled?'':'disabled'}>PlantUML · ${getRuntimeConfig().plantUml.enabled?'configured renderer':'disabled here'}</option></select></label><label>Diagram source<textarea name="source" rows="8" spellcheck="false" required>flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]</textarea></label><label class="consent-label" id="plant-consent" hidden><input type="checkbox" name="consent">Allow sending this diagram to ${esc(getRuntimeConfig().plantUml.endpoint?new URL(getRuntimeConfig().plantUml.endpoint).host:'the configured renderer')} for rendering. Everyone in this room can see the result.</label><button class="primary modal-submit">Add to canvas ${icon('Plus',17)}</button></form>`,e=>{e.preventDefault();const vals=Object.fromEntries(new FormData(e.target));if(vals.language==='plantuml'&&(!getRuntimeConfig().plantUml.enabled||!vals.consent)){formError(e.target,'Allow external rendering to use PlantUML.');return}board.add('diagram',{source:vals.source,language:vals.language,externalConsent:vals.language==='plantuml',title:vals.language==='mermaid'?'Mermaid diagram':'PlantUML diagram',width:500,height:300});closeModal();chooseTool('select')});$('#diagram-language').onchange=e=>{$('#plant-consent').hidden=e.target.value!=='plantuml';const input=$('textarea[name=source]');input.value=e.target.value==='plantuml'?'@startuml\nAlice -> Bob: An idea\nBob --> Alice: Let’s build it\n@enduml':'flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]'}}
+function diagramModal(){
+  if(disposed||!canvasEditable()){toast('Reconnect before adding a diagram.');return}
+  const examples={mermaid:'flowchart LR\n  idea[An idea] --> together[A conversation]\n  together --> next[Something great]',plantuml:'@startuml\nAlice -> Bob: An idea\nBob --> Alice: Let’s build it\n@enduml'};
+  const drafts={...examples},targetModel=shared,generation=sessionGeneration;
+  let language='mermaid';
+  modal(`<span class="modal-symbol">${icon('Workflow',25)}</span><h2 id="modal-title">Add a diagram</h2><p>Use Mermaid or PlantUML syntax. Your draft stays here until it is added.</p><form id="canvas-diagram-form"><label>Diagram language<select name="language" id="diagram-language"><option value="mermaid">Mermaid · renders in your browser</option><option value="plantuml" ${getRuntimeConfig().plantUml.enabled?'':'disabled'}>PlantUML · ${getRuntimeConfig().plantUml.enabled?'configured renderer':'disabled here'}</option></select></label><label>Diagram source<textarea name="source" rows="8" maxlength="20000" aria-describedby="diagram-source-count" spellcheck="false" required>${esc(examples.mermaid)}</textarea><span class="field-help" id="diagram-source-count"></span></label><label class="consent-label" id="plant-consent" hidden><input type="checkbox" name="consent">Allow sending this diagram to ${esc(getRuntimeConfig().plantUml.endpoint?new URL(getRuntimeConfig().plantUml.endpoint).host:'the configured renderer')} for rendering. Everyone in this room can see the result.</label><p class="field-help" id="diagram-save-status" role="status"></p><button class="primary modal-submit">Add to canvas ${icon('Plus',17)}</button></form>`,event=>{
+    event.preventDefault();const form=event.target;
+    if(!canvasEditable()){formError(form,'Reconnect to add this diagram. Your source is kept here.');return}
+    if(shared!==targetModel||sessionGeneration!==generation){formError(form,'The canvas changed. Copy your source before opening a new diagram here.');return}
+    const values=Object.fromEntries(new FormData(form));
+    if(!values.source.trim()||values.source.length>20000){formError(form,'Enter diagram source using 20,000 characters or fewer.');return}
+    if(values.language==='plantuml'&&(!getRuntimeConfig().plantUml.enabled||!values.consent)){formError(form,'Allow external rendering to use PlantUML.');return}
+    const entity=board.add('diagram',{source:values.source,language:values.language,externalConsent:values.language==='plantuml',title:values.language==='mermaid'?'Mermaid diagram':'PlantUML diagram',width:500,height:300});
+    if(!entity||!targetModel.get(entity.id)){formError(form,'This diagram could not be added. Your source is kept here. Make room on the canvas, then try again.');return}
+    closeModal();chooseTool('select');board.el.focus({preventScroll:true});
+  });
+  const form=$('#canvas-diagram-form'),source=form.elements.source;
+  const updateCount=()=>{$('#diagram-source-count').textContent=`${source.value.length.toLocaleString()} / 20,000 characters`};
+  $('#diagram-language').onchange=event=>{
+    drafts[language]=source.value;language=event.target.value;source.value=drafts[language];
+    $('#plant-consent').hidden=language!=='plantuml';form.elements.consent.required=language==='plantuml';updateCount();
+  };
+  source.oninput=updateCount;updateCount();
+  diagramDialog={form,button:form.querySelector('.modal-submit'),status:$('#diagram-save-status')};refreshToolControls();
+}
 // Decode first, then commit a batch synchronously as one personal undo action.
 // Capture the intended world location now: decoding may outlast a pan or zoom.
-async function addImages(files,{point=board.centerPoint(),offset=32/board.zoom}={}){
-  if(disposed||!shared)return;
-  if(board.readOnly){toast('Reconnect to add images to the shared canvas.');return}
-  const targetModel=shared,generation=sessionGeneration,wasFocused=!!board.focusedId;
-  const current=()=>!disposed&&shared===targetModel&&sessionGeneration===generation;
-  const chosen=Array.from(files||[]),prepared=[],failures=[];
-  if(!chosen.length)return;
-  for(const [index,file] of chosen.slice(0,MAX_IMAGE_BATCH).entries()){
-    try{const image=await prepareImage(file,{signal:mainEvents.signal});if(!current())return;prepared.push({image,index})}
-    catch(error){if(!current())return;if(error.name==='AbortError')return;failures.push(`${String(file.name||'Image').slice(0,80)}: ${error.message||'This image could not be added. Choose it again to retry.'}`)}
-  }
-  if(!current())return;
-  if(board.readOnly){toast('Your connection changed. Reconnect and add the images again.');return}
-  let added=0,lastAdded=null;
-  if(prepared.length){
-    targetModel.beginHistoryGroup(prepared.length===1?'Add image':'Add images');
-    try{
-      for(const {image,index} of prepared){
-        const entity=board.add('image',{...image,x:Math.round(point.x-image.width/2+index*offset),y:Math.round(point.y-image.height/2+index*offset)});
-        if(entity&&targetModel.get(entity.id)){added++;lastAdded=entity.id}
-      }
-    }finally{targetModel.endHistoryGroup()}
-  }
-  if(added){chooseTool('select');board.select(lastAdded);if(wasFocused)board.revealEntity(lastAdded);toast(`${added===1?'Image added':`${added} images added`} to the canvas.`)}
-  if(added<prepared.length)toast('Some images could not be added. Remove a few objects, then choose the remaining images again.');
-  for(const failure of failures)toast(failure);
-  if(chosen.length>MAX_IMAGE_BATCH)toast(`Add up to ${MAX_IMAGE_BATCH} images at a time. Choose the remaining images to add them.`);
+function clearPendingImages(){
+  imageImportJob?.abort();imageImportJob=null;imageImportInFlight=false;pendingImageImport=null;
+  const input=$('#image-input');if(input)input.value='';
 }
-$('#image-input').onchange=e=>{const files=Array.from(e.target.files||[]);e.target.value='';void addImages(files)};
+async function addImages(files,{point=board.centerPoint(),offset=32/board.zoom,model=shared,generation=sessionGeneration,indices=null}={}){
+  if(disposed||!shared)return;
+  const chosen=Array.from(files||[]);if(!chosen.length)return;
+  if(imageImportInFlight){toast('Images are preparing. Wait, then add the next batch.');return}
+  if(model!==shared||generation!==sessionGeneration){toast('The canvas changed. Choose the images again.');return}
+  const batch=chosen.slice(0,MAX_IMAGE_BATCH),batchIndices=batch.map((_,index)=>indices?.[index]??index);
+  pendingImageImport={files:batch,indices:batchIndices,point,offset,model,generation};
+  if(!canvasEditable()){refreshToolControls();toast('Your images are kept in this tab. Reconnect, then use Retry images in More canvas tools.');return}
+  const targetModel=shared,wasFocused=!!board.focusedId,job=new AbortController();
+  imageImportJob=job;imageImportInFlight=true;refreshToolControls();
+  const current=()=>!disposed&&shared===targetModel&&sessionGeneration===generation&&imageImportJob===job&&!job.signal.aborted;
+  const prepared=[],failures=[];
+  try{
+    for(const [slot,file] of batch.entries()){
+      try{const image=await prepareImage(file,{signal:job.signal});if(!current())return;prepared.push({image,index:batchIndices[slot],file})}
+      catch(error){if(!current()||error.name==='AbortError')return;failures.push(`${String(file.name||'Image').slice(0,80)}: ${error.message||'This image could not be added. Choose it again to retry.'}`)}
+    }
+    if(!current())return;
+    const retry=[];let added=0,lastAdded=null;
+    if(!canvasEditable())retry.push(...prepared.map(({file,index})=>({file,index})));
+    else if(prepared.length){
+      targetModel.beginHistoryGroup(prepared.length===1?'Add image':'Add images');
+      try{
+        for(const {image,index,file} of prepared){
+          if(!canvasEditable()){retry.push({file,index});continue}
+          const entity=board.add('image',{...image,x:Math.round(point.x-image.width/2+index*offset),y:Math.round(point.y-image.height/2+index*offset)});
+          if(entity&&targetModel.get(entity.id)){added++;lastAdded=entity.id}else retry.push({file,index});
+        }
+      }finally{targetModel.endHistoryGroup()}
+    }
+    pendingImageImport=retry.length?{files:retry.map(item=>item.file),indices:retry.map(item=>item.index),point,offset,model:targetModel,generation}:null;
+    if(!retry.length)$('#image-input').value='';
+    if(added){chooseTool('select');board.select(lastAdded);if(wasFocused)board.revealEntity(lastAdded);toast(`${added===1?'Image added':`${added} images added`} to the canvas.`)}
+    if(retry.length)toast('Images not added are kept in this tab. Reconnect or make room, then use Retry images in More canvas tools.');
+    for(const failure of failures)toast(failure);
+    if(chosen.length>MAX_IMAGE_BATCH)toast(`Add up to ${MAX_IMAGE_BATCH} images at a time. Choose the remaining images to add them.`);
+  }finally{
+    if(imageImportJob===job){imageImportJob=null;imageImportInFlight=false;if(!disposed)refreshToolControls()}
+  }
+}
+$('#image-input').onchange=event=>{void addImages(Array.from(event.target.files||[]))};
 let dragDepth=0;
 const wrap=$('.canvas-wrap');
 const hasFileDrag=event=>Array.from(event.dataTransfer?.types||[]).includes('Files');
@@ -798,7 +915,7 @@ function downloadPerformanceReport(snapshot){
   const link=document.createElement('a');link.href=url;link.download='common-performance-report.json';link.click();
   objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);
 }
-function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="space-time-menu">${icon('Workflow',17)} Open Space &amp; time</button><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="performance-menu">${icon('Sprout',17)} Performance</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#space-time-menu').onclick=()=>location.href=spacePath();$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#performance-menu').onclick=showPerformance;modalCleanup=bindPerformanceIndicator({monitor:performanceIndex,item:$('#performance-menu')});$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
+function roomMenu(){if(disposed)return;modal(`<h2 id="modal-title">Canvas options</h2><div class="menu-actions"><button class="button" id="space-time-menu">${icon('Workflow',17)} Open Space &amp; time</button><button class="button" id="room-appearance-menu">${icon('Palette',17)} ${sandbox?'Canvas style':'Room style'}</button><button class="button" id="export-canvas">${icon('Download',17)} Export canvas as SVG</button><button class="button" id="connection-details">${icon('CircleHelp',17)} Connection details</button><button class="button" id="performance-menu">${icon('Sprout',17)} Performance</button><button class="button" id="record-canvas">${icon('Circle',17)} Record canvas</button><button class="button" id="media-exports">${icon('MonitorUp',17)} Recording exports</button>${sandbox?'':`<button class="button" id="leave-room">${icon('LogOut',17)} Leave session</button>${auth.isAdmin?`<button class="button danger" id="end-room">${icon('CircleStop',17)} End session for everyone</button>`:''}`}</div>`);$('#space-time-menu').onclick=()=>location.href=spacePath();$('#room-appearance-menu').onclick=roomAppearanceModal;$('#connection-details').onclick=showConnectionDetails;$('#performance-menu').onclick=showPerformance;modalCleanup=bindPerformanceIndicator({monitor:performanceIndex,item:$('#performance-menu')});$('#record-canvas').onclick=()=>{closeModal();if(agentTools)agentTools.openCapture();else toast('Recording controls are loading. Try again in a moment.')};$('#media-exports').onclick=showMediaExports;$('#export-canvas').onclick=async()=>{try{const result=board.exportSvg();const blob=result instanceof Blob?result:new Blob([result],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='common-canvas.svg';a.click();objectUrls.add(url);later(()=>releaseObjectUrl(url),1000);toast('Canvas exported. Live screens are not included.');closeModal()}catch{toast('This canvas could not be exported.')}};$('#leave-room')?.addEventListener('click',()=>{intentionalClose=true;send({type:'leave'});forgetAuth(auth.room.id);media.destroy();location.href=appPath('/')});$('#end-room')?.addEventListener('click',()=>{modal(`<h2 id="modal-title">End this session?</h2><p>Ending the session disconnects everyone and deletes this room and its canvas. Export anything you want to keep first.</p><button class="primary danger-fill modal-submit" id="confirm-end">End session for everyone</button><button class="button modal-submit" id="cancel-end">Keep session open</button>`);$('#confirm-end').onclick=()=>{send({type:'end'});closeModal()};$('#cancel-end').onclick=closeModal})}
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented||e.isComposing||disposed)return;
   if(e.key==='Escape'){
@@ -808,7 +925,7 @@ document.addEventListener('keydown',e=>{
   }
   const target=e.target;
   if(!(target instanceof Element)||/INPUT|TEXTAREA|SELECT/.test(target.tagName)||target.isContentEditable||$('#modal-root').children.length||document.querySelector('dialog[open]'))return;
-  const inCanvas=board.el.contains(target),inTools=!!target.closest('.canvas-toolbar,.canvas-history');
+  const inCanvas=board.el.contains(target),inTools=!!target.closest('.canvas-toolbar,.canvas-history,#canvas-tools-panel');
   if(!inCanvas&&!inTools)return;
   const key=e.key.toLowerCase();
   if((e.ctrlKey||e.metaKey)&&!e.altKey){
@@ -816,9 +933,8 @@ document.addEventListener('keydown',e=>{
     return;
   }
   if(e.altKey||e.ctrlKey||e.metaKey)return;
-  if(target.closest('button,a,[role="button"],[role="menuitem"]')&&!target.closest('.canvas-toolbar'))return;
-  const keys={v:'select',h:'hand',p:'draw',t:'text',n:'sticky',r:'rectangle',a:'arrow'};
-  if(keys[key]){e.preventDefault();chooseTool(keys[key])}
+  if(target.closest('button,a,[role="button"],[role="menuitem"]')&&!target.closest('.canvas-toolbar,#canvas-tools-panel'))return;
+  if(CANVAS_TOOL_SHORTCUTS[key]){e.preventDefault();chooseTool(CANVAS_TOOL_SHORTCUTS[key]);toolPopover?.close({restoreFocus:false});board.el.focus({preventScroll:true})}
 },{signal:mainEvents.signal});
 window.addEventListener('beforeunload',destroyCommon,{signal:mainEvents.signal});window.addEventListener('popstate',()=>{if(!disposed)location.reload()},{signal:mainEvents.signal});
 // Public, opt-in browser agent interface. It never exposes room credentials.

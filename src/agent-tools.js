@@ -15,7 +15,7 @@ const GRANT_PRESETS = [
 const EXAMPLES = {
   text: {
     action: 'canvas.add',
-    entity: { id: 'agent-intro', type: 'text', text: 'Product walkthrough', x: 120, y: 100, width: 440, height: 100, fontSize: 28, color: '#305e48' },
+    entity: { id: 'agent-intro', type: 'text', text: 'Product walkthrough', x: 120, y: 100, width: 440, height: 100, color: '#305e48' },
   },
   annotation: {
     action: 'canvas.add',
@@ -107,6 +107,9 @@ export function installAgentTools({
   let permissionFingerprint = '';
   let draftEdited = false;
   let lastAppliedDuration = 15 * 60_000;
+  let recordingNotice = '';
+  let pendingDiscardId = null;
+  let captureFocusReturn = null;
 
   const trigger = button('Agent tools', 'button agent-tools-trigger');
   trigger.setAttribute('aria-label', 'Agent tools');
@@ -308,8 +311,9 @@ export function installAgentTools({
   captureTime.hidden = true;
   const snapshot = button('Download canvas PNG');
   snapshot.id = 'agent-snapshot';
-  const captureHelp = element('p', 'agent-small', 'Record up to 5 minutes and keep up to 3 clips in this tab. Download clips before closing the tab. Canvas recording includes visible canvas objects and live screens.');
+  const captureHelp = element('p', 'agent-small', 'Record up to 5 minutes and keep up to 3 clips in this tab. Download clips before closing the tab. Closing these tools cancels preparation; an active recording keeps running until you stop it. Canvas recording includes visible canvas objects and live screens.');
   const recordingsHeading = element('h4', 'agent-result-label', 'Recordings');
+  recordingsHeading.tabIndex = -1;
   const recordings = element('div', 'agent-recordings');
   recordings.id = 'agent-recordings';
   recordings.setAttribute('aria-label', 'Saved recordings');
@@ -338,8 +342,13 @@ export function installAgentTools({
   const tourCopy = element('div', 'agent-walkthrough-copy');
   const tourCount = element('span', 'agent-eyebrow');
   const tourTitle = element('h2');
+  tourTitle.tabIndex = -1;
   const tourText = element('p');
-  tourCopy.append(tourCount, tourTitle, tourText);
+  const tourAnnouncement = element('p', 'agent-step-status');
+  tourAnnouncement.setAttribute('role', 'status');
+  tourAnnouncement.setAttribute('aria-live', 'polite');
+  tourAnnouncement.setAttribute('aria-atomic', 'true');
+  tourCopy.append(tourCount, tourTitle, tourText, tourAnnouncement);
   const tourControls = element('div', 'agent-walkthrough-controls');
   const previous = button('Previous');
   const next = button('Next', 'agent-button agent-primary');
@@ -374,12 +383,17 @@ export function installAgentTools({
   function close() {
     if (destroyed) return;
     const restoreFocus = panel.contains(document.activeElement);
+    if (capture?.status?.().state === 'starting') void stopCapture();
     panel.hidden = true;
     trigger.setAttribute('aria-expanded', 'false');
-    if (restoreFocus) {
-      const target = opener?.isConnected && !opener.disabled && !opener.closest('[hidden],[inert]') && opener.getClientRects().length ? opener : trigger;
-      target.focus({ preventScroll: true });
-    }
+    if (restoreFocus) focusToolsOpener();
+  }
+
+  function focusToolsOpener() {
+    const target = [opener, trigger, document.querySelector('.common-board')].find(node =>
+      node?.isConnected && !node.disabled && !node.closest('[hidden],[inert]') && node.getClientRects().length,
+    );
+    target?.focus({ preventScroll: true });
   }
 
   function openCapture({ source: requestedSource } = {}) {
@@ -405,22 +419,67 @@ export function installAgentTools({
 
   async function captureAction(action) {
     if (captureBusy || destroyed) return;
+    const startFocused = document.activeElement === start;
+    if (startFocused) captureFocusReturn = 'start';
     captureBusy = true;
+    recordingNotice = '';
     captureError.hidden = true;
     refresh();
-    try { showResult(await action()); }
+    try {
+      const pending = action();
+      if (startFocused && capture?.status?.().state === 'starting') stop.focus({ preventScroll: true });
+      showResult(await pending);
+    }
     catch (error) {
       if (!destroyed) {
-        captureError.textContent = error?.message || 'Capture could not finish. Check that your shared source is still available and try again.';
-        captureError.hidden = false;
+        if (error?.code === 'CAPTURE_CANCELLED') recordingNotice = 'Recording preparation canceled. Nothing was recorded.';
+        else {
+          captureError.textContent = error?.message || 'Capture could not finish. Check that your shared source is still available and try again.';
+          captureError.hidden = false;
+        }
       }
     }
     finally { captureBusy = false; refresh(); }
   }
 
+  async function stopCapture() {
+    if (destroyed || !capture) return;
+    const state = capture.status().state;
+    if (!['starting', 'recording'].includes(state)) return;
+    const preparing = state === 'starting';
+    if (document.activeElement === stop) captureFocusReturn = 'start';
+    else if (document.activeElement === liveStop) captureFocusReturn = 'opener';
+    captureError.hidden = true;
+    recordingNotice = preparing ? 'Recording preparation canceled. Nothing was recorded.' : '';
+    try {
+      // Stop remains available while a start or snapshot awaits assets. Routing
+      // it through captureAction would let that busy flag block cancellation.
+      const result = await capture.stop();
+      if (destroyed) return;
+      if (preparing) onStatus(recordingNotice);
+      else if (result) {
+        showResult(result);
+        recordingNotice = 'Recording saved in this tab. Download it below.';
+      }
+    } catch (error) {
+      if (!destroyed) {
+        captureError.textContent = error?.message || 'Recording could not finish. Try again.';
+        captureError.hidden = false;
+        if (panel.hidden) onStatus(captureError.textContent);
+      }
+    } finally { refresh(); }
+  }
+
+  function focusRecordingAction(id, action) {
+    const row = [...recordings.children].find(item => item.dataset.recordingId === id);
+    const target = row?.querySelector(`[data-recording-action="${action}"]`) || recordingsHeading;
+    target.focus({ preventScroll: true });
+  }
+
   function refreshRecordings() {
     const items = capture?.list?.() || [];
-    const fingerprint = JSON.stringify([items, permissions?.state?.().revision]);
+    if (pendingDiscardId && !items.some(item => item.id === pendingDiscardId)) pendingDiscardId = null;
+    const fingerprint = JSON.stringify([items, permissions?.state?.().revision, pendingDiscardId]);
     if (fingerprint === recordingFingerprint) return;
     recordingFingerprint = fingerprint;
     recordings.replaceChildren();
@@ -430,6 +489,7 @@ export function installAgentTools({
     }
     for (const item of items.slice(-3).reverse()) {
       const row = element('article', 'agent-recording-item');
+      row.dataset.recordingId = item.id;
       const details = element('div');
       const createdAt = item.createdAt ? new Date(item.createdAt) : null;
       const createdTime = createdAt && Number.isFinite(createdAt.getTime())
@@ -440,13 +500,36 @@ export function installAgentTools({
       const descriptor = `${formatDuration(item.durationMs ?? item.elapsedMs)} · ${formatSize(item.size ?? item.bytes)}`;
       details.append(element('small', '', descriptor));
       const actions = element('div', 'agent-recording-item-actions');
-      const download = button('Download', 'agent-text-button');
-      download.setAttribute('aria-label', `Download ${title}`);
-      download.addEventListener('click', () => captureAction(() => capture.download(item.id)));
-      const discard = button('Discard', 'agent-text-button agent-discard');
-      discard.setAttribute('aria-label', `Discard ${title}`);
-      discard.addEventListener('click', () => captureAction(() => capture.discard(item.id)));
-      actions.append(download, discard);
+      if (pendingDiscardId === item.id) {
+        details.append(element('p', 'agent-discard-question', 'Discard this recording? Its only copy may be in this tab.'));
+        const keep = button('Keep recording', 'agent-text-button');
+        keep.dataset.recordingAction = 'keep';
+        keep.addEventListener('click', () => {
+          pendingDiscardId = null; refreshRecordings(); focusRecordingAction(item.id, 'discard');
+        });
+        const confirm = button('Discard recording', 'agent-text-button agent-discard');
+        confirm.dataset.recordingAction = 'confirm';
+        confirm.addEventListener('click', async () => {
+          const rows = [...recordings.children], index = rows.indexOf(row);
+          const adjacent = rows[index + 1] || rows[index - 1];
+          pendingDiscardId = null;
+          await captureAction(() => capture.discard(item.id));
+          if (!destroyed && !panel.hidden) focusRecordingAction(adjacent?.dataset.recordingId, 'download');
+        });
+        actions.append(keep, confirm);
+      } else {
+        const download = button('Download', 'agent-text-button');
+        download.dataset.recordingAction = 'download';
+        download.setAttribute('aria-label', `Download ${title}`);
+        download.addEventListener('click', () => captureAction(() => capture.download(item.id)));
+        const discard = button('Discard', 'agent-text-button agent-discard');
+        discard.dataset.recordingAction = 'discard';
+        discard.setAttribute('aria-label', `Discard ${title}`);
+        discard.addEventListener('click', () => {
+          pendingDiscardId = item.id; refreshRecordings(); focusRecordingAction(item.id, 'keep');
+        });
+        actions.append(download, discard);
+      }
       row.append(details, actions);
       recordings.append(row);
     }
@@ -501,13 +584,15 @@ export function installAgentTools({
     inspect.textContent = has('inspect') ? 'Inspect canvas' : 'Connection status';
     run.textContent = commandBusy ? 'Running…' : 'Run command';
     const state = capture?.status?.() || { state: 'idle', elapsedMs: 0 };
+    const preparing = state.state === 'starting';
     const isRecording = state.state === 'recording' || state.state === 'stopping';
     const captureWorking = captureBusy || state.state === 'starting' || state.state === 'stopping';
     source.disabled = captureWorking || isRecording;
-    start.hidden = isRecording;
+    start.hidden = isRecording || preparing;
     start.disabled = captureWorking || !capture || (source.value === 'window' && !state.windowShared);
-    stop.hidden = !isRecording;
-    stop.disabled = captureWorking;
+    stop.hidden = !isRecording && !preparing;
+    stop.disabled = state.state === 'stopping';
+    stop.textContent = preparing ? 'Cancel preparation' : 'Stop recording';
     snapshot.disabled = captureBusy || !capture;
     const sharingState = getSharingState();
     shareWindow.disabled = captureWorking || isRecording || sharingState.phase === 'abandoning';
@@ -518,17 +603,34 @@ export function installAgentTools({
       ? state.windowShared ? 'Your approved window is ready to record. Canvas annotations are not included.' : 'This records only the window you approve for sharing.'
       : 'Records this canvas and the screens already visible on it. No new screen-sharing prompt.';
     const recordingSource = state.source === 'window' ? 'Shared window' : 'Canvas';
-    const nextCaptureStatus = isRecording ? `Recording ${recordingSource.toLowerCase()} to this tab.`
-      : captureWorking ? 'Preparing capture…'
-        : source.value === 'window' && !state.windowShared ? 'Choose a shared window before recording.' : 'Ready to record to this tab.';
+    const nextCaptureStatus = isRecording ? `Recording ${recordingSource.toLowerCase()} to this tab. Closing these tools keeps recording running.`
+      : preparing ? 'Preparing capture… Cancel preparation if you change your mind.'
+        : captureWorking ? 'Preparing capture…'
+          : recordingNotice || (source.value === 'window' && !state.windowShared ? 'Choose a shared window before recording.' : 'Ready to record to this tab.');
     if (captureStatus.textContent !== nextCaptureStatus) captureStatus.textContent = nextCaptureStatus;
     captureStatus.classList.toggle('is-recording', isRecording);
     captureTime.hidden = !isRecording;
     captureTime.textContent = `${formatDuration(state.elapsedMs)} elapsed`;
-    live.hidden = !isRecording;
-    liveText.textContent = `${recordingSource} recording · ${formatDuration(state.elapsedMs)}`;
-    liveStop.disabled = captureWorking;
+    live.hidden = !isRecording && !preparing;
+    live.dataset.state = state.state;
+    live.setAttribute('aria-label', preparing ? 'Recording preparation' : 'Recording in progress');
+    liveText.textContent = preparing ? 'Preparing canvas capture…' : `${recordingSource} recording · ${formatDuration(state.elapsedMs)}`;
+    liveStop.textContent = preparing ? 'Cancel preparation' : 'Stop recording';
+    liveStop.disabled = state.state === 'stopping';
+    closeButton.title = preparing ? 'Close tools and cancel recording preparation'
+      : isRecording ? 'Close tools; recording continues until you stop it' : 'Close agent tools';
     refreshRecordings();
+    for (const control of recordings.querySelectorAll('button')) control.disabled = captureBusy;
+    if (captureFocusReturn && state.state === 'idle' && !captureBusy) {
+      const destination = captureFocusReturn;
+      captureFocusReturn = null;
+      if (document.activeElement === document.body || [start, stop, liveStop].includes(document.activeElement)) {
+        if (destination === 'start' && !panel.hidden && !start.disabled) start.focus({ preventScroll: true });
+        else focusToolsOpener();
+      }
+    }
+    const focusedTourControl = document.activeElement;
+    const tourHadFocus = tour.contains(focusedTourControl);
     const presentation = walkthrough?.state?.() || { active: false };
     tour.classList.toggle('is-recording', isRecording);
     tour.hidden = !presentation.active;
@@ -539,12 +641,22 @@ export function installAgentTools({
       tourText.hidden = !presentation.current?.text;
       previous.disabled = presentation.index <= 0;
       next.disabled = presentation.index >= presentation.total - 1;
+      const announcement = `Step ${presentation.index + 1} of ${presentation.total}: ${tourTitle.textContent}`;
+      if (tourAnnouncement.textContent !== announcement) tourAnnouncement.textContent = announcement;
+      if (focusedTourControl === next && next.disabled) (previous.disabled ? tourTitle : previous).focus({ preventScroll: true });
+      else if (focusedTourControl === previous && previous.disabled) (next.disabled ? tourTitle : next).focus({ preventScroll: true });
+    } else {
+      tourAnnouncement.textContent = '';
+      if (tourHadFocus) {
+        if (!panel.hidden) loadExample.focus();
+        else focusToolsOpener();
+      }
     }
   }
 
   trigger.addEventListener('click', () => panel.hidden ? open() : close());
   closeButton.addEventListener('click', close);
-  liveText.addEventListener('click', open);
+  liveText.addEventListener('click', () => openCapture());
   duration.addEventListener('change', () => { draftEdited = true; permissionError.hidden = true; refresh(); });
   applyGrant.addEventListener('click', () => {
     const previousGrant = permissions?.state?.();
@@ -629,8 +741,8 @@ export function installAgentTools({
   // These direct buttons are human controls. Agent-triggered capture continues
   // through the scoped API, while people can record without granting an agent.
   start.addEventListener('click', () => captureAction(() => capture.start({ source: source.value })));
-  stop.addEventListener('click', () => captureAction(() => capture.stop()));
-  liveStop.addEventListener('click', () => captureAction(() => capture.stop()));
+  stop.addEventListener('click', stopCapture);
+  liveStop.addEventListener('click', stopCapture);
   snapshot.addEventListener('click', () => captureAction(() => capture.snapshot({ download: true })));
   previous.addEventListener('click', () => { walkthrough.previous(); refresh(); });
   next.addEventListener('click', () => { walkthrough.next(); refresh(); });

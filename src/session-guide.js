@@ -55,7 +55,7 @@ export class SessionGuide {
     this.participation=make('fieldset','session-guide-participation');
     this.participation.append(make('legend','','How you’ll take part'));
     this.participationChoices=make('div','session-guide-participation-choices');
-    this.presenter=button('session-guide-participation-choice','Share a window');
+    this.presenter=button('session-guide-participation-choice',"I'll present");
     this.viewer=button('session-guide-participation-choice','Watch & contribute');
     this.presenter.setAttribute('aria-pressed','false');this.viewer.setAttribute('aria-pressed','false');
     this.participationChoices.append(this.presenter,this.viewer);

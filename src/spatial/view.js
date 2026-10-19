@@ -2,6 +2,7 @@ import './style.css';
 import { attachPopover, attachRovingToolbar } from '../ui/workspace-primitives.js';
 import { isSpatialProjection } from './projection.js';
 import { createTextLayout } from '../text-layout.js';
+import { CANVAS_TOOLS, PRIMARY_TOOL_IDS, DEFAULT_TOOL_COLOR } from '../canvas-tools.js';
 
 const clamp = (value, low, high, fallback = 0) =>
   Number.isFinite(Number(value)) ? Math.min(high, Math.max(low, Number(value))) : fallback;
@@ -43,15 +44,7 @@ const POSE_FIELDS = [
   ['rotationY', 'Turn · Y°'],
   ['rotationZ', 'Rotate · Z°'],
 ];
-const TOOLS = [
-  ['select', 'Select'],
-  ['sticky', 'Note'],
-  ['draw', 'Draw'],
-  ['text', 'Text'],
-  ['rectangle', 'Box'],
-  ['hand', 'Move view'],
-];
-const PRIMARY_TOOLS = ['select', 'sticky', 'draw'];
+const PRIMARY_TOOLS = PRIMARY_TOOL_IDS;
 const NAVIGATION_TOOLS = ['select', 'hand'];
 const NAVIGATION_ACTIONS = ['fit', 'zoom-in', 'zoom-out'];
 const ACTION_LABELS = {
@@ -87,6 +80,8 @@ const ICONS = {
   hand: 'M8 12V5a2 2 0 0 1 4 0v6-7a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v8c0 4-3 6-7 6h-1c-3 0-4-2-6-5L3 12a2 2 0 0 1 3-2l2 2',
   text: 'M4 5V3h16v2M12 3v18M8 21h8',
   rectangle: 'M4 5h16v14H4z',
+  ellipse: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  'arrow-tool': 'M7 17 17 7M7 7h10v10',
   image: 'M3 3h18v18H3zM3 16l6-6 12 11M16 7h.01',
   share: 'M3 4h18v13H3zM8 21h8M12 17v4M9 10l3-3 3 3M12 7v7',
   stop: 'M6 6h12v12H6z',
@@ -138,7 +133,7 @@ export function mountSpatialView(root, handlers = {}) {
       <a class="beta-brand" href="/" aria-label="Common home">common<span aria-hidden="true">✳</span></a><span class="beta-label">Space & time</span>
       <div class="beta-room-heading"><h1></h1><p class="beta-save-state cw-status-bead" role="status"></p></div>
       <button type="button" class="beta-room-trigger cw-quiet-button" aria-label="Room actions" aria-expanded="false"><span aria-hidden="true">⌑</span><span>Room</span><span class="beta-menu-chevron" aria-hidden="true">⌄</span></button>
-      <div class="beta-room-menu cw-folded-menu" role="dialog" aria-label="Room actions" hidden><p class="beta-menu-eyebrow">A little room of your own</p><button type="button" data-beta-action="create-room">Start a shared room <span aria-hidden="true"></span></button><button type="button" data-beta-action="retry" hidden>Retry connection</button><button type="button" data-beta-action="join" hidden>Join room</button><button type="button" data-beta-action="invite" hidden>Invite a teammate</button><button type="button" data-beta-action="local" hidden>Back to your local workspace</button><button type="button" data-beta-action="workspaces">On this device <span aria-hidden="true"></span></button><div class="beta-menu-rule"></div><button type="button" data-beta-action="theme">Room style</button><button type="button" data-beta-action="export">Export room</button><button type="button" data-beta-action="import">Import room</button><div class="beta-agent-tools-host"></div><div class="beta-menu-rule"></div><button type="button" data-beta-action="leave" hidden>Leave room</button><button type="button" data-beta-action="end" hidden>End room for everyone</button><button type="button" data-beta-action="exit">Back to the classic canvas <span aria-hidden="true"></span></button></div>
+      <div class="beta-room-menu cw-folded-menu" role="dialog" aria-label="Room actions" hidden><p class="beta-menu-eyebrow">A little room of your own</p><button type="button" data-beta-action="create-room">Start a shared room <span aria-hidden="true"></span></button><button type="button" data-beta-action="retry" hidden>Retry connection</button><button type="button" data-beta-action="join" hidden>Join room</button><button type="button" data-beta-action="invite" hidden>Invite a teammate</button><button type="button" data-beta-action="local" hidden>Back to your local workspace</button><button type="button" data-beta-action="workspaces">On this device <span aria-hidden="true"></span></button><div class="beta-menu-rule"></div><button type="button" data-beta-action="theme">Room style</button><button type="button" data-beta-action="recording">Recording</button><button type="button" data-beta-action="export" aria-describedby="spatial-archive-help">Export workspace history</button><button type="button" data-beta-action="import" aria-describedby="spatial-archive-help">Import workspace history</button><p id="spatial-archive-help" class="beta-archive-help">Every board and automatic revision. Imports open a separate local workspace.</p><div class="beta-agent-tools-host"></div><div class="beta-menu-rule"></div><button type="button" data-beta-action="leave" hidden>Leave room</button><button type="button" data-beta-action="end" hidden>End room for everyone</button><button type="button" data-beta-action="exit">Back to the classic canvas <span aria-hidden="true"></span></button></div>
     </header>
     <div class="beta-body">
       <aside class="beta-sidebar" aria-label="Boards and room controls">
@@ -154,6 +149,7 @@ export function mountSpatialView(root, handlers = {}) {
           <div class="beta-board-host board-viewport"></div>
           <div class="beta-space" hidden tabindex="0" aria-label="Spatial overview. Arrow keys orbit your camera, plus and minus zoom."><div class="beta-world"></div></div>
           <div class="beta-work-tools cw-pebble-dock" role="toolbar" aria-label="Board tools"><div class="beta-primary-tools"></div><span class="beta-dock-divider" aria-hidden="true"></span><button type="button" class="beta-tool-palette-trigger cw-round-button" aria-label="More board tools" aria-expanded="false" title="More board tools"></button></div>
+          <p class="beta-tool-hint" role="status" aria-live="polite" hidden></p>
           <div class="beta-tool-palette cw-folded-menu" role="dialog" aria-label="More board tools" hidden><p class="beta-menu-eyebrow">A little more possibility</p><div class="beta-tool-extras"></div></div>
           <button type="button" class="beta-share-control cw-round-button" data-beta-action="share" aria-label="Share a window" aria-pressed="false" title="Share a window"></button>
           <section class="beta-capture-status cw-folded-menu" aria-label="Window sharing" hidden><div class="beta-capture-copy" role="status" aria-live="polite" aria-atomic="true"><strong></strong><p id="spatial-capture-detail"></p></div><details class="beta-capture-help"><summary>Sharing help</summary><ul></ul><a target="_blank" rel="noopener">Open Common in its own tab</a><small></small></details><button type="button" class="beta-capture-dismiss" aria-label="Dismiss sharing message">×</button></section>
@@ -290,14 +286,19 @@ export function mountSpatialView(root, handlers = {}) {
     $('.beta-coordinate-fields').append(labelNode);
     poseFields.set(key, input);
   }
-  for (const [tool, label] of TOOLS) {
+  const orderedTools = [
+    ...PRIMARY_TOOLS.map(id => CANVAS_TOOLS.find(tool => tool.id === id)),
+    ...CANVAS_TOOLS.filter(tool => !PRIMARY_TOOLS.includes(tool.id)),
+  ];
+  for (const { id: tool, label, shortcut } of orderedTools) {
     const button = element('button', 'beta-tool');
     button.type = 'button';
     button.dataset.betaTool = tool;
-    button.title = label;
+    button.title = `${label} (${shortcut.toUpperCase()})`;
     button.setAttribute('aria-label', label);
+    button.setAttribute('aria-keyshortcuts', shortcut.toUpperCase());
     button.setAttribute('aria-pressed', String(tool === 'select'));
-    button.append(icon(tool), element('span', 'beta-tool-label', label));
+    button.append(icon(tool === 'arrow' ? 'arrow-tool' : tool), element('span', 'beta-tool-label', label));
     (PRIMARY_TOOLS.includes(tool) ? $('.beta-primary-tools') : toolExtrasHost).append(button);
   }
   const imageButton = element('button', 'beta-palette-action');
@@ -305,6 +306,15 @@ export function mountSpatialView(root, handlers = {}) {
   imageButton.dataset.betaAction = 'image';
   imageButton.append(icon('image'), element('span', '', 'Add image'));
   toolExtrasHost.append(imageButton);
+  const colorLabel = element('label', 'beta-tool-color');
+  const colorInput = element('input');
+  colorInput.type = 'color'; colorInput.value = DEFAULT_TOOL_COLOR;
+  colorInput.setAttribute('aria-label', 'Color for new text, notes, drawings, and shapes');
+  const colorCopy = element('span');
+  colorCopy.append(element('strong', '', 'Color'), element('small', 'beta-color-target', 'New text, notes, drawings, and shapes'));
+  colorLabel.append(colorInput, colorCopy); toolExtrasHost.append(colorLabel);
+  colorInput.addEventListener('input', () => action('color', { color: colorInput.value }), { signal });
+
 
   shell.addEventListener(
     'pointerdown',
@@ -524,6 +534,8 @@ export function mountSpatialView(root, handlers = {}) {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
       svg.setAttribute('aria-hidden', 'true');
+      node.style.overflow = 'visible';
+      svg.style.overflow = 'visible';
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       const points = Array.isArray(object.points)
         ? object.points.filter(point => point && typeof point === 'object').slice(0, 500)
@@ -748,6 +760,15 @@ export function mountSpatialView(root, handlers = {}) {
       button.hidden = !inRoom || !(state.terminal || state.admitted === false);
     for (const button of shell.querySelectorAll('[data-beta-action="theme"]'))
       button.disabled = state.canStyle === false;
+    const recording = $('[data-beta-action="recording"]');
+    if (recording.disabled !== (state.recordingReady === false)) recording.disabled = state.recordingReady === false;
+    const exportLabel = state.live === false ? 'Export latest workspace history' : 'Export workspace history';
+    const exportButton = $('[data-beta-action="export"]');
+    if (exportButton.textContent !== exportLabel) exportButton.textContent = exportLabel;
+    const archiveHelp = state.live === false
+      ? 'Exports include every board and newer live changes. Imports open a separate local workspace.'
+      : 'Every board and automatic revision. Imports open a separate local workspace.';
+    if ($('#spatial-archive-help').textContent !== archiveHelp) $('#spatial-archive-help').textContent = archiveHelp;
   }
 
   function renderViewport(activeBoard, liveView, space) {
@@ -765,7 +786,7 @@ export function mountSpatialView(root, handlers = {}) {
     $('.beta-empty').hidden = !!state.boards.length;
     $('.beta-empty-add').disabled = !canEdit();
     $('.beta-add-board').disabled = !canEdit();
-    const hideTools = space || state.tools === false || !activeBoard || !liveView;
+    const hideTools = space || state.tools === false || !activeBoard;
     if (toolbarHost.hidden !== hideTools) toolbarHost.hidden = hideTools;
     $('.beta-share-control').hidden = (!activeBoard || space || !liveView) && !state.sharing && !state.capture?.requestPending;
     $('.beta-navigation-trigger').hidden = space || !activeBoard;
@@ -785,6 +806,8 @@ export function mountSpatialView(root, handlers = {}) {
       const disabled =
         !canEdit() && !navigation && !button.classList.contains('beta-tool-palette-trigger');
       if (button.disabled !== disabled) button.disabled = disabled;
+      const reviewOnly = state.live === false || state.terminal;
+      if ((button.dataset.betaTool || button.dataset.betaAction) && button.hidden !== (reviewOnly && !navigation)) button.hidden = reviewOnly && !navigation;
       if (button.dataset.betaTool) {
         const pressed = String(button.dataset.betaTool === (state.tool || 'select'));
         if (button.getAttribute('aria-pressed') !== pressed)
@@ -802,9 +825,29 @@ export function mountSpatialView(root, handlers = {}) {
       }
     }
     renderCaptureControls();
-    $('.beta-tool-palette-trigger').dataset.active = String(
-      !PRIMARY_TOOLS.includes(state.tool || 'select'),
-    );
+    const secondary = CANVAS_TOOLS.find(tool => tool.id === state.tool && !PRIMARY_TOOLS.includes(tool.id));
+    const more = $('.beta-tool-palette-trigger');
+    if (more.dataset.active !== String(!!secondary)) more.dataset.active = String(!!secondary);
+    const moreLabel = secondary?.label || 'More';
+    if (more.dataset.toolLabel !== moreLabel) {
+      more.dataset.toolLabel = moreLabel;
+      more.replaceChildren(icon(secondary ? secondary.id === 'arrow' ? 'arrow-tool' : secondary.id : 'more'), element('span', 'beta-more-tool-label', moreLabel));
+    }
+    const moreName = secondary ? `More board tools, ${secondary.label} selected` : 'More board tools';
+    if (more.getAttribute('aria-label') !== moreName) more.setAttribute('aria-label', moreName);
+    const moreTitle = secondary ? `${secondary.label} (${secondary.shortcut.toUpperCase()}) selected · More board tools` : 'More board tools';
+    if (more.title !== moreTitle) more.title = moreTitle;
+    const reviewOnly = state.live === false || state.terminal;
+    if (colorLabel.hidden !== reviewOnly) colorLabel.hidden = reviewOnly;
+    if (colorInput.disabled !== !canEdit()) colorInput.disabled = !canEdit();
+    const color = /^#[0-9a-f]{6}$/i.test(state.toolColor || '') ? state.toolColor : DEFAULT_TOOL_COLOR;
+    if (colorInput.value !== color.toLowerCase()) colorInput.value = color;
+    const target = state.colorTarget ? 'Selected object and new objects' : 'New text, notes, drawings, and shapes';
+    const colorName = `Color for ${target.toLowerCase()}`;
+    if (colorInput.getAttribute('aria-label') !== colorName) colorInput.setAttribute('aria-label', colorName);
+    const targetLabel = colorLabel.querySelector('.beta-color-target');
+    if (targetLabel.textContent !== target) targetLabel.textContent = target;
+
   }
 
   // Capture owns its browser permission state. Present it here without querying
@@ -861,6 +904,17 @@ export function mountSpatialView(root, handlers = {}) {
     ownTab.hidden = window.parent === window;
     ownTab.href = location.href;
     $('.beta-capture-dismiss').hidden = sharing || pending;
+    renderToolHint();
+  }
+
+  function renderToolHint() {
+    const hint = $('.beta-tool-hint');
+    const message = !canEdit() ? state.readOnlyHint || 'This view is read-only. Select or Pan to explore.' : state.toolHint || '';
+    if (hint.textContent !== message) hint.textContent = message;
+    const hidden = !message || state.mode === 'space' || state.tools === false
+      || !state.boards.some(board => String(board.id) === String(state.activeBoardId))
+      || !$('.beta-capture-status').hidden;
+    if (hint.hidden !== hidden) hint.hidden = hidden;
   }
 
   function renderPlacement(activeBoard) {
@@ -974,6 +1028,7 @@ export function mountSpatialView(root, handlers = {}) {
     element: shell,
     render,
     announce,
+    closePopovers,
     destroy() {
       if (destroyed) return;
       destroyed = true;

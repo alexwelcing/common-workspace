@@ -25,15 +25,16 @@
 }
 
 .agent-tools-panel {
+  --agent-panel-top: 108px;
   position: fixed;
   z-index: 80;
-  top: 108px;
+  top: calc(var(--common-viewport-top, 0px) + var(--agent-panel-top));
   right: 16px;
   display: flex;
   flex-direction: column;
   width: 380px;
   max-width: calc(100vw - 24px);
-  max-height: calc(100dvh - 124px);
+  max-height: max(0px, calc(var(--common-viewport-height, 100dvh) - var(--agent-panel-top) - 16px));
   overflow: hidden;
   border: 1px solid var(--border, #e3dfd3);
   border-radius: 14px;
@@ -70,6 +71,16 @@
   font-weight: 600;
   letter-spacing: 1.2px;
   line-height: 1.5;
+}
+
+.agent-step-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .agent-tools-header h2 {
@@ -427,6 +438,7 @@
 
 .agent-discard { color: #8b4632; }
 .agent-discard:hover { color: #6f3525; }
+.agent-discard-question { margin: 8px 0 0; color: #8b4632; font-size: 12px; line-height: 1.5; }
 
 .agent-recording-live {
   position: fixed;
@@ -485,6 +497,18 @@
 }
 
 .agent-recording-stop:hover { background: #733725; }
+
+.agent-recording-live[data-state='starting'] {
+  border-color: #ddcda6;
+  background: #fff8e7;
+  color: #756037;
+}
+
+.agent-recording-live[data-state='starting'] .agent-recording-dot {
+  border-radius: 3px;
+  background: #99814a;
+  box-shadow: 0 0 0 3px #f0e5c9;
+}
 
 .agent-walkthrough {
   position: fixed;
@@ -559,8 +583,7 @@
   }
 
   .agent-tools-panel {
-    top: 104px;
-    max-height: calc(100dvh - 120px);
+    --agent-panel-top: 104px;
   }
 
   .agent-tools-header { padding: 16px 18px; }
@@ -585,8 +608,7 @@
 
 @media (max-height: 600px) {
   .agent-tools-panel {
-    top: 100px;
-    max-height: calc(100dvh - 112px);
+    --agent-panel-top: 8px;
   }
 
   .agent-tools-header { padding-block: 12px; }
@@ -632,3 +654,43 @@
 .agent-permission-error { margin: 9px 0 0; padding: 9px 11px; border: 1px solid #e0b8a9; border-radius: 8px; background: #fff2ec; color: #8b4632; font-size: 12px; line-height: 1.55; }
 .agent-grants .agent-primary { width: 100%; }
 .agent-grants .agent-small { margin-bottom: 0; }
+
+/* These panels live outside #app, so they follow its visible-viewport variables
+   directly. Text entry should not leave controls behind an on-screen keyboard. */
+.common-keyboard-open .agent-tools-panel {
+  --agent-panel-top: max(8px, env(safe-area-inset-top));
+}
+
+.common-keyboard-open .agent-recording-live {
+  bottom: calc(var(--common-keyboard-inset, 0px) + max(8px, env(safe-area-inset-bottom)));
+}
+
+@media (pointer: coarse), (max-width: 720px) {
+  .agent-tools-panel :is(button, a, input:not([type='checkbox']), textarea, select),
+  .agent-recording-live button,
+  .agent-walkthrough button {
+    min-height: 44px;
+  }
+
+  .agent-tools-panel :is(input:not([type='checkbox']), textarea, select) {
+    font-size: 16px;
+  }
+
+  .agent-tools-panel .agent-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .agent-tools-panel .agent-instructions {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .agent-tools-panel .agent-grant-row {
+    min-height: 44px;
+  }
+
+  .agent-file-input::file-selector-button {
+    min-height: 44px;
+  }
+}

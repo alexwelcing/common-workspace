@@ -1884,3 +1884,48 @@ body:has(.beta-workspace) .agent-tools-panel { z-index: 99; }
 .beta-workspace:has(.beta-share-control:is([aria-pressed='true'], [aria-busy='true'])) .common-board.board-is-writing {
   --board-writing-leading-space: 52px;
 }
+
+/* Shared tool names stay compact while the selected secondary tool remains visible. */
+.beta-tool-palette-trigger {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px;
+}
+.beta-more-tool-label { max-width: 100%; font-size: 9px; line-height: 1; }
+.beta-tool-color {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border, #e3dfd3);
+}
+.beta-tool-color input { width: 44px; height: 44px; padding: 3px; border: 1px solid var(--border, #e3dfd3); border-radius: 10px; background: transparent; cursor: pointer; }
+.beta-tool-color > span { display: flex; flex-direction: column; gap: 3px; }
+.beta-tool-color strong { font-size: 12px; font-weight: 500; }
+.beta-tool-color small, .beta-archive-help { color: var(--muted, #626f5e); font-size: 10px; line-height: 1.45; }
+.beta-archive-help { margin: 3px 10px 9px; }
+.beta-tool-hint {
+  position: absolute;
+  z-index: 92;
+  left: 50%;
+  bottom: 87px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 4px 9px;
+  border: 1px solid var(--border, #e3dfd3);
+  border-radius: 9px 9px 4px 9px;
+  background: var(--surface, #fffef9);
+  color: var(--muted, #626f5e);
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: center;
+  pointer-events: none;
+}
+@media (max-width: 680px) { .beta-tool-hint { bottom: 76px; } }

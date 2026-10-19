@@ -5,6 +5,8 @@ import { initGeometry, snap, simplifyPoints } from './geometry.js';
 import { canvasBackground } from './canvas-background.js';
 import { createTextLayout } from './text-layout.js';
 import { SVG_TEXT_FONT_CSS } from './text-font.js';
+import { DEFAULT_TOOL_COLOR } from './canvas-tools.js';
+import { attachPopover, attachRovingToolbar } from './ui/workspace-primitives.js';
 import './board.css';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -110,7 +112,7 @@ export class Board {
     this.onWatchScreen = onWatchScreen; this.screenSubscriptions = null; this.localParticipantId = null;
     this.performanceIndex = performanceIndex; this.renderMeasurementDepth = 0; this.finishRenderMeasurement = null;
     this.entities = new Map(); this.nodes = new Map(); this.streams = new Map(); this.cursors = new Map();
-    this.externalConsents = new Set(); this.selectedId = null; this.tool = 'select'; this.color = '#52765e';
+    this.externalConsents = new Set(); this.selectedId = null; this.tool = 'select'; this.color = DEFAULT_TOOL_COLOR;
     this.zoom = 1; this.pan = { x: 24, y: 24 }; this.gesture = null; this.spaceHeld = false;
     this.touchPointers = new Map(); this.touchNavigation = false;
     this.focusedId = null; this.previousFocusView = null;
@@ -146,6 +148,7 @@ export class Board {
       this.duplicateButton, this.deleteButton,
     );
     this.el.append(this.selectionTools);
+    this.selectionToolbarCleanup = attachRovingToolbar(this.selectionTools);
     this.selectionHint = element('p', 'board-selection-hint'); this.selectionHint.hidden = true;
     this.selectionHint.id = `board-instructions-${crypto.randomUUID()}`;
     this.el.setAttribute('aria-describedby', this.selectionHint.id); this.el.append(this.selectionHint);
@@ -163,6 +166,7 @@ export class Board {
     this.layersToggle.append(icon('layers', 16), element('span', '', 'Layers'));
     this.layersCount = element('span', 'board-layers-count', '0'); this.layersToggle.append(this.layersCount);
     this.layersPanel = element('section', 'board-layers-panel'); this.layersPanel.hidden = true;
+    this.layersPanel.setAttribute('role', 'dialog');
     this.layersPanel.setAttribute('aria-label', 'Canvas layers');
     this.layersPanel.append(element('div', 'board-layers-heading', 'Top of canvas'));
     this.layersList = element('div', 'board-layers-list'); this.layersPanel.append(this.layersList);
@@ -170,10 +174,9 @@ export class Board {
     this.layersControl.addEventListener('pointerdown', event => event.stopPropagation());
     this.layersControl.addEventListener('dblclick', event => event.stopPropagation());
     this.layersControl.addEventListener('wheel', event => event.stopPropagation());
-    this.layersToggle.addEventListener('click', () => {
-      this.layersPanel.hidden = !this.layersPanel.hidden;
-      this.layersToggle.setAttribute('aria-expanded', String(!this.layersPanel.hidden));
-      this.updateLayers();
+    this.layersPopover = attachPopover({
+      trigger: this.layersToggle, panel: this.layersPanel, placement: 'bottom-end',
+      onOpenChange: () => this.updateLayers(),
     });
     const signal = this.abort.signal;
     this.el.addEventListener('pointerdown', e => this.pointerDown(e), { signal });
@@ -293,7 +296,7 @@ export class Board {
     this.layersCount.textContent = String(this.entities.size);
     // The collapsed layers panel does not need a second DOM tree for the canvas.
     // Build its current rows when opened, and release them again when closed.
-    if (this.layersPanel.hidden) {
+    if (!this.layersPopover.isOpen) {
       this.layersSignature = null;
       if (this.layersList.childElementCount) this.layersList.replaceChildren();
       return;
@@ -301,8 +304,12 @@ export class Board {
     const entities = this.listEntities().reverse();
     const nextSignature = JSON.stringify([this.selectedId, entities.map(entity => [entity.id, entity.type, entity.title, entity.text, !!entity.locked, this.mayEdit(entity)])]);
     if (nextSignature === this.layersSignature) return;
+    const active = this.el.ownerDocument.activeElement;
+    const focusedRow = this.layersPanel.contains(active) ? active.closest('[data-layer-id]') : null;
+    const focusedControl = focusedRow && { id: focusedRow.dataset.layerId, lock: active.classList.contains('board-layer-lock') };
+    const scrollTop = this.layersList.scrollTop;
     this.layersSignature = nextSignature; this.layersList.replaceChildren();
-    if (!entities.length) { this.layersList.append(element('p', 'board-layers-empty', 'Objects appear here as you add them.')); return; }
+    if (!entities.length) this.layersList.append(element('p', 'board-layers-empty', 'Objects appear here as you add them.'));
     for (const entity of entities) {
       const row = element('div', 'board-layer-row'); row.classList.toggle('is-selected', entity.id === this.selectedId);
       row.dataset.layerId = entity.id;
@@ -322,6 +329,12 @@ export class Board {
       const lock = button(entity.locked ? 'Unlock position' : 'Lock position', entity.locked ? 'lock' : 'unlock', () => this.toggleLock(entity.id));
       lock.classList.add('board-layer-lock'); lock.disabled = !this.mayEdit(entity); lock.setAttribute('aria-pressed', String(!!entity.locked));
       row.append(select, lock); this.layersList.append(row);
+    }
+    this.layersList.scrollTop = scrollTop;
+    if (focusedControl) {
+      const row = [...this.layersList.children].find(row => row.dataset.layerId === focusedControl.id);
+      const control = row?.querySelector(focusedControl.lock ? '.board-layer-lock' : '.board-layer-select');
+      (control && !control.disabled ? control : this.layersToggle).focus({ preventScroll: true });
     }
   }
   cancelPositionGesture() {
@@ -438,9 +451,7 @@ export class Board {
     if (this.readOnly) { this.onStatus('Reconnect to edit the shared canvas.'); return null; }
     if (this.focusedId) this.exitFocus();
     const center = this.centerPoint(); const defaults = DEFAULTS[type];
-    const entity = { id: crypto.randomUUID(), type, ...defaults, color: COLORS[type] || this.color, x: Math.round(center.x - defaults.width / 2), y: Math.round(center.y - defaults.height / 2), z: this.nextZ(), ...options };
-    if (type === 'draw' && !options.color) entity.color = this.color;
-    if (type === 'rectangle' || type === 'ellipse' || type === 'arrow') entity.color = options.color || this.color;
+    const entity = { id: crypto.randomUUID(), type, ...defaults, color: this.color, x: Math.round(center.x - defaults.width / 2), y: Math.round(center.y - defaults.height / 2), z: this.nextZ(), ...options };
     if (entity.externalConsent) this.externalConsents.add(entity.id);
     this.commit(entity); this.select(entity.id);
     return entity;
@@ -464,7 +475,8 @@ export class Board {
     const entity = this.entities.get(this.selectedId);
     if (!entity) return;
     if (entity.type === 'screen') { this.onStatus('Live screens cannot be duplicated. Share another window to add a screen.'); return; }
-    return this.add(entity.type, { ...entity, id: crypto.randomUUID(), x: entity.x + 28, y: entity.y + 28, z: this.nextZ(), locked: false });
+    const { id: _id, orderKey: _orderKey, z: _z, locked: _locked, updatedAt: _updatedAt, updatedBy: _updatedBy, ...content } = entity;
+    return this.add(entity.type, { ...content, x: entity.x + 28, y: entity.y + 28, locked: false });
   }
   updateSelected(patch) {
     const entity = this.entities.get(this.selectedId);
@@ -499,7 +511,7 @@ export class Board {
     this.focusHintText = hint;
     if (!this.focusedId) this.previousFocusView = this.getView();
     this.focusedId = id; this.tool = 'select'; this.el.dataset.tool = 'select'; this.onToolChange('select');
-    this.layersPanel.hidden = true; this.layersToggle.setAttribute('aria-expanded', 'false');
+    this.layersPopover.close({ restoreFocus: false });
     this.select(id); this.updateLayers();
     this.el.classList.add('board-is-focused');
     for (const [entityId, node] of this.nodes) node.classList.toggle('is-focused', entityId === id);
@@ -548,20 +560,32 @@ export class Board {
   updateSelectionTools() {
     const entity = this.entities.get(this.selectedId); const editable = entity && this.mayEdit(entity);
     const show = !!entity && !this.gesture && this.editingId !== this.selectedId && !this.focusedId;
-    this.selectionTools.hidden = !show; this.selectionHint.hidden = !show;
+    if (this.selectionTools.hidden !== !show) this.selectionTools.hidden = !show;
+    if (this.selectionHint.hidden !== !show) this.selectionHint.hidden = !show;
     if (!entity) return;
-    this.selectionHint.textContent = editable && !entity.locked
+    const hint = editable && !entity.locked
       ? `Arrows move · Alt + arrows resize · Shift for 10 px · ${this.editableContent(entity) ? 'Enter edit · ' : ''}F focus`
       : `${entity.locked ? 'Position locked · ' : ''}${editable && this.editableContent(entity) ? 'Enter edit · ' : ''}F focus (only your view)`;
-    for (const control of [...this.layerButtons.values(), this.lockButton, this.duplicateButton, this.deleteButton, this.mutationDivider]) control.hidden = !editable;
-    this.editButton.hidden = !editable || !this.editableContent(entity);
+    if (this.selectionHint.textContent !== hint) this.selectionHint.textContent = hint;
+    for (const control of [...this.layerButtons.values(), this.lockButton, this.duplicateButton, this.deleteButton, this.mutationDivider]) {
+      if (control.hidden !== !editable) control.hidden = !editable;
+    }
+    const hideEdit = !editable || !this.editableContent(entity);
+    if (this.editButton.hidden !== hideEdit) this.editButton.hidden = hideEdit;
     const order = this.listEntities(); const position = order.findIndex(item => item.id === entity.id);
-    this.layerButtons.get('front').disabled = this.layerButtons.get('forward').disabled = !editable || position === order.length - 1;
-    this.layerButtons.get('back').disabled = this.layerButtons.get('backward').disabled = !editable || position === 0;
-    const label = entity.locked ? 'Unlock position' : 'Lock position';
-    this.lockButton.title = label; this.lockButton.setAttribute('aria-label', label); this.lockButton.setAttribute('aria-pressed', String(!!entity.locked));
-    this.lockButton.replaceChildren(icon(entity.locked ? 'lock' : 'unlock', 15));
-    this.duplicateButton.disabled = entity.type === 'screen';
+    for (const action of ['front', 'forward', 'back', 'backward']) {
+      const control = this.layerButtons.get(action);
+      const disabled = !editable || position === (['front', 'forward'].includes(action) ? order.length - 1 : 0);
+      if (control.disabled !== disabled) control.disabled = disabled;
+    }
+    const locked = String(!!entity.locked);
+    if (this.lockButton.getAttribute('aria-pressed') !== locked) {
+      const label = entity.locked ? 'Unlock position' : 'Lock position';
+      this.lockButton.title = label; this.lockButton.setAttribute('aria-label', label); this.lockButton.setAttribute('aria-pressed', locked);
+      this.lockButton.replaceChildren(icon(entity.locked ? 'lock' : 'unlock', 15));
+    }
+    const disableDuplicate = entity.type === 'screen';
+    if (this.duplicateButton.disabled !== disableDuplicate) this.duplicateButton.disabled = disableDuplicate;
     const point = this.toClient(entity);
     const width = this.selectionTools.offsetWidth || Math.min(310, this.el.clientWidth - 16);
     const height = this.selectionTools.offsetHeight || 44;
@@ -1046,7 +1070,7 @@ export class Board {
     content.classList.add('board-writing-text');
     content.setAttribute('role', 'textbox'); content.setAttribute('aria-multiline', 'true');
     content.setAttribute('aria-label', `${label} text`);
-    this.layersPanel.hidden = true; this.layersToggle.setAttribute('aria-expanded', 'false');
+    this.layersPopover.close({ restoreFocus: false });
     this.el.classList.add('board-is-writing'); this.el.append(surface);
     this.setWritingStatus(this.writingStatus);
     for (const type of ['pointerdown', 'dblclick', 'wheel'])
@@ -1213,6 +1237,13 @@ export class Board {
     if (!(target instanceof Element) || !this.el.contains(target) || event.defaultPrevented) return;
     if (document.querySelector('#modal-root .modal, dialog[open], [role="dialog"][aria-modal="true"]')) return;
     if (target.closest('input,textarea,select,[contenteditable="true"]')) return;
+    if (event.key === 'Escape' && this.gesture) {
+      event.preventDefault();
+      const pan = this.gesture.type === 'pan' ? this.gesture.pan : null;
+      this.cancelPointers();
+      if (pan) { this.pan = { ...pan }; this.updateView(); }
+      return;
+    }
     if (event.key === 'Escape' && this.focusedId) { event.preventDefault(); this.exitFocus(); return; }
     const resizeHandle = target.closest('[data-resize]');
     if (target.closest('button,a,[role="button"]') && !resizeHandle) return;
@@ -1281,7 +1312,7 @@ export class Board {
       const group = svgElement('g', { transform: `translate(${entity.x},${entity.y})` });
       if (['rectangle', 'ellipse', 'draw', 'arrow'].includes(entity.type)) {
         const shape = this.nodes.get(entity.id)?.querySelector('svg');
-        if (shape) { const clone = shape.cloneNode(true); clone.setAttribute('width', entity.width); clone.setAttribute('height', entity.height); group.append(clone); }
+        if (shape) { const clone = shape.cloneNode(true); clone.setAttribute('width', entity.width); clone.setAttribute('height', entity.height); clone.style.overflow = 'visible'; group.append(clone); }
         if (entity.text && ['rectangle', 'ellipse'].includes(entity.type)) this.exportText(group, entity, '#435b43');
       } else if (entity.type === 'image' && (entity.url || '').startsWith('data:image/')) {
         group.append(svgElement('image', { href: entity.url, width: entity.width, height: entity.height, preserveAspectRatio: 'xMidYMid meet' }));
@@ -1313,7 +1344,7 @@ export class Board {
     this.cancelPointers();
     this.closeDiagramEditor({ restoreFocus: false });
     this.finishTextEdit?.(false);
-    this.endHistoryGroup(); this.abort.abort(); this.resizeObserver.disconnect();
+    this.endHistoryGroup(); this.abort.abort(); this.resizeObserver.disconnect(); this.layersPopover.destroy(); this.selectionToolbarCleanup();
     this.unsubscribeTextLayout(); this.textLayout.destroy();
     this.el.classList.remove('board-is-focused', 'board-space-pan', 'board-is-dragging', 'board-read-only');
     for (const node of this.nodes.values()) { const video = node.querySelector('video'); if (video) video.srcObject = null; }

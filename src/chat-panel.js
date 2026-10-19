@@ -89,6 +89,7 @@ export class ChatPanel {
     const {sandbox,connected}=this.context;this.input.disabled=sandbox;this.submit.disabled=sandbox||!connected||Boolean(this.pending)||!this.input.value.trim();
     this.input.setAttribute('aria-label',sandbox?'Create a session to message your team':'Message your team');
     this.counter.hidden=this.input.value.length<1600;this.counter.textContent=`${this.input.value.length.toLocaleString()} / 2,000`;this.counter.classList.toggle('chat-limit',this.input.value.length>=2000);
+    this.status.dataset.state=sandbox?'inactive':this.notice?'unconfirmed':this.pending?'sending':!connected?'reconnecting':'draft';
     const status=sandbox?'Chat opens when you create a session.':this.notice||(this.pending?'Sending… Your draft stays here until confirmed.':!connected?'Reconnecting… You can keep writing; send when connected.':'Drafts stay in this tab until you send.');if(this.status.textContent!==status)this.status.textContent=status;
     this.status.classList.toggle('chat-unconfirmed',Boolean(this.notice));
   }
