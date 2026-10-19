@@ -1,8 +1,8 @@
 # Embed Common in a Bun application
 
-Common can run inside an existing Bun application as a canvas panel or a floating workspace. The host owns the HTTP listener, routes, WebSocket server, and authentication. Common mounts its assets and room service beneath one path; it does not start a second server or open a hidden port.
+Add Common to an existing Bun application as an inline canvas or a floating workspace. Your application keeps its HTTP listener, routes, WebSocket server, and authentication. Common serves its assets and room service beneath one path, using that same server.
 
-The portable module is included in the [v1.8.1 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.8.1). The [standalone app](https://github.com/alexwelcing/common-workspace/blob/main/README.md#run-on-your-own-laptop) is another way to run the same workspace. Source and release links in this guide require access to the private repository.
+The portable module is included in the [v1.8.1 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.8.1). You can also [run Common as a standalone app](https://github.com/alexwelcing/common-workspace/blob/main/docs/hosting.md#run-on-your-own-laptop). Source and release links in this guide require access to the private repository.
 
 ## Obtain the package
 
@@ -14,26 +14,39 @@ bun add /absolute/path/common-workspace-0.8.1.tgz
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
 
-To build the package from an authorized source checkout, use Bun 1.4.3:
+## Run the included example
+
+The package includes a complete host application. After installing, run it from your Bun project:
+
+```sh
+bun node_modules/common-workspace/example/server.mjs
+```
+
+Open `http://127.0.0.1:3100` to try inline and floating canvases beside the host's own routes and WebSocket. Use `PORT=3101` if that port is occupied. You can copy `node_modules/common-workspace/example/` into your own project without a separate source checkout.
+
+The optional `DEMO_AUTH=1` cookie toggle demonstrates how host authentication fits in. Replace it with your application's real authentication before using that integration in production.
+
+### Build the package from source
+
+If you have an authorized source checkout, use Bun 1.4.3 to create the archive yourself:
 
 ```sh
 bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This builds the package and writes `artifacts/common-workspace-0.8.1.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build. Before distributing a changed package, increment the version in `module/package.json` and update the example install filename; package managers may reuse an archive previously installed at the same path and version.
+This writes `artifacts/common-workspace-0.8.1.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. Install the archive in your host application using the command above.
 
-The runnable host example is included in the package. After installing, try it directly from your Bun project:
+The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build.
 
-```sh
-bun node_modules/common-workspace/example/server.mjs
-```
-
-Open `http://127.0.0.1:3100` for inline and floating canvases beside the host's own routes and WebSocket. Use `PORT=3101` if that port is occupied. The example files under `node_modules/common-workspace/example/` can be copied into your own project; no separate source checkout is needed. Its optional `DEMO_AUTH=1` cookie toggle demonstrates integration and must be replaced with your application's real authentication.
+Before distributing a changed package, increment the version in `module/package.json` and update the example install filename. Package managers may reuse an archive previously installed at the same path and version.
 
 ## Choose how Common appears
 
-Use an inline panel when the canvas belongs beside your product's existing controls. Use the overlay mode for a floating Common workspace that a person can open while using the rest of your tool. Both modes load the same isolated Common interface in a same-origin iframe; the host does not need React, another UI framework, or Common's internal canvas classes.
+- **Inline:** place the canvas beside your product's existing controls.
+- **Overlay:** give people a floating workspace they can open while using the rest of your tool.
+
+Both modes load the same isolated Common interface in a same-origin iframe. Your host does not need React, another UI framework, or Common's internal canvas classes.
 
 The default mount path is `/__common/`. Use the same path in the server and browser configuration. A different prefix lets Common coexist with your own `/api`, `/ws`, and page routes. Keep one Common service instance per intended room store; creating a new instance on every request would create a new in-memory service on every request.
 
@@ -112,7 +125,13 @@ const canvas = mountCommon({
 });
 ```
 
-Inline mode opens immediately; overlay mode starts closed and loads Common on its first opening. Calling `ready()` or an `agent` method also starts that load. Set `open: true` or `false` to choose visibility explicitly. Optional `experience: 'space'` opens a personal Space & Time workspace; the default is `experience: 'classic'`. Optional `roomId` opens an existing room's join view, where room metadata takes precedence over `experience`; it does not supply the password or convert the room. Each mount has its own room identity, so two panels can join the same room without taking over each other's socket. Reloading the same iframe retains its identity; destroying and creating a new mount starts a new identity. `onReady(controller)`, `onError(error)`, and `onOpenChange(isOpen)` let your host reflect the panel's state. Readiness means the embedded interface is initialized, not that someone has joined a room or granted an agent access.
+Inline mode opens immediately. Overlay mode starts closed and loads Common on its first opening; calling `ready()` or an `agent` method also starts that load. Set `open: true` or `false` to choose visibility explicitly.
+
+The default experience is `experience: 'classic'`. Use `experience: 'space'` for a personal Space & Time workspace. To join an existing room, pass `roomId`: its metadata chooses the experience, taking precedence over that preference. The option opens the join view; it does not supply the password or convert the room.
+
+Each mount has its own room identity, so two panels can join the same room without taking over each other's socket. Reloading the same iframe retains its identity; destroying and creating a new mount starts a new identity.
+
+Use `onReady(controller)`, `onError(error)`, and `onOpenChange(isOpen)` to reflect the panel's state in your host. Readiness means the embedded interface has initialized. Joining a room and granting agent access are separate steps.
 
 If your host has no browser bundler, serve the installed client export as a JavaScript module from your existing server:
 
@@ -136,7 +155,13 @@ The returned controller provides:
 | `agent.execute(command, options?)`, `agent.batch(commands, options?)` | Call the existing command API; optional `options.signal` cancels pending work. |
 | `destroy()` | Asynchronously stop the embedded session and remove its iframe and launcher; safe to call repeatedly. |
 
-Closing the panel abandons a still-pending window choice; any late result is stopped. It **does not stop an already active share or recording**. The launcher continues to show their status, and reopening preserves the room. Incoming video subscriptions pause while hidden. Call `await canvas.destroy()` when your host view is removed or the person signs out; destruction stops captures, revokes agent access, and closes the embedded connections. Destroy and mount again to change the prefix or initially selected room.
+### Hiding and removing the panel
+
+Closing the panel abandons a still-pending window choice; any late result is stopped. It **does not stop an already active share or recording**. The launcher continues to show their status, and reopening preserves the room. Incoming video subscriptions pause while hidden.
+
+Call `await canvas.destroy()` when your host view is removed or the person signs out. Destruction stops captures, revokes agent access, and closes the embedded connections. Destroy and mount again to change the prefix or initially selected room.
+
+### Text editing
 
 On phones, editing text or a note opens a focused writing view inside the Common frame, with 18 px text independent of canvas zoom. **Done** restores the board and its controls without changing object geometry or the personal camera. Active sharing/recording Stop controls remain available. The view follows available keyboard space; desktop editing stays inline. No additional SDK option is needed.
 
@@ -173,7 +198,9 @@ Serve the host application over trusted HTTPS for team use. Browsers also permit
 
 Sharing still requires a person's click inside Common and the browser's native screen/window picker. Loading Common, mounting an iframe, opening the overlay, or granting an agent permission does not capture a window automatically. The browser decides which capture sources can be offered; Common cannot silently select your application's tab or another cross-origin page. Sharing pixels does not grant remote control of the source application.
 
-The share button opens the picker directly from the click; Common does not spend that user activation on a preflight request or a second confirmation dialog. The inline sharing strip shows a pending request, the approved surface type and audience, and Stop. Closing the picker leaves a calm retry message. **Sharing help** gives recovery steps for an insecure address, a host policy block, missing browser support, or system screen-recording access. Browser cancellation and denial can produce the same error, so the interface does not pretend to distinguish them. If a pending request is cancelled in Common, close the native picker too; any source returned by that abandoned request is stopped immediately.
+The share button opens the picker directly from the click; Common does not spend that user activation on a preflight request or a second confirmation dialog. The inline sharing strip shows a pending request, the approved surface type and audience, and Stop.
+
+Closing the picker leaves a calm retry message. **Sharing help** gives recovery steps for an insecure address, a host policy block, missing browser support, or system screen-recording access. Browser cancellation and denial can produce the same error, so the interface does not pretend to distinguish them. If a pending request is cancelled in Common, close the native picker too; any source returned by that abandoned request is stopped immediately.
 
 When your host sets a `Permissions-Policy`, its `display-capture` rule must include `self`, for example `display-capture=(self)`. Every ancestor frame must allow capture. The SDK supplies `allow="display-capture; clipboard-write"` on its same-origin iframe; it cannot override a restrictive parent policy. Common requests video only. It does not request microphone, camera, or clipboard-read access. Each new screen share requires the browser's source picker; it is not a persistent permission Common can remember.
 
@@ -183,17 +210,31 @@ The same-origin iframe is an integration boundary, not a separate security origi
 
 ## Storage, networking, and lifetime
 
+### What survives a restart
+
 The module defaults to an in-memory room service and the private network profile. It does not write a room database unless you explicitly configure `dataFile`. Restarting an in-memory service removes its room access, presence, and chat state. Peer canvas content and shared images live in participating browsers; live video travels between peers. Personal-canvas browser storage is scoped to the installation's mount path.
 
-Each classic mounted canvas has its own local Focus view and personal Undo/Redo history. Focus changes no shared geometry. Undo applies inverse field edits only while those fields still belong to this browser's action; it preserves newer peer writes and respects current locks and edit access. Undoing deletion creates a new copy with a fresh ID, so integrations should inspect again before reusing an old object ID. Live screen objects are excluded from Undo history. Classic Undo history ends with the session or mount, is not persisted, and is bounded to 100 entries and 24 MiB of recorded actions, plus an active group capped at 24 MiB. Paste uses the browser's normal paste event and requires no clipboard-read policy or permission. Space & Time has its own persistent automatic history, described below.
+Call `close()` during your application's shutdown to stop Common-owned sockets and state. It leaves your host listener under your control. Remove the browser mount when its host view is destroyed, so captures and connections do not survive an abandoned panel.
 
-In classic, chat drafts and reading position stay in the mounted iframe's memory through panel switches and transport reconnects. Reloading, entering a different room/session, or destroying the mount clears drafts. Draft text is not written to browser storage or sent before Send. Sending waits for this participant's server echo before clearing an unchanged draft; an uncertain send keeps it and does not retry automatically. A hidden tab or hidden Common mount retains unread messages. Space & Time does not yet expose chat. Dialog focus and inactive background state apply inside the iframe; the host controls focus outside that frame.
+### Local focus, undo, and chat
+
+Each classic mounted canvas has its own local Focus view and personal Undo/Redo history. Focus changes no shared geometry. Undo applies inverse field edits only while those fields still belong to this browser's action; it preserves newer peer writes and respects current locks and edit access. Undoing deletion creates a new copy with a fresh ID, so integrations should inspect again before reusing an old object ID. Live screen objects are excluded from Undo history.
+
+Classic Undo history ends with the session or mount, is not persisted, and is bounded to 100 entries and 24 MiB of recorded actions, plus an active group capped at 24 MiB. Paste uses the browser's normal paste event and requires no clipboard-read policy or permission. Space & Time has its own persistent automatic history, described below.
+
+In classic, chat drafts and reading position stay in the mounted iframe's memory through panel switches and transport reconnects. Reloading, entering a different room/session, or destroying the mount clears drafts. Draft text is not written to browser storage or sent before Send. Sending waits for this participant's server echo before clearing an unchanged draft; an uncertain send keeps it and does not retry automatically. A hidden tab or hidden Common mount retains unread messages. Space & Time does not yet expose chat.
+
+Dialog focus and inactive background state apply inside the iframe; the host controls focus outside that frame.
+
+### Direct peer networking
 
 The private profile uses bundled fonts and does not select public STUN or PlantUML services by default. Mermaid renders locally. Browsers connect directly by default; running the module requires no relay service or hosted account. Your host can explicitly configure organization STUN/TURN or a diagram renderer. A reachable host page does not guarantee a peer connection if firewall, NAT, or VPN policy blocks it; investigate the actual failure with Connection details before changing infrastructure. No SFU or automatic Cloudflare tunnel is included.
 
-One service instance owns one process's room state. Mounting it on multiple unrelated application replicas does not synchronize those stores. Keep a single owner for a room, or design shared admission, signaling, and presence before spreading requests across replicas. Canvas traffic uses a bounded-neighbor peer network, but every participant still holds the canvas document, and a presenter uploads video separately to each viewer. There is no promised room size or unlimited video audience.
+### Scaling the room service
 
-Call `close()` during your application's shutdown to stop Common-owned sockets and state. It leaves your host listener under your control. Remove the browser mount when its host view is destroyed, so captures and connections do not survive an abandoned panel.
+One service instance owns one process's room state. Mounting it on multiple unrelated application replicas does not synchronize those stores. Keep a single owner for a room, or design shared admission, signaling, and presence before spreading requests across replicas.
+
+Canvas traffic uses a bounded-neighbor peer network, but every participant still holds the canvas document, and a presenter uploads video separately to each viewer. There is no promised room size or unlimited video audience.
 
 ## Guided sessions in classic
 
@@ -245,4 +286,4 @@ Space & Time edits one flat board at a time and provides multi-board templates, 
 
 Opt-in agent canvas, walkthrough, snapshot, and recording tools act on the active flat board. They add no spatial-navigation or timeline commands. Past views are read-only, and past window pixels require an explicit recording. Agent grants and native browser capture permissions still apply. Both inline and floating mounts keep their theme inside the iframe. Chat, guided participant checklists, and featured-screen rotation remain classic features; Space & Time does not yet expose those interfaces.
 
-All board documents and their history are currently replicated to every browser; per-board documents do not yet provide selective loading. See [the Space & Time guide](space-time.md) for limits, storage behavior, and a short walkthrough. No additional server, account, relay, or cloud storage service is required.
+All board documents and their history are currently replicated to every browser; per-board documents do not yet provide selective loading. See [the Space & Time guide](https://github.com/alexwelcing/common-workspace/blob/main/docs/space-time.md) for limits, storage behavior, and a short walkthrough. No additional server, account, relay, or cloud storage service is required.

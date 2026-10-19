@@ -1,31 +1,53 @@
 # Check the experience, investigate the cause
 
-The default check is five user journeys through the built app, rather than hundreds of helper assertions. It uses separate desktop and phone browsers, real HTTP/WebSocket connections, native WebRTC, and the same frontend shipped to users. There is no coverage percentage or minimum test count to maintain.
+Use a real user flow to see whether a change works, then use the failure evidence to find its cause. Common's default check runs five journeys through the built app with separate desktop and phone browsers, real HTTP/WebSocket connections, and native WebRTC. There is no coverage percentage or minimum test count to maintain.
+
+New to the repository? Start with [Contributing](../CONTRIBUTING.md). For code boundaries and the release checklist, see [Maintaining Common](maintaining.md).
+
+For prose-only edits, review the changed links, instructions, and snippets. An application build or browser run is only needed when the change affects application behavior.
+
+## Run the default check
+
+Use Bun 1.4.3. From the repository root:
 
 ```sh
 bun install --frozen-lockfile
 bun run check
 ```
 
-An installed Chrome/Chromium works; use `CHROMIUM_PATH` for another executable. If you do not have a browser, install it once with `bunx playwright-core install chromium`. The check command never downloads a browser or starts Docker. Playwright Core is a development dependency, with no additional test framework.
+An installed Chrome/Chromium works. Set `CHROMIUM_PATH` to use another executable. If you need to install a browser, do that once:
 
-The command checks setup before building, runs lint, builds once, and starts its own temporary loopback server. It creates only synthetic rooms and ends them, then stops its processes and removes their local data. It does not connect to your running app or Netlify deployment. `bun run test` is a compatibility alias for the same command.
+```sh
+bunx playwright-core install chromium
+```
 
-The five journeys cover:
+The check command never downloads a browser or starts Docker. Playwright Core is a development dependency, with no additional test framework.
+
+`bun run check` checks setup, runs lint, builds once, and starts a temporary loopback server. It creates and ends synthetic rooms, then stops its processes and removes their local data. It does not connect to your running app or Netlify deployment. `bun run test` is a compatibility alias for the same command.
+
+### What the five journeys cover
 
 1. Write a note on the actual WASM canvas, edit it, and undo the edit.
 2. Create a guided room, reject a wrong password, and let a phone join and complete its checklist without requesting capture.
 3. Exchange chat, reload with the same participant and progress, and navigate the phone canvas.
 4. Reject agent writes before consent, permit an annotation after a visible grant, download a PNG, and reject writes after revocation.
-5. Synchronize actual peer edits and layer changes, decode remote video, stop capture, and end the room so its former credentials stop working.
+5. Synchronize actual peer edits and layer changes, decode remote video, stop capture, and end the room so its former credentials stop working. In Space & Time, also check shared edits and board placement, autosave/reload, read-only history while live edits continue, and archive export.
 
-Capture uses a generated canvas instead of a native source picker. The data channels, signaling, and video decoding remain native. A browser that cannot establish its native peer connection fails the check; earlier successful steps are retained as partial evidence, rather than treating missing media as success. This command needs a machine that permits local peer networking. It does not add a relay to make a restricted environment pass.
+Capture uses a generated canvas; it does not open the system source picker. Data channels, signaling, and video decoding remain native. Run on a machine that permits local peer networking. If the browser cannot establish a native peer connection, the check fails and retains earlier successful steps as partial evidence. Missing media is never counted as success, and the command does not add a relay to bypass a restricted environment.
 
 ## Read a failure
 
-The terminal names the journey and checkpoint that failed. Its report path points to the expected behavior, elapsed time, browser/runtime errors, endpoint/status summaries, and screenshots. Build and server logs accompany the report under `artifacts/check/run-…/`. Password fields and invite links are masked in browser screenshots; tokens, request bodies, storage dumps, raw SDP, and traces are not written. Artifacts contain synthetic check content, not a copy of an existing room.
+Start with the first failing checkpoint:
 
-There are no automatic retries. Fix the reported cause, then use `bun run check --skip-build` to reuse your build if the source has not changed. Rebuild after changing application code. Missing browsers or a missing hosted database fail before startup; an incomplete run is never green.
+1. Read the journey and checkpoint named in the terminal.
+2. Open its report under `artifacts/check/run-…/` for the expected behavior, elapsed time, browser/runtime errors, endpoint/status summaries, and screenshots. Build and server logs sit beside it.
+3. Fix the cause. Rerun with `bun run check --skip-build` only if application source is unchanged; otherwise use `bun run check` to rebuild.
+
+There are no automatic retries. Missing browsers or a missing hosted database fail before startup, and an incomplete run is never green.
+
+Password fields and invite links are masked in screenshots. Tokens, request bodies, storage dumps, raw SDP, and traces are not written. Artifacts contain synthetic check content, not a copy of an existing room.
+
+## Check both hosting adapters
 
 CI uses the same five journeys against both the standalone Bun adapter and the Netlify polling adapter, with one built frontend and a disposable real Postgres schema:
 
@@ -37,11 +59,13 @@ bun run check --all-adapters
 bun run check --hosted
 ```
 
-The hosted harness owns and drops a randomly named schema. It never reads Netlify credentials. Do not point `COMMON_TEST_DATABASE_URL` at a production database. CI uploads failure evidence for seven days and cancels superseded runs. Pull requests run once; branch pushes and release tags no longer trigger duplicate full runs.
+Set `COMMON_TEST_DATABASE_URL` to a **disposable** Postgres database. The hosted harness owns and drops a randomly named schema and never reads Netlify credentials. Never use a production database.
+
+Use the adapter runs when changing their shared boundary; validate both before merging a change that spans them. CI uploads failure evidence for seven days and cancels superseded runs. The workflow runs on pull requests and pushes to `main`; feature-branch pushes and release tags do not trigger duplicate full runs.
 
 ## Deeper checks when the change needs them
 
-Existing regression checks remain available explicitly. They are useful for concurrency, authorization, token leases, cancellation races, and other behavior that a short browser walkthrough cannot prove.
+Choose an existing scope when the changed behavior needs closer investigation. These checks cover concurrency, authorization, token leases, cancellation races, and other behavior a short browser walkthrough cannot prove.
 
 | Change | Command |
 | --- | --- |
@@ -53,10 +77,23 @@ Existing regression checks remain available explicitly. They are useful for conc
 | Configuration, startup or diagnostics | `bun run check:deep runtime` |
 | Deliberate full regression investigation | `bun run check:deep all` |
 
-Combine scopes, for example `bun run check:deep sessions hosted`. Hosted and all require the disposable database and refuse to run without it; missing SQL coverage cannot silently become a pass. The optional FFmpeg exercise still reports a skip if FFmpeg is absent. In GitHub Actions, run **Check** manually and choose the scope. Running Bun's raw `bun test` still discovers the older test files; use the scoped command for deliberate investigations.
+Combine scopes with `bun run check:deep sessions hosted`. The `hosted` and `all` scopes require the disposable database and refuse to run without it; missing SQL coverage cannot silently become a pass. The optional FFmpeg exercise reports a skip if FFmpeg is absent.
 
-Add a check when it protects a real user outcome or a difficult failure that has been observed. Prefer extending one existing journey or a targeted boundary case. Avoid checks that repeat implementation details, assert private maps or unchanged DOM identity, require timing sleeps, or merely increase a test count. Remove obsolete checks when their behavior is replaced. When an error is confusing, improve the error and its diagnostic context alongside the fix.
+In GitHub Actions, run **Check** manually and choose a scope. Bun's raw `bun test` still discovers the older test files; use the scoped command for deliberate investigations.
+
+### Keep checks useful
+
+Add a check when it protects a real user outcome or a difficult failure that has been observed. Extend an existing journey or a targeted boundary case. Avoid checks that repeat implementation details, assert private maps or unchanged DOM identity, require timing sleeps, or merely increase a test count. Remove obsolete checks when their behavior is replaced.
+
+When an error is confusing, improve the error and its diagnostic context alongside the fix. Useful errors make the next investigation easier.
 
 ## A short real-device check
 
-Before a release that changes capture or mobile behavior, run the [two-browser walkthrough](../public/self-hosting.html#smoke-test) on the team's actual devices and network. Open the real source picker, verify video arrives, type with the native phone keyboard, interrupt and restore the connection, and download a recording. Automated canvas capture and browser emulation do not prove system permissions, OS tab suspension, or physical keyboard behavior. For a real incident, use **Canvas options → Connection details → Download report** to get the app's existing sanitized diagnostics.
+Before a release that changes capture or mobile behavior, run the [two-browser walkthrough](../public/self-hosting.html#smoke-test) on the team's actual devices and network:
+
+1. Open the real source picker and verify the other device receives video.
+2. Type with the native phone keyboard.
+3. Interrupt and restore the connection.
+4. Download a recording.
+
+Automated canvas capture and browser emulation do not prove system permissions, OS tab suspension, or physical keyboard behavior. For a real incident, use **Canvas options → Connection details → Download report** for the app's existing sanitized diagnostics. The [self-hosting guide](../public/self-hosting.html#troubleshooting) covers setup and network troubleshooting.

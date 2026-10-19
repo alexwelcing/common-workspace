@@ -2,7 +2,16 @@
 
 Common exposes the current browser canvas through `window.commonAgent` and a visible **Agent tools** panel. This supports product walkthrough annotations, text and diagrams, imports from an agent's image generator, canvas snapshots, and local video recordings. It does not run an agent, navigate the product being demonstrated, provide a model API key, or expose a remote MCP server.
 
-For complete use cases and prompts, see the [agent workflow recipes](agent-examples.md): feature demos, bug evidence, image comparisons, incident maps, embedded explanations, and an A2A design relay.
+## Find your starting point
+
+- Start with the [browser-agent setup instructions](agents.md#begin-in-the-users-tab) to join and request access in the user's tab.
+- Use [methods and results](#methods-and-results) and the [command reference](#commands) when writing commands.
+- Try the [agent workflow recipes](agent-examples.md) for feature demos, bug evidence, image comparisons, incident maps, embedded explanations, and an A2A design relay.
+- Follow the [self-hosting guide](self-hosting.html) for laptop and team setup.
+
+Use this API after joining a room or opening a personal canvas in the browser. Room creation, passwords, membership, and signaling belong to the room session protocol.
+
+## Discovery and embedded installations
 
 Discovery files are served at [`agents.md`](agents.md) and [`.well-known/agent.json`](.well-known/agent.json), relative to the current Common mount, including local and embedded installations. [`agent-tools.json`](agent-tools.json) supplies machine-readable tool descriptions, JSON input schemas, and required capabilities from the same registry used by the browser adapter. For example, the default embedded mount serves schemas at `/__common/agent-tools.json`; keep requests beneath that mount. These files describe the interfaces; they do not imply that every agent client automatically discovers them.
 
@@ -10,9 +19,15 @@ In an embedded installation, `window.commonAgent` and **Agent tools** belong to 
 
 ## Access from a browser agent
 
+### Grant access
+
 Open the user's room and join normally, or use the personal canvas. In **Agent tools**, choose permissions and an **Access duration**, then choose **Allow selected access**. Presets and checkbox changes do not grant access; **Update access** applies changes to an active grant. The default is **Read the canvas** plus **Edit and present** for 15 minutes. Capture and recording are separate choices. Access starts off, resets on reload, and ends on expiry, revocation, disconnection, or a room/participant/canvas-session change.
 
+### Use browser controls
+
 For tools that support DOM actions without page JavaScript, fill **Agent command** (`#agent-command`) with one JSON command or an array, click **Run command** (`#agent-run`), and read `#agent-result`. The `#agent-inspect` button is labeled **Connection status** before a read grant and **Inspect canvas** afterward. Use accessible labels; the panel button has `aria-label="Agent tools"`.
+
+### Permissions and lifetime
 
 | Permission | Capability | Allows |
 | --- | --- | --- |
@@ -24,6 +39,8 @@ For tools that support DOM actions without page JavaScript, fill **Agent command
 Permission checkboxes use `#agent-grant-inspect`, `#agent-grant-canvas-write`, `#agent-grant-media-capture`, and `#agent-grant-recording`. Duration uses `#agent-grant-duration`; allow/update and revoke buttons are `#agent-grant-apply` and `#agent-grant-revoke`. The UI offers 15, 30, or 60 minutes. A grant lasts at most 60 minutes and applies to this tab/session only. `describe().grants` and `state().grants` are read-only snapshots; no public API method grants or extends access. The person's manual recording controls work independently of agent grants; the agent should use its granted commands and respect revocation.
 
 While disabled, disconnected, expired, or without inspection permission, `state()` exposes safe status and grant metadata instead of canvas content or room details. `describe()` remains available. Permission changes invalidate pending operations and their request-ID cache; a later grant does not authorize an earlier queued command.
+
+### Use page JavaScript
 
 Use the JavaScript API only when the browser tool permits page JavaScript. This interface neither changes that tool's policy nor bypasses room membership, screen ownership, disconnected/read-only state, position locks, file-download rules, or native screen-capture permission.
 
@@ -66,9 +83,13 @@ The API version is the string `"1"`. Commands are JSON objects with an `action` 
 
 Inspect `ok` before using `result`. Do not assume a command succeeded because it was submitted. Returned canvas state is a snapshot, so a collaborating participant may change an object before the next command.
 
+### Retries and batches
+
 Supply a unique `requestId` for each new operation. Reuse it only for an identical retry within the same permission grant and canvas session. The local cache retains at most 100 requests, resets on permission/model/session changes and reload, and does not coordinate tabs. Completed entries can be evicted. Reusing a cached ID with a different command returns `REQUEST_ID_CONFLICT`.
 
 Batch validation is not a transaction. A batch accepts 1–50 commands and returns an envelope whose `result` is an array of individual command envelopes. The batch may have `ok: true` while an individual command has `ok: false`. Ordinary runtime failures do not roll back earlier edits and later commands can still run; cancellation, permission loss, disconnection, or session changes stop the batch. Read each result, inspect current state, and retry only what is needed. Each command or complete batch must fit the 3 MiB serialized JSON limit.
+
+### Errors
 
 Common error codes include `AGENT_DISABLED`, `PERMISSION_DENIED`, `GRANT_EXPIRED`, `GRANT_REVOKED`, `ABORTED`, `DISCONNECTED`, `READ_ONLY`, `INVALID_COMMAND`, `INVALID_IMAGE`, `NOT_FOUND`, `ALREADY_EXISTS`, `LOCKED`, `FORBIDDEN`, `MODEL_REJECTED`, `REQUEST_ID_CONFLICT`, `SESSION_CHANGED`, and `UNSUPPORTED`. Respect the current grant and connection state rather than bypassing them.
 

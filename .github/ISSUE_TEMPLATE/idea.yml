@@ -1,0 +1,22 @@
+name: An idea or rough edge
+description: Show us a situation Common could make easier.
+body:
+  - type: textarea
+    id: situation
+    attributes:
+      label: What would you like to do?
+      description: Describe a real task, who is involved, and where things get awkward today.
+    validations:
+      required: true
+  - type: textarea
+    id: improvement
+    attributes:
+      label: What would make it better?
+      description: A rough idea, example prompt, sketch, or before/after description is welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: What would a good result look like?
+      description: An example helps us understand the outcome. Leave out private information.
