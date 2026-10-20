@@ -6,6 +6,7 @@ const MAX_IMAGE_BYTES = Math.floor(1.3 * 1024 * 1024);
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif']);
 const GRANT_LABELS = {
   inspect: 'Read canvas', 'canvas-write': 'Edit & present', 'media-capture': 'Capture canvas & windows', recording: 'Manage recordings',
+  'page-context': 'Read linked page',
 };
 const GRANT_PRESETS = [
   ['read', 'Read only', ['inspect']],
@@ -13,6 +14,8 @@ const GRANT_PRESETS = [
   ['tour', 'Record a tour', ['inspect', 'canvas-write', 'media-capture', 'recording']],
 ];
 const EXAMPLES = {
+  page: { action: 'source.inspect' },
+  pageSearch: { action: 'source.search', query: 'payment' },
   search: { action: 'canvas.search', query: 'walkthrough' },
   selection: { action: 'canvas.search', selectedOnly: true },
   text: {
@@ -98,6 +101,7 @@ export function installAgentTools({
   onEnabledChange = () => {},
   onRequestWindowShare = () => {},
   getSharingState = () => ({}),
+  getPageContextState = () => api.describe?.().source || { available: false },
   onStatus = () => {},
   buttonParent,
 }) {
@@ -157,6 +161,19 @@ export function installAgentTools({
   instructions.rel = 'noopener';
   scroll.append(intro, accessCard);
 
+  const pageCard = element('section', 'agent-page-card');
+  pageCard.id = 'agent-page-context';
+  pageCard.hidden = true;
+  pageCard.setAttribute('aria-labelledby', 'agent-page-heading');
+  const pageHeading = element('strong', '', 'Linked host page');
+  pageHeading.id = 'agent-page-heading';
+  const pageStatus = element('p', 'agent-page-status');
+  pageStatus.id = 'agent-page-status';
+  pageStatus.setAttribute('role', 'status');
+  const pageHelp = element('p', 'agent-page-help');
+  pageCard.append(pageHeading, pageStatus, pageHelp);
+  scroll.append(pageCard);
+
   const grantsSection = element('fieldset', 'agent-grants');
   grantsSection.append(element('legend', '', 'Choose agent permissions'));
   const presets = element('div', 'agent-grant-presets');
@@ -176,11 +193,12 @@ export function installAgentTools({
   }
   grantsSection.append(presets);
   const grantInputs = new Map();
+  const grantRows = new Map();
   const grantOptions = element('div', 'agent-grant-options');
   grantOptions.setAttribute('role', 'group');
   grantOptions.setAttribute('aria-label', 'Individual agent permissions');
   grantOptions.tabIndex = 0;
-  const scopeHint = element('p', 'agent-grant-scroll-hint', 'Scroll to review all four permissions ↓');
+  const scopeHint = element('p', 'agent-grant-scroll-hint');
   grantsSection.append(scopeHint, grantOptions);
   for (const [capability, detail] of Object.entries(AGENT_CAPABILITIES)) {
     const row = element('label', 'agent-grant-row'); const input = element('input');
@@ -188,7 +206,8 @@ export function installAgentTools({
     input.checked = ['inspect', 'canvas-write'].includes(capability);
     input.setAttribute('aria-label', detail.title);
     const text = element('span'); text.append(element('strong', '', detail.title), element('small', '', detail.description));
-    row.append(input, text); grantOptions.append(row); grantInputs.set(capability, input);
+    row.append(input, text); grantOptions.append(row); grantInputs.set(capability, input); grantRows.set(capability, row);
+    if (capability === 'page-context') input.setAttribute('aria-describedby', pageStatus.id);
     input.addEventListener('change', () => {
       if (capability !== 'inspect' && input.checked) grantInputs.get('inspect').checked = true;
       if (capability === 'inspect' && !input.checked) for (const [key, control] of grantInputs) if (key !== 'inspect') control.checked = false;
@@ -216,8 +235,8 @@ export function installAgentTools({
   grantActions.append(applyGrant);
   const grantFooter = element('div', 'agent-grant-footer');
   grantFooter.append(pendingGrant, permissionError, grantActions);
-  grantsSection.append(grantFooter,
-    element('p', 'agent-small', 'Reading is included with other permissions. Access is limited to this canvas session and can be revoked at any time.'));
+  const grantHelp = element('p', 'agent-small');
+  grantsSection.append(grantFooter, grantHelp);
   grantsSection.hidden = !permissions;
   scroll.append(grantsSection, instructions);
 
@@ -235,6 +254,11 @@ export function installAgentTools({
     option.value = value;
     examples.append(option);
   }
+  const pageExamples = [['page', 'Read linked page'], ['pageSearch', 'Find page controls']].map(([value, title]) => {
+    const option = element('option', '', title);
+    option.value = value;
+    return option;
+  });
   const loadExample = button('Use example', 'agent-text-button');
   exampleRow.append(exampleLabel, examples, loadExample);
   const commandLabel = element('label', 'agent-field-label', 'Agent command');
@@ -542,6 +566,41 @@ export function installAgentTools({
     const grant = permissions?.state?.();
     const enabled = Boolean(getEnabled()) && (!permissions || !!grant?.active);
     const has = capability => enabled && (!permissions || grant.capabilities.includes(capability));
+    let pageState;
+    try { pageState = getPageContextState() || {}; }
+    catch { pageState = {}; }
+    const pageAvailable = pageState.available === true;
+    const pageInput = grantInputs.get('page-context');
+    if (pageInput) {
+      const hadPageFocus = document.activeElement === pageInput;
+      pageInput.disabled = !pageAvailable;
+      grantRows.get('page-context').hidden = !pageAvailable;
+      if (!pageAvailable && hadPageFocus) grantInputs.get('inspect')?.focus({ preventScroll: true });
+    }
+    if (!pageAvailable && pageExamples.some(option => option.value === examples.value)) examples.value = 'text';
+    for (const option of pageExamples) {
+      if (pageAvailable && !option.isConnected) examples.append(option);
+      else if (!pageAvailable) option.remove();
+    }
+    commandHeading.textContent = pageAvailable ? 'Canvas & page commands' : 'Canvas commands';
+    pageCard.hidden = !pageAvailable && !has('page-context');
+    const binding = has('page-context') ? pageState.binding?.status : null;
+    const nextPageStatus = !pageAvailable ? 'The page connection has ended.'
+      : !has('page-context') ? 'Page access is off.'
+        : binding === 'verified' ? 'Reading allowed · Shared tab verified'
+          : binding === 'unverified' ? 'Reading allowed · Shared window not verified'
+            : binding === 'not-sharing' ? 'Reading allowed · No shared tab'
+              : 'Reading allowed · Linked host page';
+    const nextPageHelp = !pageAvailable ? 'Reconnect the page companion before allowing page access again.'
+      : !has('page-context') ? 'Select Read linked page below, then allow access. Sharing video alone does not allow page access.'
+        : binding === 'unverified' ? 'The app provides read-only context, but it has not been matched to this video. Highlights stay off.'
+          : 'The app provides context and named controls. These tools cannot click or fill the page.';
+    if (pageStatus.textContent !== nextPageStatus) pageStatus.textContent = nextPageStatus;
+    if (pageHelp.textContent !== nextPageHelp) pageHelp.textContent = nextPageHelp;
+    grantHelp.textContent = pageAvailable
+      ? 'Canvas reading is included with other permissions. Linked page reading is a separate choice. Access can be revoked at any time.'
+      : 'Reading is included with other permissions. Access is limited to this canvas session and can be revoked at any time.';
+    scopeHint.textContent = `Scroll to review all ${[...grantInputs.values()].filter(input => !input.disabled).length} permissions ↓`;
     const nextPermissionFingerprint = JSON.stringify([grant?.revision, grant?.active]);
     if (nextPermissionFingerprint !== permissionFingerprint) {
       permissionFingerprint = nextPermissionFingerprint;
@@ -551,6 +610,7 @@ export function installAgentTools({
         disconnected: 'Agent access ended when this canvas disconnected. Reconnect, then allow access again.',
         'session-changed': 'Agent access ended because the canvas session changed. Review the choices below for this canvas.',
         'session-ended': 'This session ended. Join a canvas before allowing agent access again.',
+        'page-source-changed': 'The linked page changed. Review the choices below before allowing access again.',
         revoked: 'Access revoked. Your agent can no longer read, edit, or capture this canvas.',
       };
       accessHeading.textContent = enabled ? 'Agent access is on' : 'Agent access is off';
@@ -560,7 +620,9 @@ export function installAgentTools({
       activeScopes.replaceChildren();
       if (enabled) for (const capability of grant.capabilities) activeScopes.append(element('span', 'agent-scope', GRANT_LABELS[capability] || capability));
     }
-    const selected = [...grantInputs].filter(([, input]) => input.checked).map(([capability]) => capability);
+    // A disconnected source cannot remain an invisible staged permission.
+    if (pageInput && !pageAvailable) pageInput.checked = false;
+    const selected = [...grantInputs].filter(([, input]) => input.checked && !input.disabled).map(([capability]) => capability);
     const sameScopes = enabled && selected.length === grant.capabilities.length && selected.every(capability => grant.capabilities.includes(capability));
     const changed = enabled && (!sameScopes || Number(duration.value) !== lastAppliedDuration);
     for (const [id, , capabilities] of GRANT_PRESETS) {
@@ -668,7 +730,7 @@ export function installAgentTools({
       // Enabling the trusted controller and applying these exact scopes is one
       // deliberate human action. No checkbox can grant access on its own.
       onEnabledChange(true);
-      permissions.grant({ capabilities: [...grantInputs].filter(([, input]) => input.checked).map(([capability]) => capability), ttlMs: Number(duration.value) });
+      permissions.grant({ capabilities: [...grantInputs].filter(([, input]) => input.checked && !input.disabled).map(([capability]) => capability), ttlMs: Number(duration.value) });
       lastAppliedDuration = Number(duration.value);
       draftEdited = false;
       permissionError.hidden = true;

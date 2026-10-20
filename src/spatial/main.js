@@ -519,7 +519,7 @@ async function shareWindow() {
     return;
   }
   // Invoke capture while the original click still has browser activation.
-  const capture = media.start();
+  const capture = media.start({ includeCurrentTab: !!agent?.api.describe().source?.available });
   try {
     const stream = await capture;
     if (!stream) return;
@@ -969,6 +969,10 @@ Object.defineProperty(window, 'commonEmbedLifecycle', {
   value: Object.freeze({
     destroy,
     getState: lifecycleState,
+    attachPageContext(provider) {
+      if (disposed || !agent) throw new Error('Common page context is not ready.');
+      return agent.attachPageContext(provider);
+    },
     setVisible(value) {
       visible = !!value;
       performanceIndex.setVisible(visible);

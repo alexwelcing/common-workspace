@@ -17,6 +17,12 @@ Use the user's current Common installation and browser tab. Resolve the relative
 
 After the user grants inspection, call canvas.search to browse or search titles, text, and diagram source on the active canvas. Use returned IDs with canvas.read to retrieve exact text in bounded pages. Follow nextOffset until null; collaborators can change content between pages. Search stays inside the current admitted canvas and does not query other rooms or the web.
 
+## Understand a linked product page
+
+An embedded host can attach an optional page companion. After the person separately grants Read linked page (page-context), source.inspect reads its approved description, source.search finds visible named controls, and source.locate returns a target's current bounds and revision. Context is local to the presenting browser and is not automatically shared or saved. See the [source command reference](agent-api.md#linked-page-context).
+
+The linked host and the captured video are distinct until binding.status is verified. Highlighting additionally requires canvas editing, a current target revision, and a matching live browser-tab capture. A source.highlight overlay is temporary and local, with no shared object or history entry. Captured source pixels can still include it when Common is visible in the shared tab. Screen sharing alone does not grant page access. This companion connects a same-origin host and Common iframe, not arbitrary or independently opened websites.
+
 Tools execute in the user's browser session through window.commonAgent, the visible Agent tools panel, or optional experimental WebMCP. In an embedded installation, the browser API belongs to Common's iframe; host applications can use the mount controller's asynchronous agent proxy. There is no remote MCP HTTP endpoint or A2A transport in this interface.
 
 Inspection, shared edits, capture, and recording require their granted capabilities. Access expires and can be revoked; tools cannot grant themselves access. Screen sharing also requires the person's native browser picker approval. Public discovery files contain interface documentation, not private room content.

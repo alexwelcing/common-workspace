@@ -89,6 +89,19 @@ When an error is confusing, improve the error and its diagnostic context alongsi
 
 ## A short real-device check
 
+### Exercise an embedded page companion
+
+Run the installed Bun example in a disposable local application, then use:
+
+```sh
+bun run check:page-context --url http://127.0.0.1:3100
+bun run check:page-context --url 'http://127.0.0.1:3100/?experience=space'
+```
+
+This opt-in walkthrough uses an isolated normal Chromium profile and the example's synthetic checkout page. It checks the explicit page grant, native WebMCP discovery, source freshness, real browser-tab Capture Handle, local highlight placement, revocation, and host cleanup. It selects only that synthetic browser tab automatically; it does not inspect your browser profile or request a desktop/window capture. Reports stay under `artifacts/page-context/`. Missing capture identity fails the walkthrough rather than substituting a fake handle. Use the [page companion guide](page-context.md) for the host integration and manual flow.
+
+### Check your team's devices
+
 Before a release that changes capture or mobile behavior, run the [two-browser walkthrough](../public/self-hosting.html#smoke-test) on the team's actual devices and network:
 
 1. Open the real source picker and verify the other device receives video.

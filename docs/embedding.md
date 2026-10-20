@@ -2,14 +2,14 @@
 
 Add Common to an existing Bun application as an inline canvas or a floating workspace. Your application keeps its HTTP listener, routes, WebSocket server, and authentication. Common serves its assets and room service beneath one path, using that same server.
 
-The portable module is included in the [v1.9.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.9.0). You can also [run Common as a standalone app](https://github.com/alexwelcing/common-workspace/blob/main/docs/hosting.md#run-on-your-own-laptop). Source and release links in this guide require access to the private repository.
+The portable module is included in the [v1.10.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.10.0). You can also [run Common as a standalone app](https://github.com/alexwelcing/common-workspace/blob/main/docs/hosting.md#run-on-your-own-laptop). Source and release links in this guide require access to the private repository.
 
 ## Obtain the package
 
-Download `common-workspace-0.9.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.9.0), or obtain both from your administrator. Install that file in your Bun application:
+Download `common-workspace-0.10.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.10.0), or obtain both from your administrator. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.9.0.tgz
+bun add /absolute/path/common-workspace-0.10.0.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -35,7 +35,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This writes `artifacts/common-workspace-0.9.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. Install the archive in your host application using the command above.
+This writes `artifacts/common-workspace-0.10.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. Install the archive in your host application using the command above.
 
 The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build.
 
@@ -191,6 +191,16 @@ if (!response.ok) console.error(response.error.code, response.error.message);
 ```
 
 Agent command failures use the existing `{ ok: false, error: { code, message } }` envelope. Mount, readiness, reload, destruction, and caller-cancellation failures can instead reject with `CommonEmbedError`; use its `code` and `message` in your host's error handling. Aborting `options.signal` rejects promptly with `SDK_CANCELLED`, including while the iframe starts. A reloaded or destroyed frame cancels pending work rather than forwarding it into a new session. Cancellation does not undo a command that already completed.
+
+## Link the product page to its canvas
+
+Use `createPageCompanion` from `common-workspace/client` when an agent should understand your host application as well as its Common canvas. Supply a product `root`, a synchronous `describe` callback, and explicitly named target elements, then pass the companion as `mountCommon({ pageContext: page, ... })`. Keep the Common mount outside that product root.
+
+The person separately grants **Read linked page** in Common. The `source.inspect`, `source.search`, and `source.locate` commands expose the app's approved description and visible targets through the existing controller proxy and optional WebMCP. They do not click controls, collect form values automatically, or connect unrelated windows. Context stays in the presenting browser rather than the shared canvas/history.
+
+For a short checkout integration and an agent walkthrough, follow the [page companion guide](https://github.com/alexwelcing/common-workspace/blob/main/docs/page-context.md). Optional `captureHandle: true` helps match an approved share of the host's browser tab; it defaults to false. A temporary `source.highlight` also needs canvas editing, a current target revision, and a verified live tab binding. It is local and creates no exported object or history entry. Recording a tab that visibly contains Common can still capture the overlay as source pixels.
+
+`await canvas.destroy()` detaches that mount without destroying the reusable companion. Call `page.destroy()` when its host product view is removed. Existing mounts without `pageContext` retain their behavior.
 
 ## Screen sharing and capture
 

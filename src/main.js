@@ -52,7 +52,7 @@ const icon=(name,size=18)=>{const node=createElement(icons[name]||icons.Circle,{
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>crypto.randomUUID();
 let shared=null, peerCanvas=null, receivingCanvas=false, restoringSandboxCanvas=false;
-let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null, sharingControls=null;
+let capture=null, walkthrough=null, agentTools=null, agentControlEnabled=false, agentPermissions=null, webMCP=null, pageContext=null, sharingControls=null;
 let agentToolsPromise=null,agentToolsFailed=false,recordingMenuRequest=null;
 let board, socket, media, auth=null, participants=[], chat=[], connected=false, localStream=null, reconnectTimer, intentionalClose=false, roomSeeded=false;
 let rightPanel='people', roomName='Your canvas', sandbox=true, activeColor=DEFAULT_TOOL_COLOR, chatPanel=null;
@@ -92,7 +92,7 @@ function destroyCommon(){
   subscriptionResizeObserver.disconnect();
   cleanupViewport?.();cleanupViewport=null;
   appearanceUI.destroy();
-  webMCP?.destroy();agentPermissions?.destroy();agentTools?.destroy();walkthrough?.stop();capture?.destroy();
+  webMCP?.destroy();pageContext?.destroy();agentPermissions?.destroy();agentTools?.destroy();walkthrough?.stop();capture?.destroy();
   disconnectExports?.();
   if(socket){socket.onmessage=null;socket.onclose=null;socket.onerror=null;socket.close()}
   visibilityListeners.clear();
@@ -109,6 +109,7 @@ function destroyCommon(){
 }
 Object.defineProperty(window,'commonEmbedLifecycle',{value:Object.freeze({
   destroy:destroyCommon,getState:embedState,setVisible:setEmbedVisible,
+  attachPageContext(provider){if(disposed||!pageContext)throw new Error('Common page context is not ready.');return pageContext.attach(provider)},
   subscribe(listener){if(typeof listener!=='function')throw new TypeError('A state listener must be a function.');if(!disposed)embedListeners.add(listener);try{listener(embedState())}catch{}return()=>embedListeners.delete(listener)}
 }),writable:false,configurable:false});
 function later(callback,delay){if(disposed)return null;const id=setTimeout(()=>{appTimers.delete(id);if(!disposed)callback()},delay);appTimers.add(id);return id}
@@ -762,7 +763,7 @@ async function requestWindowShare(event){
     await stopping;if(current())updateShareButton();return null;
   }
   try{
-    const stream=await targetMedia.start();
+    const stream=await targetMedia.start({includeCurrentTab:!!pageContext?.status().available});
     if(!current()||(!sandbox&&!connected)){for(const track of stream?.getTracks?.()||[])track.stop();if(stream&&targetMedia.localStream===stream)targetMedia.stop();return}
     if(stream){
       localStream=stream;
@@ -782,7 +783,7 @@ $('#share-screen').onclick=requestWindowShare;
 function updateShareButton(){
   if(disposed)return;
   sharingControls?.updateContext();
-  capture?.syncSource();agentTools?.refresh();refreshSessionGuide();
+  capture?.syncSource();pageContext?.refresh();agentTools?.refresh();refreshSessionGuide();
   publishEmbedState();
 }
 function diagramModal(){
@@ -982,7 +983,7 @@ function loadAgentTools(){
 }
 async function initializeAgentTools(){
 if(disposed)return;
-const [{createAgentAPI,createAgentPermissions},{CanvasCapture},{Walkthrough},{installAgentTools},{installWebMCP}]=await Promise.all([import('./agent-api.js'),import('./capture.js'),import('./walkthrough.js'),import('./agent-tools.js'),import('./webmcp.js')]);
+const [{createAgentAPI,createAgentPermissions},{CanvasCapture},{Walkthrough},{installAgentTools},{installWebMCP},{createPageContext}]=await Promise.all([import('./agent-api.js'),import('./capture.js'),import('./walkthrough.js'),import('./agent-tools.js'),import('./webmcp.js'),import('./page-context.js')]);
 if(disposed)return;
 try{
 capture=new CanvasCapture({getBoard:()=>board,getSession:()=>shared,getWindowStream:()=>localStream,onChange:()=>{if(!disposed)agentTools?.refresh();publishEmbedState()},onStatus:toast});
@@ -997,11 +998,17 @@ capture.exportCanvas=(data,{mimeType,filename,download=false}={})=>{
 };
 walkthrough=new Walkthrough({getBoard:()=>board,onChange:()=>agentTools?.refresh(),onStatus:toast});
 const getAgentContext=()=>({enabled:!disposed&&agentControlEnabled,sandbox,connected,room:sandbox?null:{id:auth?.room.id,name:roomName},participantId:ownParticipantId(),participants:sandbox?[]:participants});
+pageContext=createPageContext({
+  getBoard:()=>disposed?null:board,getModel:()=>disposed?null:shared,
+  getWindowStream:()=>disposed?null:localStream,getParticipantId:ownParticipantId,
+  onChange:()=>{agentTools?.refresh();void webMCP?.refresh()},
+  onInvalidate:()=>agentPermissions?.revoke('page-source-changed')
+});
 agentPermissions=createAgentPermissions({
   getContext:getAgentContext,getSession:()=>shared,
-  onChange:()=>agentTools?.refresh(),
+  onChange:()=>{pageContext?.clearHighlight();agentTools?.refresh()},
   onRevoke:reason=>{
-    capture?.stop().catch(()=>{});walkthrough?.stop();
+    pageContext?.clearHighlight();capture?.stop().catch(()=>{});walkthrough?.stop();
     if(reason!=='permissions-reduced')agentControlEnabled=false;
     agentTools?.refresh();
     window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:agentControlEnabled}}));
@@ -1010,12 +1017,12 @@ agentPermissions=createAgentPermissions({
 const agentAPI=createAgentAPI({
   getBoard:()=>disposed?null:board,getModel:()=>disposed?null:shared,
   getContext:getAgentContext,permissions:agentPermissions,
-  recording:capture,walkthrough,onStatus:toast
+  recording:capture,walkthrough,pageContext,onStatus:toast
 });
 agentTools=installAgentTools({
   api:agentAPI,capture,walkthrough,permissions:agentPermissions,getEnabled:()=>agentControlEnabled,
   onEnabledChange:enabled=>{agentControlEnabled=!!enabled;window.dispatchEvent(new CustomEvent('common-agent-ready',{detail:{version:'1',enabled:agentControlEnabled}}))},
-  onRequestWindowShare:requestWindowShare,getSharingState:()=>media?.getCaptureState()||{},onStatus:toast,buttonParent:$('.top-actions')
+  onRequestWindowShare:requestWindowShare,getSharingState:()=>media?.getCaptureState()||{},getPageContextState:()=>pageContext?.status()||{available:false},onStatus:toast,buttonParent:$('.top-actions')
 });
 sharingControls?.updateContext();
 webMCP=installWebMCP({api:agentAPI,permissions:agentPermissions,onStatus:toast});
@@ -1026,8 +1033,8 @@ return agentTools;
 }catch(error){
   // Publish the permanent API only after setup succeeds. A failed attempt can
   // release its owned resources before Common is reloaded.
-  webMCP?.destroy();agentTools?.destroy();agentPermissions?.destroy();walkthrough?.stop();capture?.destroy();
-  webMCP=null;agentTools=null;agentPermissions=null;walkthrough=null;capture=null;
+  webMCP?.destroy();pageContext?.destroy();agentTools?.destroy();agentPermissions?.destroy();walkthrough?.stop();capture?.destroy();
+  webMCP=null;pageContext=null;agentTools=null;agentPermissions=null;walkthrough=null;capture=null;
   throw error;
 }
 }

@@ -1,6 +1,6 @@
 {
   "name": "common-workspace",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -18,7 +18,8 @@
     "lint": "oxlint src sdk lib netlify scripts examples/bun-embed server.mjs vite.config.js tests/browser-smoke.mjs",
     "test": "bun scripts/check.mjs",
     "check": "bun scripts/check.mjs",
-    "check:deep": "bun scripts/check-deep.mjs"
+    "check:deep": "bun scripts/check-deep.mjs",
+    "check:page-context": "bun scripts/check-page-context.mjs"
   },
   "dependencies": {
     "@netlify/database": "^2.0.1",

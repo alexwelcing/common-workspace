@@ -1,5 +1,6 @@
 import { normalizeBasePath } from './path.mjs';
 import { installMobileViewport } from '../src/mobile-viewport.js';
+export { createPageCompanion } from './page-companion.js';
 
 const READY_TIMEOUT_MS = 20_000;
 const CLEANUP_TIMEOUT_MS = 2_000;
@@ -41,12 +42,16 @@ function jsonValue(value, depth = 0) {
 }
 
 /** Mount the same-origin Common Bun application without touching host globals. */
-export function mountCommon({ target, basePath = '/__common/', mode = 'overlay', open: initialOpen, roomId, experience = 'classic',
+export function mountCommon({ target, basePath = '/__common/', mode = 'overlay', open: initialOpen, roomId, experience = 'classic', pageContext,
   onReady, onError, onOpenChange,
 } = {}) {
   const document = target?.ownerDocument;
   const window = document?.defaultView;
   if (!window || !(target instanceof window.Element) || typeof target.append !== 'function') throw error('SDK_INVALID_TARGET', 'mountCommon needs a browser Element as its target. Call it after the host page has mounted.');
+  if (pageContext !== undefined && (!pageContext || pageContext.ownerDocument !== document
+    || !['getState', 'inspect', 'search', 'locate', 'subscribe'].every(method => typeof pageContext[method] === 'function'))) {
+    throw error('SDK_INVALID_PAGE_CONTEXT', 'pageContext must be a page companion created for this host document.');
+  }
   if (mode === 'floating') mode = 'overlay';
   if (!['overlay', 'inline'].includes(mode)) throw error('SDK_INVALID_MODE', 'Common mode must be inline or overlay.');
   if (!['classic', 'space'].includes(experience)) throw error('SDK_INVALID_EXPERIENCE', 'Common experience must be classic or space.');
@@ -114,7 +119,7 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
   }
   function clearGeneration(entry) {
     clearTimer(entry.timeout); clearTimer(entry.poll);
-    entry.unsubscribe?.(); entry.removePageHide?.(); entry.removeViewportFocus?.(); entry.abort.abort();
+    entry.unsubscribe?.(); entry.removePageHide?.(); entry.removeViewportFocus?.(); entry.detachPageContext?.(); entry.detachPageContext = null; entry.abort.abort();
   }
   function invalidate(entry, problem) {
     if (!entry) return;
@@ -177,6 +182,17 @@ export function mountCommon({ target, basePath = '/__common/', mode = 'overlay',
           if (stylesheetState === 'failed') { failGeneration(entry, error('SDK_STYLESHEET_ERROR', `Common styles could not load from ${basePath}embed.css. Check host authentication and Content Security Policy, then reopen the canvas.`)); return; }
           entry.api = api; entry.lifecycle = lifecycle; entry.window = child;
           entry.document = child.document;
+          if (pageContext !== undefined) {
+            if (typeof lifecycle.attachPageContext !== 'function') {
+              failGeneration(entry, error('SDK_PAGE_CONTEXT_UNSUPPORTED', 'This Common build does not support page companions. Install matching current app and SDK versions.'));
+              return;
+            }
+            entry.detachPageContext = lifecycle.attachPageContext(pageContext);
+            if (typeof entry.detachPageContext !== 'function') {
+              failGeneration(entry, error('SDK_PAGE_CONTEXT_UNSUPPORTED', 'Common could not attach its page companion. Install matching current app and SDK versions.'));
+              return;
+            }
+          }
           if (viewportCleanup) {
             const refresh = viewportCleanup.refresh;
             entry.document.addEventListener('focusin', refresh);

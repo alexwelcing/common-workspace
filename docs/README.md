@@ -18,6 +18,7 @@ the part you need and get back to your work.
 | Goal | Guide |
 | --- | --- |
 | Embed a workspace in an existing Bun app | [Embedding guide](embedding.md) |
+| Give an agent approved page context and target highlights | [Page companion](page-context.md) |
 | Run a complete example host | [Bun example](../examples/bun-embed/README.md) |
 | Make something with an agent | [Six practical recipes](../public/agent-examples.md) |
 | Choose the right agent interface | [Agent API entry point](../AGENT_API.md) |

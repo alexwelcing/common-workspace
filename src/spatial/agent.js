@@ -3,6 +3,7 @@ import { CanvasCapture } from '../capture.js';
 import { Walkthrough } from '../walkthrough.js';
 import { installAgentTools } from '../agent-tools.js';
 import { installWebMCP } from '../webmcp.js';
+import { createPageContext } from '../page-context.js';
 
 /** Opt-in tools for the selected flat board. Spatial navigation stays with the spatial UI. */
 export function installSpatialAgent({
@@ -18,7 +19,7 @@ export function installSpatialAgent({
   if (Object.getOwnPropertyDescriptor(window, 'commonAgent')) throw new Error('Agent tools are already installed in this browser. Close them before opening another canvas.');
 
   let destroyed = false, enabled = false, refreshing = false;
-  let tools, webMCP, permissions, capture, walkthrough;
+  let tools, webMCP, permissions, capture, walkthrough, pageContext;
   let sourceModel, sourceSession, sourceIdentity;
   const downloadUrls = new Map();
   const previousAgentMarker = document.documentElement.getAttribute('data-common-agent');
@@ -53,6 +54,7 @@ export function installSpatialAgent({
     refreshing = true;
     try {
       capture?.syncSource();
+      pageContext?.refresh();
       permissions?.refresh();
       tools?.refresh();
       void webMCP?.refresh();
@@ -60,6 +62,7 @@ export function installSpatialAgent({
     notify();
   }
   function stop() {
+    pageContext?.clearHighlight();
     walkthrough?.stop();
     return capture?.stop() || Promise.resolve(null);
   }
@@ -86,8 +89,14 @@ export function installSpatialAgent({
     return { filename, mimeType };
   };
   walkthrough = new Walkthrough({ getBoard: board, onChange: refresh, onStatus: status });
+  pageContext = createPageContext({
+    getBoard: board, getModel: model, getWindowStream: () => destroyed ? null : getWindowStream(),
+    getParticipantId: () => context().participantId,
+    onChange: refresh, onInvalidate: () => permissions?.revoke('page-source-changed'),
+  });
   permissions = createAgentPermissions({
-    getContext: context, getSession: session, onChange: refresh,
+    getContext: context, getSession: session,
+    onChange: () => { pageContext.clearHighlight(); refresh(); },
     onRevoke: reason => {
       if (destroyed) return;
       if (reason !== 'permissions-reduced') enabled = false;
@@ -95,12 +104,12 @@ export function installSpatialAgent({
       ready(); refresh();
     },
   });
-  const api = createAgentAPI({ getBoard: board, getModel: model, getContext: context, permissions, recording: capture, walkthrough, onStatus: status });
+  const api = createAgentAPI({ getBoard: board, getModel: model, getContext: context, permissions, recording: capture, walkthrough, pageContext, onStatus: status });
   tools = installAgentTools({
     api, capture, walkthrough, permissions, buttonParent,
     getEnabled: () => !destroyed && enabled,
     onEnabledChange: value => { enabled = !destroyed && !!value; ready(); notify(); },
-    onRequestWindowShare, getSharingState, onStatus: status,
+    onRequestWindowShare, getSharingState, getPageContextState: () => pageContext.status(), onStatus: status,
   });
   webMCP = installWebMCP({ api, permissions, onStatus: status });
   Object.defineProperty(window, 'commonAgent', { value: api, writable: false, configurable: true });
@@ -110,7 +119,7 @@ export function installSpatialAgent({
     if (destroyed) return;
     destroyed = true; enabled = false;
     signal?.removeEventListener('abort', destroy);
-    webMCP.destroy(); permissions.destroy(); tools.destroy(); walkthrough.stop(); capture.destroy();
+    webMCP.destroy(); pageContext.destroy(); permissions.destroy(); tools.destroy(); walkthrough.stop(); capture.destroy();
     for (const [url, timer] of downloadUrls) { clearTimeout(timer); URL.revokeObjectURL(url); }
     downloadUrls.clear();
     if (Object.getOwnPropertyDescriptor(window, 'commonAgent')?.value === api) delete window.commonAgent;
@@ -120,5 +129,5 @@ export function installSpatialAgent({
   }
   signal?.addEventListener('abort', destroy, { once: true });
   ready(); refresh();
-  return Object.freeze({ api, open() { if (!destroyed) tools.open(); }, openCapture(options) { if (!destroyed) tools.openCapture(options); }, refresh, revoke, stop, getState, destroy });
+  return Object.freeze({ api, attachPageContext(provider) { if (destroyed) throw new Error('Common page context has closed.'); return pageContext.attach(provider); }, open() { if (!destroyed) tools.open(); }, openCapture(options) { if (!destroyed) tools.openCapture(options); }, refresh, revoke, stop, getState, destroy });
 }

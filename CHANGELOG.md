@@ -1,5 +1,16 @@
 # Common releases
 
+## 1.10.0 — 2026-10-20
+
+Understand an embedded application and its canvas through the same agent interface. Included in portable module **0.10.0**.
+
+- Add an optional `createPageCompanion` SDK for explicit host-page summaries and named, visible controls. Both Classic and Space & Time connect through the existing same-origin Bun mount.
+- Add `source.inspect`, `source.search`, and `source.locate` behind a separate, default-off **Read linked page** grant. Page context stays browser-local and is excluded from room documents, history, and diagnostics; the companion never collects input values or raw DOM.
+- Add temporary `source.highlight` cues for a verified shared browser tab, with fresh target revisions and video letterboxing/resize handling. They require canvas presentation permission and never operate source-page controls or change shared canvas objects.
+- Invalidate stale source operations and highlights on navigation, share changes, revocation, and teardown. Capture Handle is optional; unmatched video remains explicitly unverified and cannot be highlighted.
+- Include the host tab in the browser's sharing picker when a companion is attached, preserving the person's native capture choice.
+- Extend the Bun example with a declared checkout context, independent inline/floating mounts, and a practical walkthrough guide. No new runtime dependency, backend service, or browser extension is required for this embedded integration.
+
 ## 1.9.0 — 2026-10-20
 
 Find the right canvas content before asking an agent to change it. Included in portable module **0.9.0**.

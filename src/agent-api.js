@@ -22,6 +22,8 @@ const SCHEMAS = {
   'canvas.read': ['id', 'field', 'offset', 'limit'], 'canvas.add': ['entity'], 'canvas.update': ['id', 'patch'],
   'canvas.remove': ['id'], 'canvas.layer': ['id', 'position'], 'canvas.lock': ['id', 'locked'],
   'view.focus': ['id', 'bounds'], 'view.fit': [],
+  'source.inspect': [], 'source.search': ['query', 'offset', 'limit'], 'source.locate': ['id'],
+  'source.highlight': ['id', 'revision', 'durationMs'],
   'image.add': ['dataUrl', 'title', 'x', 'y', 'width', 'height'],
   'walkthrough.load': ['steps'], 'walkthrough.next': [], 'walkthrough.previous': [], 'walkthrough.stop': [],
   'capture.snapshot': ['download'], 'recording.start': ['source'], 'recording.stop': [],
@@ -32,9 +34,11 @@ export const AGENT_CAPABILITIES = Object.freeze({
   'canvas-write': Object.freeze({ title: 'Edit and present', description: 'Add, update, remove, and arrange canvas objects; control views and walkthroughs.' }),
   'media-capture': Object.freeze({ title: 'Capture canvas and shared windows', description: 'Take snapshots and capture an already approved shared window. Never opens the screen picker.' }),
   recording: Object.freeze({ title: 'Manage recordings', description: 'Start, stop, list, and download local clips. Starting also requires media capture.' }),
+  'page-context': Object.freeze({ title: 'Read linked page', description: 'Read context and named controls supplied by the host app. Does not click, fill, or change the page.' }),
 });
 const ACTION_CAPABILITIES = Object.fromEntries(Object.keys(SCHEMAS).map(action => [action,
-  action === 'recording.stop' ? ['recording'] : action === 'recording.start' ? ['inspect', 'media-capture', 'recording']
+  action.startsWith('source.') ? ['inspect', 'page-context', ...(action === 'source.highlight' ? ['canvas-write'] : [])]
+    : action === 'recording.stop' ? ['recording'] : action === 'recording.start' ? ['inspect', 'media-capture', 'recording']
     : action.startsWith('recording.') ? ['inspect', 'recording'] : action === 'capture.snapshot' ? ['inspect', 'media-capture']
       : ['canvas.inspect', 'canvas.search', 'canvas.read', 'canvas.export'].includes(action) ? ['inspect'] : ['inspect', 'canvas-write'],
 ]));
@@ -67,11 +71,21 @@ const SERVICE_MESSAGES = {
   RECORDING_EMPTY: 'No video data was recorded. Keep the source visible and record for a little longer before stopping.',
   RECORDING_NOT_FOUND: 'That clip is no longer in this tab. Use recording.list and choose an available recording id.',
   WALKTHROUGH_INVALID: 'Use 1–50 walkthrough steps with a title and valid canvas targets or bounds.',
+  SOURCE_UNAVAILABLE: 'No linked host page is available. Open Common inside an application with a page companion.',
+  SOURCE_CHANGED: 'The linked page changed before this command completed. Inspect the current source and retry.',
+  SOURCE_NOT_VERIFIED: 'The shared video is not verified as the linked page. Share that browser tab with Capture Handle enabled before highlighting.',
+  SOURCE_TOO_LARGE: 'The linked page context is too large. Reduce the page size or shorten the companion summary.',
+  SOURCE_TARGET_NOT_FOUND: 'That page target is no longer available. Use source.search to find a current target id.',
+  SOURCE_TARGET_NOT_VISIBLE: 'That page target is not visible in the shared tab. Scroll it into view, then use source.locate again.',
+  SOURCE_STALE: 'The page changed since this target was located. Run source.locate again, then use its revision.',
+  SOURCE_INVALID: 'The linked page returned invalid context. Check the page companion integration.',
+  ABORTED: 'Page access ended before this command completed.',
 };
 
 function controlledServiceError(error, action) {
   const category = action === 'canvas.export' ? 'export' : action.split('.')[0];
   let code = Object.hasOwn(SERVICE_MESSAGES, error?.code) ? error.code : null;
+  if (!code && category === 'source') code = 'SOURCE_INVALID';
   if (!code) {
     if (['NotAllowedError', 'SecurityError'].includes(error?.name)) code = 'CAPTURE_PERMISSION_DENIED';
     else if (error?.name === 'NotSupportedError') code = category === 'recording' ? 'RECORDING_UNSUPPORTED' : 'CAPTURE_UNSUPPORTED';
@@ -157,14 +171,20 @@ export function getAgentToolDefinitions() {
     selectedOnly: { type: 'boolean', default: false, description: 'Limit results to the object selected in this browser.' },
     offset: { type: 'integer', minimum: 0, maximum: DISCOVERY_LIMITS.offset, default: 0, description: 'Continue with nextOffset from the previous response.' },
     field: { type: 'string', enum: ['text', 'source', 'title'], description: 'Exact content to read. Defaults to source for diagrams and text for other objects.' },
+    revision: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'The revision returned by the latest source.locate response.' },
+    durationMs: { type: 'integer', minimum: 1000, maximum: 30000, default: 8000, description: 'How long the local highlight remains visible, in milliseconds.' },
     entity: { type: 'object', additionalProperties: false, properties: { ...content, id, type: { type: 'string', enum: [...TYPES] } }, required: ['type'], description: 'Only supported canvas fields. Coordinates and sizes have defaults; images require url. Screen objects and ownership fields are managed by the app.' },
     patch: { type: 'object', minProperties: 1, additionalProperties: false, properties: content },
     position: { type: 'string', enum: ['front', 'back', 'forward', 'backward'] }, bounds: box, dataUrl: raster,
     steps: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'object', additionalProperties: false, properties: { title: { type: 'string', minLength: 1, maxLength: 200 }, text: { type: 'string', maxLength: 5000 }, targetId: id, bounds: box }, required: ['title'], not: { required: ['targetId', 'bounds'] } } },
     download: { type: 'boolean', default: false }, format: { type: 'string', enum: ['svg', 'json'], default: 'svg' },
   };
-  const required = { 'canvas.read': ['id'], 'canvas.add': ['entity'], 'canvas.update': ['id', 'patch'], 'canvas.remove': ['id'], 'canvas.layer': ['id', 'position'], 'canvas.lock': ['id', 'locked'], 'image.add': ['dataUrl'], 'walkthrough.load': ['steps'], 'recording.start': ['source'], 'recording.download': ['id'] };
+  const required = { 'source.locate': ['id'], 'source.highlight': ['id', 'revision'], 'canvas.read': ['id'], 'canvas.add': ['entity'], 'canvas.update': ['id', 'patch'], 'canvas.remove': ['id'], 'canvas.layer': ['id', 'position'], 'canvas.lock': ['id', 'locked'], 'image.add': ['dataUrl'], 'walkthrough.load': ['steps'], 'recording.start': ['source'], 'recording.download': ['id'] };
   const descriptions = {
+    'source.inspect': 'Read the linked host page’s approved context and capture binding. Use to understand the product screen before guiding a walkthrough.',
+    'source.search': 'Find named controls on the linked host page. Use to locate relevant buttons, sections, or errors before requesting their current position.',
+    'source.locate': 'Locate a named visible page target and return its current bounds and revision. Use before highlighting a specific control.',
+    'source.highlight': 'Temporarily highlight a page target over its verified shared tab in this browser. Use to point out a control during a walkthrough.',
     'canvas.inspect': 'Read the complete current canvas, participants, and view. Use for full-state integration; choose canvas search to find objects with compact results.',
     'canvas.search': 'Find objects on the current canvas and return compact previews with reusable IDs. Use to discover relevant content or inspect the current selection before reading or editing.',
     'canvas.read': 'Read exact text from one canvas object in small pages. Use after canvas search when you need complete wording or diagram source for an explanation or edit.',
@@ -182,15 +202,16 @@ export function getAgentToolDefinitions() {
   };
   return Object.keys(SCHEMAS).map(action => {
     const args = Object.fromEntries([...SCHEMAS[action], 'requestId'].map(key => [key,
-      key === 'limit' ? { type: 'integer', minimum: 1, maximum: action === 'canvas.search' ? DISCOVERY_LIMITS.searchPage : DISCOVERY_LIMITS.readPageCharacters,
-        default: action === 'canvas.search' ? DISCOVERY_LIMITS.searchDefaultPage : DISCOVERY_LIMITS.readDefaultCharacters,
-        description: action === 'canvas.search' ? 'Maximum objects in this page. Responses may contain fewer to stay compact.' : 'Maximum UTF-16 characters in this page. Follow nextOffset if more remains.' }
+      key === 'limit' ? { type: 'integer', minimum: 1, maximum: ['canvas.search', 'source.search'].includes(action) ? DISCOVERY_LIMITS.searchPage : DISCOVERY_LIMITS.readPageCharacters,
+        default: ['canvas.search', 'source.search'].includes(action) ? DISCOVERY_LIMITS.searchDefaultPage : DISCOVERY_LIMITS.readDefaultCharacters,
+        description: ['canvas.search', 'source.search'].includes(action) ? 'Maximum objects in this page. Responses may contain fewer to stay compact.' : 'Maximum UTF-16 characters in this page. Follow nextOffset if more remains.' }
+        : action === 'source.search' && key === 'query' ? { type: 'string', maxLength: 200, description: 'Literal case-insensitive words matched across approved target labels, roles, and ids. Leave empty to browse.' }
         : action === 'recording.start' && key === 'source' ? { type: 'string', enum: ['canvas', 'window'] } : properties[key],
     ]));
     const inputSchema = { type: 'object', additionalProperties: false, properties: args, ...(required[action] ? { required: required[action] } : {}) };
     if (action === 'view.focus') inputSchema.oneOf = [{ required: ['id'], not: { required: ['bounds'] } }, { required: ['bounds'], not: { required: ['id'] } }];
     return clone({ name: `common_${action.replaceAll('.', '_')}`, action, description: descriptions[action], inputSchema,
-      capabilities: ACTION_CAPABILITIES[action], annotations: { readOnlyHint: ['canvas.inspect', 'canvas.search', 'canvas.read', 'recording.list'].includes(action), untrustedContentHint: true, consequentialHint: false } });
+      capabilities: ACTION_CAPABILITIES[action], annotations: { readOnlyHint: ['canvas.inspect', 'canvas.search', 'canvas.read', 'source.inspect', 'source.search', 'source.locate', 'recording.list'].includes(action), untrustedContentHint: true, consequentialHint: false } });
   });
 }
 
@@ -302,11 +323,16 @@ function normalize(input) {
   string(command.requestId, 100, 'Request id', false);
   if (command.requestId !== undefined && !command.requestId.trim()) fail('INVALID_COMMAND', 'Request id cannot be empty.');
   const action = command.action;
-  if (['canvas.read', 'canvas.update', 'canvas.remove', 'canvas.layer', 'canvas.lock', 'recording.download'].includes(action)) string(command.id, 100, 'Object id');
+  if (['canvas.read', 'canvas.update', 'canvas.remove', 'canvas.layer', 'canvas.lock', 'recording.download', 'source.locate', 'source.highlight'].includes(action)) string(command.id, 100, 'Object id');
   if (action === 'canvas.inspect') boolean(command.includeImageData, 'Include image data');
-  if (action === 'canvas.search' || action === 'canvas.read') {
+  if (['canvas.search', 'canvas.read', 'source.search'].includes(action)) {
     pageInteger(command.offset, DISCOVERY_LIMITS.offset, 'Page offset');
-    pageInteger(command.limit, action === 'canvas.search' ? DISCOVERY_LIMITS.searchPage : DISCOVERY_LIMITS.readPageCharacters, 'Page limit', 1);
+    pageInteger(command.limit, action !== 'canvas.read' ? DISCOVERY_LIMITS.searchPage : DISCOVERY_LIMITS.readPageCharacters, 'Page limit', 1);
+  }
+  if (action === 'source.search') string(command.query, DISCOVERY_LIMITS.queryCharacters, 'Source search query', false);
+  if (action === 'source.highlight') {
+    if (!Number.isSafeInteger(command.revision) || command.revision < 0) fail('INVALID_COMMAND', 'Highlight needs the revision from the latest source.locate response.');
+    pageInteger(command.durationMs, 30000, 'Highlight duration', 1000);
   }
   if (action === 'canvas.search') {
     string(command.query, DISCOVERY_LIMITS.queryCharacters, 'Search query', false);
@@ -346,7 +372,7 @@ function normalize(input) {
 }
 
 /** Browser-local, opt-in automation. Credentials and transport internals are never exposed. */
-export function createAgentAPI({ getBoard, getModel, getContext, recording, walkthrough, permissions, onStatus = () => {} }) {
+export function createAgentAPI({ getBoard, getModel, getContext, recording, walkthrough, permissions, pageContext, onStatus = () => {} }) {
   const cache = new Map(); let cacheScope; let cacheModel; let cacheGrantRevision; let legacyEnabled = false;
   const rawContext = () => getContext?.() || {};
   const grants = permissions || createAgentPermissions({ getContext: rawContext, getSession: getModel });
@@ -355,7 +381,7 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
     // Compatibility for existing trusted embedders. New UI integrations pass a
     // private permissions controller and select explicit, time-limited scopes.
     if (!permissions) {
-      if (ctx.enabled && !legacyEnabled && (ctx.sandbox || ctx.connected)) { legacyEnabled = true; grants.grant({ capabilities: Object.keys(AGENT_CAPABILITIES) }); }
+      if (ctx.enabled && !legacyEnabled && (ctx.sandbox || ctx.connected)) { legacyEnabled = true; grants.grant({ capabilities: Object.keys(AGENT_CAPABILITIES).filter(capability => capability !== 'page-context') }); }
       if (!ctx.enabled) legacyEnabled = false;
     }
     return ctx;
@@ -373,6 +399,7 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
     const missingCapabilities = ACTION_CAPABILITIES[command.action].filter(capability => !permission.capabilities.includes(capability));
     if (missingCapabilities.length) fail('PERMISSION_DENIED', `This command needs ${missingCapabilities.map(capability => AGENT_CAPABILITIES[capability].title).join(' and ')}. Ask the user to choose those permissions in Agent tools, then select Update access.`);
     if (!getModel?.() || !getBoard?.()) fail('NOT_READY', 'The canvas is not ready.');
+    if (command.action === 'source.highlight' && getBoard().readOnly) fail('READ_ONLY', 'Return to the live canvas before highlighting a linked page target.');
     if (EDIT_ACTIONS.has(command.action) && getBoard().readOnly) fail('READ_ONLY', 'The canvas is currently read-only.');
     return ctx;
   }
@@ -395,8 +422,9 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
     try {
       boolean(includeImageData, 'Include image data');
       const ctx = context(); const board = getBoard?.(); const permission = grants.state(); const permitted = active(ctx) && permission.active && permission.capabilities.includes('inspect');
-      const output = { version: VERSION, enabled: !!ctx.enabled, sandbox: !!ctx.sandbox, connected: !!ctx.connected, ready: permitted && !!board && !!getModel?.(), readOnly: !!board?.readOnly, grants: permission };
+      const output = { source: { available: !!pageContext?.status?.().available }, version: VERSION, enabled: !!ctx.enabled, sandbox: !!ctx.sandbox, connected: !!ctx.connected, ready: permitted && !!board && !!getModel?.(), readOnly: !!board?.readOnly, grants: permission };
       if (permitted) {
+        if (permission.capabilities.includes('page-context')) output.source = pageContext?.status?.() || { available: false };
         output.room = ctx.room ? { id: ctx.room.id, name: ctx.room.name } : null;
         output.participantId = ctx.participantId ?? null;
         output.participants = (Array.isArray(ctx.participants) ? ctx.participants : []).map(person => Object.fromEntries(['id', 'name', 'color', 'isHost', 'sharing'].filter(key => ['string', 'boolean'].includes(typeof person?.[key])).map(key => [key, person[key]])));
@@ -409,13 +437,14 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
     } catch (error) { return envelope(error); }
   }
   function describe() {
-    return { version: VERSION, enabled: !!context().enabled, actions: clone(SCHEMAS), capabilities: clone(AGENT_CAPABILITIES), actionCapabilities: clone(ACTION_CAPABILITIES), grants: grants.state(), tools: getAgentToolDefinitions(), limits: { batch: MAX_BATCH, requestCache: 100, imageDataUrlCharacters: IMAGE_LIMIT, walkthroughSteps: 50, grantDurationMs: GRANT_TTL_MS, maxGrantDurationMs: MAX_GRANT_TTL_MS,
+    return { version: VERSION, source: { available: !!pageContext?.status?.().available }, enabled: !!context().enabled, actions: clone(SCHEMAS), capabilities: clone(AGENT_CAPABILITIES), actionCapabilities: clone(ACTION_CAPABILITIES), grants: grants.state(), tools: getAgentToolDefinitions(), limits: { batch: MAX_BATCH, requestCache: 100, imageDataUrlCharacters: IMAGE_LIMIT, walkthroughSteps: 50, grantDurationMs: GRANT_TTL_MS, maxGrantDurationMs: MAX_GRANT_TTL_MS,
       searchQueryCharacters: DISCOVERY_LIMITS.queryCharacters, searchPage: DISCOVERY_LIMITS.searchPage,
       readPageCharacters: DISCOVERY_LIMITS.readPageCharacters, discoveryResponseCharacters: DISCOVERY_LIMITS.responseCharacters },
       command: '{action, requestId?, ...arguments}', examples: [{ action: 'canvas.add', entity: { type: 'text', text: 'Product walkthrough', x: 40, y: 40 } }, { action: 'view.focus', id: 'object-id' }],
       notes: ['Enable Agent tools in the local browser first.', 'Use requestId for idempotent retries in the same session.', 'Batch validates all command shapes first and runs sequentially; execution failures do not roll back earlier commands. Session changes, disabled Agent tools, or disconnection abort the remaining commands.', 'Window recording uses an existing user-approved screen share. Image generation happens in the agent; image.add imports its raster output.', 'Position locks prevent geometry edits. Screen objects are created by browser screen sharing.'] };
   }
   async function service(action, target, method, ...args) {
+    if (action.startsWith('source.') && typeof target?.[method] !== 'function') throw controlledServiceError({ code: 'SOURCE_UNAVAILABLE' }, action);
     if (typeof target?.[method] !== 'function') {
       const error = controlledServiceError(null, action); error.code = 'SERVICE_UNAVAILABLE';
       error.message = `${action} is unavailable in this browser. Reload or use a browser that supports this feature.`;
@@ -431,8 +460,12 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
     board.pan = { x: width / 2 - (target.x + target.width / 2) * board.zoom, y: height / 2 - (target.y + target.height / 2) * board.zoom };
     board.updateView(); return board.getView();
   }
-  async function run(command, ctx, isAllowed) {
+  async function run(command, ctx, isAllowed, signal) {
     const model = getModel(); const board = getBoard(); const action = command.action;
+    if (action.startsWith('source.')) {
+      const args = Object.fromEntries(Object.entries(command).filter(([key]) => !['action', 'requestId'].includes(key)));
+      return service(action, pageContext, action.split('.')[1], args, { signal, isAllowed });
+    }
     if (action === 'canvas.inspect') return state({ includeImageData: command.includeImageData ?? false });
     if (action === 'canvas.search') return searchCanvas(model.all(), board.selectedId, command);
     if (action === 'canvas.read') {
@@ -489,19 +522,24 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
       if (signal?.aborted) fail('ABORTED', 'The agent command was cancelled.');
       const command = normalize(input); const ctx = access(command); const initialModel = getModel(); const initialGrantRevision = grants.state().revision;
       const scope = sessionScope(ctx);
+      const sourceCommand = command.action.startsWith('source.');
+      const sourceStamp = sourceCommand ? pageContext?.cacheStamp?.() : null;
       if (scope !== cacheScope || cacheModel !== initialModel || cacheGrantRevision !== initialGrantRevision) { cache.clear(); cacheScope = scope; cacheModel = initialModel; cacheGrantRevision = initialGrantRevision; }
       const fingerprint = JSON.stringify(Object.fromEntries(Object.entries(command).filter(([key]) => key !== 'requestId')));
       const previous = command.requestId ? cache.get(command.requestId) : null;
       if (previous) {
         if (previous.fingerprint !== fingerprint) fail('REQUEST_ID_CONFLICT', 'That request id was already used for a different command.');
-        return clone(await previous.promise);
+        if (sourceCommand && previous.sourceStamp !== sourceStamp) fail('SOURCE_STALE', 'The linked page changed since this request. Inspect the current source and use a new request id.');
+        const result = await previous.promise;
+        if (sourceCommand && pageContext?.cacheStamp?.() !== sourceStamp) fail('SOURCE_CHANGED', 'The linked page changed before this retry completed. Inspect the current source and retry.');
+        return clone(result);
       }
       if (command.requestId && cache.size >= 100) {
         const completed = [...cache].find(([, entry]) => entry.done);
         if (!completed) fail('BUSY', 'Too many commands are still running. Wait for a command to complete.');
         cache.delete(completed[0]);
       }
-      const entry = { fingerprint, done: false };
+      const entry = { fingerprint, done: false, ...(sourceCommand ? { sourceStamp } : {}) };
       // Defer service work until the cache entry exists, so concurrent identical
       // retries share even an asynchronous recording/snapshot operation.
       const currentContext = () => {
@@ -515,7 +553,11 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
       // Its final permission check must run before the side effect, while the
       // ordinary post-result check still protects every command response.
       const isAllowed = () => { try { currentContext(); return true; } catch { return false; } };
-      entry.promise = Promise.resolve().then(() => run(command, currentContext(), isAllowed)).then(result => { currentContext(); return { ok: true, result: clone(result) }; }).catch(error => envelope(error)).finally(() => { entry.done = true; });
+      entry.promise = Promise.resolve().then(() => run(command, currentContext(), isAllowed, signal)).then(result => {
+        currentContext();
+        if (sourceCommand && pageContext?.cacheStamp?.() !== sourceStamp) fail('SOURCE_CHANGED', 'The linked page changed before this command completed. Inspect the current source and retry.');
+        return { ok: true, result: clone(result) };
+      }).catch(error => envelope(error)).finally(() => { entry.done = true; });
       if (command.requestId) cache.set(command.requestId, entry);
       const result = await entry.promise;
       if (!result.ok) { try { onStatus(result.error.message); } catch {} }

@@ -1,7 +1,7 @@
 /** Same-origin browser SDK. No room credentials or global app objects are exposed. */
 export type CommonMode = 'inline' | 'overlay' | 'floating';
 export type CommonExperience = 'classic' | 'space';
-export type CommonCapability = 'inspect' | 'canvas-write' | 'media-capture' | 'recording';
+export type CommonCapability = 'inspect' | 'canvas-write' | 'media-capture' | 'recording' | 'page-context';
 export type CommonEditableEntityType = 'text' | 'sticky' | 'rectangle' | 'ellipse' | 'arrow' | 'draw' | 'image' | 'diagram';
 export interface CommonPoint { x: number; y: number; }
 export interface CommonBounds extends CommonPoint { width: number; height: number; }
@@ -32,6 +32,68 @@ export interface CommonCanvasReadResult {
   text: string; total: number; offset: number;
   nextOffset: number | null;
 }
+export interface CommonPageViewport { width: number; height: number; offsetLeft: number; offsetTop: number; }
+export interface CommonPageIdentity { sourceId: string; documentId: string; revision: number; }
+export interface CommonPageCompanionState extends CommonPageIdentity {
+  available: boolean; origin: string; captureHandle: string | null;
+}
+/** Explicit semantic target. No form values or DOM text are collected. */
+export interface CommonPageTarget {
+  id: string; label: string; element: Element; role?: string;
+}
+export interface CommonPageTargetSummary {
+  id: string; label: string; role: string; disabled: boolean;
+  /** CSS viewport coordinates; omitted when a target cannot be located. */
+  bounds?: CommonBounds;
+}
+export interface CommonPageDescription extends CommonPageIdentity {
+  origin: string; title: string; summary: string; route: string;
+  viewport: CommonPageViewport; targetCount: number; truncated?: boolean;
+}
+export interface CommonPageSearchResult extends CommonPageIdentity {
+  items: CommonPageTargetSummary[]; total: number; offset: number; nextOffset: number | null;
+}
+export interface CommonPageLocateResult extends CommonPageIdentity {
+  target: CommonPageTargetSummary & { bounds: CommonBounds };
+  viewport: CommonPageViewport;
+  /** Visible intersection in fractions of the source viewport, from 0 to 1. */
+  normalizedBounds: CommonBounds;
+}
+export interface CommonPageSearchOptions { query?: string; offset?: number; limit?: number; }
+export interface CommonPageCompanionOptions {
+  /** Restricts the registered targets and DOM observation to this product region. */
+  root: Element;
+  /** Synchronous, explicit page description. Route is reduced to its pathname. */
+  describe(): { title?: string; summary?: string; route?: string };
+  /** At most 200 targets with distinct IDs and short, explicit labels. */
+  targets(): ReadonlyArray<CommonPageTarget>;
+  /** Opt in to same-origin browser-tab capture identity when supported. Default: false. */
+  captureHandle?: boolean;
+}
+/** Host-owned provider. Mounted canvases detach from it without destroying it. */
+export interface CommonPageCompanion {
+  readonly ownerDocument: Document;
+  getState(): CommonPageCompanionState;
+  /** Provider results stay within 5,000 JSON characters. Summary shortening is marked by truncated. */
+  inspect(): CommonPageDescription;
+  /** Visible targets only; follow nextOffset because the requested page can shrink to fit. */
+  search(options?: CommonPageSearchOptions): CommonPageSearchResult;
+  locate(options: { id: string }): CommonPageLocateResult;
+  subscribe(listener: (event: { reason: 'updated' | 'navigation' | 'destroyed' }) => void): () => void;
+  /** Notify Common after host state changes that do not alter the observed product DOM. */
+  update(): CommonPageCompanionState;
+  /** Disconnects observers/listeners and releases its owned capture handle. */
+  destroy(): void;
+}
+export interface CommonSourceBinding {
+  status: 'not-sharing' | 'unverified' | 'verified'; screenId?: string;
+}
+export interface CommonSourceInspectResult extends CommonPageDescription { binding: CommonSourceBinding; }
+export interface CommonSourceSearchResult extends CommonPageSearchResult { binding: CommonSourceBinding; }
+export interface CommonSourceLocateResult extends CommonPageLocateResult {
+  binding: CommonSourceBinding; canvasBounds?: CommonBounds;
+}
+export interface CommonSourceHighlightResult extends CommonPageIdentity { screenId: string; targetId: string; durationMs: number; }
 export type CommonNewEntity = Partial<CommonEntityFields> & { type: CommonEditableEntityType; id?: string };
 export type CommonWalkthroughStep = { title: string; text?: string } & (
   | { targetId: string; bounds?: never }
@@ -41,6 +103,10 @@ export type CommonWalkthroughStep = { title: string; text?: string } & (
 interface CommandId { requestId?: string; }
 /** Plain JSON only. Runtime authorization and bounded-value validation still apply. */
 export type CommonCommand = CommandId & (
+  | { action: 'source.inspect' }
+  | ({ action: 'source.search' } & CommonPageSearchOptions)
+  | { action: 'source.locate'; id: string }
+  | { action: 'source.highlight'; id: string; revision: number; durationMs?: number }
   | { action: 'canvas.inspect'; includeImageData?: boolean }
   | {
     action: 'canvas.search';
@@ -98,10 +164,13 @@ export interface CommonAgentDescription {
   limits: Record<string, number>;
   command: string; examples: unknown[]; notes: string[];
   tools: unknown;
+  source?: { available: boolean };
 }
 export interface CommonAgentState {
   version: string; enabled: boolean; sandbox: boolean; connected: boolean; ready: boolean; readOnly: boolean;
   grants: CommonGrantState;
+  /** Availability only until page context is permitted. No source page content is included here. */
+  source?: { available: boolean; binding?: CommonSourceBinding };
   /** Content fields are absent until the user grants inspection in this mount. */
   room?: { id: string; name: string } | null;
   participantId?: string | null;
@@ -145,9 +214,12 @@ export interface MountCommonOptions {
   /** Personal workspace experience. Default: classic. Existing roomId metadata takes precedence. */
   experience?: CommonExperience;
   roomId?: string;
+  /** Optional same-document host provider. Reading it requires the user's separate page-context grant. */
+  pageContext?: CommonPageCompanion;
   onReady?: (controller: CommonController) => void;
   onError?: (error: Error & { code?: string }) => void;
   onOpenChange?: (open: boolean) => void;
 }
 export function mountCommon(options: MountCommonOptions): CommonController;
+export function createPageCompanion(options: CommonPageCompanionOptions): CommonPageCompanion;
 export default mountCommon;

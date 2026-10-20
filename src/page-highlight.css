@@ -1,0 +1,29 @@
+.common-page-highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  user-select: none;
+}
+
+.common-page-highlight-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #e4ae36;
+  border-radius: 6px;
+  background: #f2c34b20;
+  box-shadow: 0 0 0 2px #fffef9bd;
+}
+
+.common-page-highlight-label {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 4px 7px;
+  border: 1px solid #e4cf98;
+  border-radius: 6px;
+  background: #fff9e8;
+  color: #59451f;
+  font: 550 11px/1.35 var(--font-ui, system-ui, sans-serif);
+  overflow-wrap: anywhere;
+  box-shadow: 0 2px 6px #332b151c;
+}
