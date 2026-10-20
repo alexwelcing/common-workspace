@@ -146,7 +146,7 @@ export class ScreenSharing {
     return accepted;
   }
 
-  async start() {
+  async start({ includeCurrentTab = false } = {}) {
     if (this._destroyed) return null;
     if (this._capturePending) return this._capturePending;
     if (this.localStream?.getVideoTracks().some(track => track.readyState === 'live')) return this.localStream;
@@ -166,6 +166,9 @@ export class ScreenSharing {
       capture = this.mediaDevices.getDisplayMedia({
         video: { width: { ideal: 1280 }, frameRate: { ideal: 15, max: 15 } },
         audio: false,
+        // Embedded companions describe the host tab. Keep that tab in the
+        // native picker; browsers can otherwise exclude their own surface.
+        ...(includeCurrentTab ? { selfBrowserSurface: 'include' } : {}),
       });
     } catch (error) {
       this._captureError(error);

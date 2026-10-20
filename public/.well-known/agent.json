@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "common",
-  "description": "An opt-in browser canvas interface for collaborative product walkthroughs, annotations, generated image imports, snapshots, and local video recording.",
+  "description": "An opt-in browser canvas interface for collaborative walkthroughs, annotations, approved host-page context, generated image imports, snapshots, and local video recording.",
   "url_resolution": "Resolve relative URLs against this manifest's URL",
   "homepage": "../",
   "documentation": "../agents.md",
@@ -30,7 +30,8 @@
       "recordings": "#agent-recordings",
       "walkthrough_previous": "#agent-walkthrough-previous",
       "walkthrough_next": "#agent-walkthrough-next",
-      "walkthrough_stop": "#agent-walkthrough-stop"
+      "walkthrough_stop": "#agent-walkthrough-stop",
+      "grant_page_context": "#agent-grant-page-context"
     },
     "browser_js": {
       "global": "window.commonAgent",
@@ -50,13 +51,17 @@
       "tool_name_pattern": "common_<action_with_underscores>",
       "definitions": "../agent-tools.json",
       "arguments": "Tool inputSchema arguments without the action field",
-      "availability": "Only tools allowed by the current grant are registered"
+      "availability": "Only tools allowed by the current grant are registered; source tools also require an attached page companion"
     }
   },
   "actions": [
     "canvas.search",
     "canvas.read",
     "canvas.inspect",
+    "source.inspect",
+    "source.search",
+    "source.locate",
+    "source.highlight",
     "canvas.add",
     "canvas.update",
     "canvas.remove",
@@ -83,7 +88,8 @@
       "inspect",
       "canvas-write",
       "media-capture",
-      "recording"
+      "recording",
+      "page-context"
     ],
     "default_capabilities": [
       "inspect",
@@ -95,7 +101,8 @@
     "screen_capture": "Requires the user's native browser share picker approval",
     "image_generation": "External agent capability; import generated raster output",
     "recordings": "Video-only local browser blobs; download before reload",
-    "remote_mcp_endpoint": null
+    "remote_mcp_endpoint": null,
+    "page_context": "Separate default-off grant for an attached same-origin host companion; sharing video does not grant page inspection"
   },
   "documentation_map": "../llms.txt",
   "manifest_type": "Common-specific browser interface discovery; not an A2A Agent Card",
@@ -119,5 +126,26 @@
     "pagination": "Repeat the same request with returned nextOffset; null means the end. Pages reflect live content, not a frozen snapshot.",
     "max_response_characters": 6000,
     "privacy": "Public discovery files describe interfaces; canvas content requires admission and a current human inspection grant"
+  },
+  "page_context": {
+    "scope": "Approved description and named visible targets from the same-origin host page attached to this Common mount",
+    "capability": "page-context",
+    "commands": [
+      "source.inspect",
+      "source.search",
+      "source.locate",
+      "source.highlight"
+    ],
+    "webmcp_tools": [
+      "common_source_inspect",
+      "common_source_search",
+      "common_source_locate",
+      "common_source_highlight"
+    ],
+    "reference": "../agent-api.md#linked-page-context",
+    "binding": "Only a matching live browser-tab capture handle, origin, and local screen object establish a verified video binding",
+    "highlight": "Temporary local overlay; requires canvas-write, current target revision, and verified binding; no shared/exported object or history entry. Source-video pixels can include visible Common UI.",
+    "privacy": "No automatic DOM/form-value collection, page clicks, independent-window access, or replication of context to other participants",
+    "max_response_characters": 6000
   }
 }

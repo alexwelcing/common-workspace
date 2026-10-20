@@ -18,6 +18,10 @@
     "recording": {
       "title": "Manage recordings",
       "description": "Start, stop, list, and download local clips. Starting also requires media capture."
+    },
+    "page-context": {
+      "title": "Read linked page",
+      "description": "Read context and named controls supplied by the host app. Does not click, fill, or change the page."
     }
   },
   "defaultCapabilities": [
@@ -669,6 +673,160 @@
       },
       "capabilities": [
         "inspect",
+        "canvas-write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_source_inspect",
+      "action": "source.inspect",
+      "description": "Read the linked host page’s approved context and capture binding. Use to understand the product screen before guiding a walkthrough.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect",
+        "page-context"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_source_search",
+      "action": "source.search",
+      "description": "Find named controls on the linked host page. Use to locate relevant buttons, sections, or errors before requesting their current position.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Literal case-insensitive words matched across approved target labels, roles, and ids. Leave empty to browse."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Continue with nextOffset from the previous response."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12,
+            "default": 6,
+            "description": "Maximum objects in this page. Responses may contain fewer to stay compact."
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect",
+        "page-context"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_source_locate",
+      "action": "source.locate",
+      "description": "Locate a named visible page target and return its current bounds and revision. Use before highlighting a specific control.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "page-context"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_source_highlight",
+      "action": "source.highlight",
+      "description": "Temporarily highlight a page target over its verified shared tab in this browser. Use to point out a control during a walkthrough.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "The revision returned by the latest source.locate response."
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 30000,
+            "default": 8000,
+            "description": "How long the local highlight remains visible, in milliseconds."
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ]
+      },
+      "capabilities": [
+        "inspect",
+        "page-context",
         "canvas-write"
       ],
       "annotations": {

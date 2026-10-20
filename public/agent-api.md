@@ -7,6 +7,7 @@ Common exposes the current browser canvas through `window.commonAgent` and a vis
 - Start with the [browser-agent setup instructions](agents.md#begin-in-the-users-tab) to join and request access in the user's tab.
 - Use [methods and results](#methods-and-results) and the [command reference](#commands) when writing commands.
 - Use [search and read](#search-and-read-canvas-content) to locate objects and retrieve exact content without reading the entire canvas.
+- Use [linked page context](#linked-page-context) when a host application attaches a page companion.
 - Try the [agent workflow recipes](agent-examples.md) for feature demos, bug evidence, image comparisons, incident maps, embedded explanations, and an A2A design relay.
 - Follow the [self-hosting guide](self-hosting.html) for laptop and team setup.
 
@@ -22,7 +23,7 @@ In an embedded installation, `window.commonAgent` and **Agent tools** belong to 
 
 ### Grant access
 
-Open the user's room and join normally, or use the personal canvas. In **Agent tools**, choose permissions and an **Access duration**, then choose **Allow selected access**. Presets and checkbox changes do not grant access; **Update access** applies changes to an active grant. The default is **Read the canvas** plus **Edit and present** for 15 minutes. Capture and recording are separate choices. Access starts off, resets on reload, and ends on expiry, revocation, disconnection, or a room/participant/canvas-session change.
+Open the user's room and join normally, or use the personal canvas. In **Agent tools**, choose permissions and an **Access duration**, then choose **Allow selected access**. Presets and checkbox changes do not grant access; **Update access** applies changes to an active grant. The default is **Read the canvas** plus **Edit and present** for 15 minutes. Capture, recording, and linked-page inspection are separate choices. Access starts off, resets on reload, and ends on expiry, revocation, disconnection, or a room/participant/canvas-session change.
 
 ### Use browser controls
 
@@ -36,10 +37,11 @@ For tools that support DOM actions without page JavaScript, fill **Agent command
 | Edit and present | `canvas-write` | Canvas edits, image imports, viewport focus, and walkthrough controls; also requires inspection. |
 | Capture canvas and shared windows | `media-capture` | PNG capture and use of an already approved local window; also requires inspection. |
 | Manage recordings | `recording` | Recording metadata/downloads and stopping a clip; starting also requires media capture and inspection. |
+| Read linked page | `page-context` | Approved host-page context and visible target discovery; available only with an attached companion and also requires inspection. |
 
-Permission checkboxes use `#agent-grant-inspect`, `#agent-grant-canvas-write`, `#agent-grant-media-capture`, and `#agent-grant-recording`. Duration uses `#agent-grant-duration`; allow/update and revoke buttons are `#agent-grant-apply` and `#agent-grant-revoke`. The UI offers 15, 30, or 60 minutes. A grant lasts at most 60 minutes and applies to this tab/session only. `describe().grants` and `state().grants` are read-only snapshots; no public API method grants or extends access. The person's manual recording controls work independently of agent grants; the agent should use its granted commands and respect revocation.
+Permission checkboxes use `#agent-grant-inspect`, `#agent-grant-canvas-write`, `#agent-grant-media-capture`, and `#agent-grant-recording`. An attached page companion adds `#agent-grant-page-context`, initially unchecked. Duration uses `#agent-grant-duration`; allow/update and revoke buttons are `#agent-grant-apply` and `#agent-grant-revoke`. The UI offers 15, 30, or 60 minutes. A grant lasts at most 60 minutes and applies to this tab/session only. `describe().grants` and `state().grants` are read-only snapshots; no public API method grants or extends access. The person's manual recording controls work independently of agent grants; the agent should use its granted commands and respect revocation.
 
-While disabled, disconnected, expired, or without inspection permission, `state()` exposes safe status and grant metadata instead of canvas content or room details. `describe()` remains available. Permission changes invalidate pending operations and their request-ID cache; a later grant does not authorize an earlier queued command.
+While disabled, disconnected, expired, or without inspection permission, `state()` exposes safe status and grant metadata instead of canvas content or room details. `describe()` remains available. Source availability may be reported as `source: {available: boolean}` without exposing the page title or description. Permission changes invalidate pending operations and their request-ID cache; a later grant does not authorize an earlier queued command.
 
 ### Use page JavaScript
 
@@ -102,6 +104,8 @@ Tool names use `common_` plus the action with periods changed to underscores, su
 
 For discovery, call `common_canvas_search` with a query or filters, then `common_canvas_read` with a returned object ID. Both require inspection permission. They return bounded pages; use `nextOffset` to continue. The full-state `canvas.inspect` and export interfaces remain available when a client needs their larger payloads.
 
+With an attached page companion, granted source tools use names such as `common_source_inspect` and `common_source_locate`. They appear in the same registry as canvas tools. This is a same-origin embedded integration; native discovery does not connect independent browser windows. See [linked page context](#linked-page-context).
+
 ## Commands
 
 Coordinates use canvas world units, independent of pan and zoom. Objects have `x`, `y`, `width`, and `height`; coordinates range from −100000 to 100000, and sizes must be positive and no greater than 10000. Use object IDs returned by search, inspection, or creation. Canvas object changes synchronize to admitted peers; local view focus, walkthrough playback, snapshots, and recordings do not.
@@ -111,6 +115,10 @@ Coordinates use canvas world units, independent of pan and zoom. Objects have `x
 | `canvas.search` | `query?`, `types?`, `selectedOnly?`, `offset?`, `limit?` | Find compact object summaries on the active canvas; follow `nextOffset` for more. |
 | `canvas.read` | `id`, `field?`, `offset?`, `limit?` | Read an exact page of one object's text, title, or diagram source. |
 | `canvas.inspect` | `includeImageData?` | Read current canvas state. Default inspection omits inline image data. |
+| `source.inspect` | None | Read the linked host's approved page description and capture binding. |
+| `source.search` | `query?`, `offset?`, `limit?` | Find visible named controls supplied by the companion. |
+| `source.locate` | `id` | Read a visible source target's bounds and current revision. |
+| `source.highlight` | `id`, `revision`, `durationMs?` | Show a temporary local highlight over a verified shared tab; also requires canvas editing. |
 | `canvas.add` | `entity` | Create a supported canvas object. |
 | `canvas.update` | `id`, `patch` | Change allowed fields on an existing object. |
 | `canvas.remove` | `id` | Remove an editable object. |
@@ -163,6 +171,50 @@ For both commands, each complete serialized success envelope fits within 6000 ch
 Pages reflect live content rather than a frozen snapshot. A teammate can add, remove, or edit objects between requests. Re-read a target before an important edit, and check every response's `ok`. Omit `requestId` for a fresh search or read; supplying one reuses the normal identical-request cache within its grant/session. Expiry, revocation, or a board/session change stops access and requires a new human grant.
 
 After finding an object, `view.focus` with its `id` frames it only in this browser. `canvas.update` changes its shared content and additionally requires `canvas-write`. Existing `canvas.inspect`, `state()`, and SVG/JSON export retain their full-state behavior for clients that need it; their payloads do not use this pagination budget.
+
+### Linked page context
+
+An embedded host can attach a page companion through `mountCommon({pageContext})`. Its synchronous `describe` callback provides approved page context, and its `targets` callback names visible controls within an explicit product root. The companion does not automatically return HTML or form values. These commands do not click, fill, or navigate the source page, and do not connect unrelated tabs or cross-origin windows.
+
+The person grants **Read linked page** (`page-context`) separately in **Agent tools**. It starts off and requires `inspect`; the three read commands leave the product, canvas, camera, and selection unchanged. `source.highlight` additionally requires `canvas-write`. A screen-share approval or an ordinary canvas grant does not enable page reading.
+
+`source.inspect` returns approved `title`, `summary`, pathname-only `route`, `origin`, `sourceId`, `documentId`, `revision`, `viewport`, and `targetCount`, plus `binding`. A shortened description reports `truncated: true`. It can describe the linked host before screen sharing starts; the binding tells you whether that context also belongs to the captured video:
+
+| `binding.status` | Meaning |
+| --- | --- |
+| `not-sharing` | No local share is available. The linked page can still be inspected. |
+| `unverified` | A share exists, but it has not been matched to this host page. Do not describe its pixels as the linked page. |
+| `verified` | A live browser-tab capture's handle and origin match the companion and local screen object. The binding includes `screenId`. |
+
+For verified binding, the host opts into `captureHandle: true` on its companion, then the person chooses that **browser tab** in Common's native picker. The option defaults to false and is feature-detected. A window or desktop share, matching title, or matching URL does not establish this binding. Page context is still useful when the captured surface cannot be verified, but highlighting is unavailable.
+
+Search visible targets, then locate one:
+
+```json
+{"action":"source.search","query":"Pay now","limit":3}
+```
+
+```json
+{"action":"source.locate","id":"pay-now"}
+```
+
+Use an ID returned by source search, rather than guessing it. Source target IDs identify app controls and are distinct from canvas object IDs. `source.search` accepts up to 200 query characters, an integer `offset` from 0 to 100000, and `limit` from 1 to 12, default 6. Whitespace-separated query words match IDs, labels, and roles literally without regard to case; all words must match. Omit the query to browse. The result has `sourceId`, `documentId`, `revision`, `items`, `total`, `offset`, and `nextOffset`. Each target summary has `id`, `label`, `role`, `disabled`, and bounds when available. Hidden, offscreen, password, and private targets are omitted; a target or ancestor marked `data-common-private` is private.
+
+`source.locate` returns `sourceId`, `documentId`, `revision`, `target`, `viewport`, `normalizedBounds`, and the current `binding`. `target.bounds` uses CSS viewport coordinates; normalized bounds describe the visible part of the target. It does not scroll the source page. If the target is unavailable or not visible, use the returned error rather than fabricating coordinates.
+
+To point at a verified target, use its latest locate revision:
+
+```json
+{"action":"source.highlight","id":"pay-now","revision":14,"durationMs":8000}
+```
+
+Replace `revision` with the value just returned by `source.locate`. A stale revision returns `SOURCE_STALE`; locate again. The default duration is 8000 ms, with an allowed range of 1000–30000 ms. The local overlay follows source geometry and the video's scale/letterboxing. Its result identifies the source, document, revision, screen, target, and duration. This overlay creates no shared object or history entry and is not added by Common's canvas capture/export renderer. Captures still include source-video pixels, so a shared tab that visibly contains Common can contain its overlay. A deliberate canvas note or shape remains a normal shared canvas edit.
+
+Source commands keep the complete serialized success envelope below 6000 characters; the companion's own result budget is 5000. Follow a search's returned `nextOffset` until it is `null`, since a page can contain fewer items than requested. Descriptions, target lists, and revisions reflect live state. Omit `requestId` when fresh context is required. Retrying a cached source request after its source revision changes returns `SOURCE_STALE`; issue a fresh request.
+
+Navigation invalidates pending source work and old highlights. Capture changes, removed/hidden targets, lost grants, room/board changes, and teardown also clear invalid highlights. Replacing or destroying the companion ends prior source consent; ordinary page updates do not require a new grant. Source context stays in the presenting browser and is not automatically replicated to other participants, canvas documents, chat, device history, or diagnostics.
+
+Source errors include `SOURCE_UNAVAILABLE`, `SOURCE_CHANGED`, `SOURCE_NOT_VERIFIED`, `SOURCE_TOO_LARGE`, `SOURCE_TARGET_NOT_FOUND`, `SOURCE_TARGET_NOT_VISIBLE`, `SOURCE_STALE`, and `SOURCE_INVALID`. Follow their recovery messages. No command can grant page access or choose a capture source for the person.
 
 ### Text, shapes, drawings, and diagrams
 

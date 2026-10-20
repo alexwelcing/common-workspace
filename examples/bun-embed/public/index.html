@@ -35,6 +35,11 @@
     .side .card { padding: 19px; }
     .side h2 { margin: 0 0 8px; font-size: 14px; }
     .side p, .side label { font-size: 12px; }
+    .checkout-label { display: grid; gap: 6px; margin: 16px 0 8px; }
+    .checkout-label input { min-width: 0; width: 100%; min-height: 44px; border: 1px solid #d7ddce; border-radius: 8px; padding: 9px; color: #34483b; background: #fbf8f0; font-size: 16px; }
+    .checkout-help { min-height: 38px; margin: 8px 0 12px; line-height: 1.5; }
+    .checkout-demo > button { width: 100%; }
+    .companion-hint { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid #e3dfd3; line-height: 1.6; }
     .counter { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 18px; }
     #host-count { font-size: 30px; font-weight: 500; font-variant-numeric: tabular-nums; }
     .field { display: flex; gap: 6px; margin-top: 14px; }
@@ -59,6 +64,14 @@
     <div class="layout">
       <section class="card"><div class="card-head"><div><h2>Inline workspace</h2><p id="inline-status" class="status" role="status">Preparing the Common mount…</p></div><button id="toggle-inline" disabled>Hide canvas</button></div><div id="inline-mount"><div id="inline-waiting" class="waiting">Loading the host application…</div></div></section>
       <aside class="side">
+        <section class="card checkout-demo" id="checkout-demo" aria-labelledby="checkout-heading">
+          <div class="eyebrow">A product to walk through</div><h2 id="checkout-heading">A little checkout</h2>
+          <p>Try a made-up address to change the page state. This demo never submits it or takes a payment.</p>
+          <label class="checkout-label" for="delivery-address">Delivery address<input id="delivery-address" type="text" autocomplete="off" placeholder="A demo address" aria-describedby="checkout-help"></label>
+          <p id="checkout-help" class="checkout-help" role="status">Add a delivery address to enable Pay now.</p>
+          <button class="primary" id="pay-now" type="button" disabled>Pay now</button>
+          <p class="companion-hint">In Common’s <strong>Agent tools</strong>, choose <strong>Read linked page</strong> and apply access. Try <code>source.inspect</code>, then locate <code>pay-now</code>. The companion shares readiness and named controls, never the address value.</p>
+        </section>
         <section class="card"><h2>The host app still works</h2><p>This counter belongs to <code>/api/counter</code>. Opening or closing Common does not reset it.</p><div class="counter"><span id="host-count">—</span><button id="increment">Add one</button></div><button id="probe-host" style="margin-top:14px;width:100%">Check host health</button><output id="health-output" aria-live="polite">Connecting to /api/health…</output></section>
         <section class="card"><h2>Your original WebSocket</h2><p><code>/echo</code> uses the host's original handlers. Common has its own sockets under each mount.</p><div class="field"><input id="echo-message" value="Hello from the host app" aria-label="Echo message"><button id="send-echo">Send</button></div><output id="echo-output" aria-live="polite">Connecting to /echo…</output></section>
         <section class="card"><h2>Optional host sign-in demo</h2><label class="auth-toggle"><input id="demo-auth" type="checkbox" disabled>Signed in to the demo host</label><p id="auth-note">Checking whether the demonstration gate is enabled…</p></section>
@@ -69,9 +82,45 @@
   </main>
   <div id="floating-mount"></div>
   <script type="module">
-    import { mountCommon } from '/vendor/common-client.js';
+    import { createPageCompanion, mountCommon } from '/vendor/common-client.js';
     const $ = selector => document.querySelector(selector);
+    const experience = new URL(location.href).searchParams.get('experience') === 'space' ? 'space' : 'classic';
     let inline, floating, hostState, echo, generation = 0, shuttingDown = false;
+    let checkoutComplete = false;
+    const deliveryAddress = $('#delivery-address'), payNow = $('#pay-now');
+    const addressReady = () => !!deliveryAddress.value.trim();
+    function createCheckoutCompanion() {
+      return createPageCompanion({
+        root: $('#checkout-demo'),
+        captureHandle: true,
+        describe: () => ({
+          title: 'Checkout', route: location.pathname,
+          summary: checkoutComplete ? 'Demo checkout is complete. No payment was made.'
+            : addressReady() ? 'Delivery address is complete. Pay now is enabled.'
+              : 'Delivery address is incomplete. Pay now is disabled.',
+        }),
+        targets: () => [
+          { id: 'delivery-address', label: 'Delivery address', role: 'textbox', element: deliveryAddress },
+          { id: 'pay-now', label: 'Pay now', role: 'button', element: payNow },
+        ],
+      });
+    }
+    let pageContext = createCheckoutCompanion();
+    function updateCheckout() {
+      payNow.disabled = !addressReady() || checkoutComplete;
+      const message = checkoutComplete ? 'Demo checkout complete. No payment was made.'
+        : addressReady() ? 'Delivery address is ready. Pay now is enabled for this demo.'
+          : 'Add a delivery address to enable Pay now.';
+      if ($('#checkout-help').textContent !== message) $('#checkout-help').textContent = message;
+      // The provider exports the declared summary and target labels, not this input's value.
+      pageContext.update();
+    }
+    deliveryAddress.addEventListener('input', () => { checkoutComplete = false; updateCheckout(); });
+    payNow.addEventListener('click', () => { checkoutComplete = true; updateCheckout(); });
+    // Public demo controllers use the same grant-checked SDK as a real host integration.
+    Object.defineProperty(window, 'commonExample', { value: Object.freeze({
+      get inline() { return inline; }, get floating() { return floating; },
+    }) });
     const status = (selector, text, error = false) => { const node = $(selector); node.textContent = text; node.classList.toggle('error', error); };
     async function json(url, options) { const response = await fetch(url, options); if (!response.ok) throw new Error(`${url} returned ${response.status}: ${await response.text()}`); return response.json(); }
     async function probeHost() {
@@ -94,12 +143,12 @@
       $('#inline-waiting').hidden = true;
       status('#inline-status', 'Opening the inline canvas…'); status('#floating-status', 'Floating launcher ready. Open it when you need it.');
       try {
-        inline = mountCommon({ target: $('#inline-mount'), basePath: '/common-inline/', mode: 'inline',
+        inline = mountCommon({ target: $('#inline-mount'), basePath: '/common-inline/', mode: 'inline', experience, pageContext,
           onReady: () => { if (current === generation) status('#inline-status', 'Inline canvas ready · /common-inline/'); },
           onOpenChange: open => { $('#toggle-inline').textContent = open ? 'Hide canvas' : 'Show canvas'; },
           onError: error => { if (current === generation) status('#inline-status', `${error.code || 'Common error'}: ${error.message}`, true); },
         });
-        floating = mountCommon({ target: $('#floating-mount'), basePath: '/common-floating/', mode: 'floating', open: false,
+        floating = mountCommon({ target: $('#floating-mount'), basePath: '/common-floating/', mode: 'floating', open: false, experience, pageContext,
           onReady: () => { if (current === generation) status('#floating-status', 'Floating canvas ready · /common-floating/'); },
           onOpenChange: open => { $('#open-floating').textContent = open ? 'Hide floating canvas' : 'Open floating canvas'; },
           onError: error => { if (current === generation) status('#floating-status', `${error.code || 'Common error'}: ${error.message}`, true); },
@@ -129,10 +178,10 @@
       try { await destroyMounts(); await json('/api/demo-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signedIn: wanted }) }); await probeHost(); await mountBoth(); }
       catch (error) { status('#inline-status', `Host sign-in demo failed: ${error.message}`, true); event.target.disabled = false; }
     };
-    window.addEventListener('pagehide', () => { shuttingDown = true; echo?.close(); void destroyMounts(); });
+    window.addEventListener('pagehide', () => { shuttingDown = true; echo?.close(); void destroyMounts(); pageContext.destroy(); });
     window.addEventListener('pageshow', event => {
       if (!event.persisted) return;
-      shuttingDown = false; connectEcho();
+      shuttingDown = false; pageContext = createCheckoutCompanion(); connectEcho();
       probeHost().then(mountBoth).catch(error => status('#inline-status', error.message, true));
     });
     connectEcho();

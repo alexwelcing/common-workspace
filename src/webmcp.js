@@ -40,13 +40,15 @@ export function installWebMCP({ api, permissions, document = globalThis.document
     if (destroyed) return Promise.resolve(status());
     const grant = permissions?.state?.() || api.describe().grants;
     const state = api.state();
-    const nextSignature = JSON.stringify([supported, state.enabled, state.ready, grant?.active, grant?.revision, grant?.capabilities]);
+    const sourceAvailable = !!state.source?.available;
+    const nextSignature = JSON.stringify([supported, state.enabled, state.ready, grant?.active, grant?.revision, grant?.capabilities, sourceAvailable]);
     if (nextSignature === signature) return pending.then(status);
     signature = nextSignature;
     const ticket = ++generation;
     controller?.abort(); controller = null; registered.clear(); lastError = null;
     const definitions = supported && state.enabled && state.ready && grant?.active
-      ? getAgentToolDefinitions().filter(definition => definition.capabilities.every(capability => grant.capabilities.includes(capability))) : [];
+      ? getAgentToolDefinitions().filter(definition => (!definition.action.startsWith('source.') || sourceAvailable)
+        && definition.capabilities.every(capability => grant.capabilities.includes(capability))) : [];
     pending = pending.catch(() => {}).then(async () => {
       if (destroyed || ticket !== generation || !definitions.length) return;
       const registration = new AbortController(); controller = registration;
