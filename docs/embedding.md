@@ -2,14 +2,14 @@
 
 Add Common to an existing Bun application as an inline canvas or a floating workspace. Your application keeps its HTTP listener, routes, WebSocket server, and authentication. Common serves its assets and room service beneath one path, using that same server.
 
-The portable module is included in the [v1.8.1 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.8.1). You can also [run Common as a standalone app](https://github.com/alexwelcing/common-workspace/blob/main/docs/hosting.md#run-on-your-own-laptop). Source and release links in this guide require access to the private repository.
+The portable module is included in the [v1.9.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.9.0). You can also [run Common as a standalone app](https://github.com/alexwelcing/common-workspace/blob/main/docs/hosting.md#run-on-your-own-laptop). Source and release links in this guide require access to the private repository.
 
 ## Obtain the package
 
-Download `common-workspace-0.8.1.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.8.1), or obtain both from your administrator. Install that file in your Bun application:
+Download `common-workspace-0.9.0.tgz` and its SHA-256 checksum from the [release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.9.0), or obtain both from your administrator. Install that file in your Bun application:
 
 ```sh
-bun add /absolute/path/common-workspace-0.8.1.tgz
+bun add /absolute/path/common-workspace-0.9.0.tgz
 ```
 
 You do not need an npm account, GitHub registry login, Cloudflare account, or Netlify account to install a tarball you already have. The source repository is private: obtaining its source still requires repository read access or an archive supplied by an administrator.
@@ -35,7 +35,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-This writes `artifacts/common-workspace-0.8.1.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. Install the archive in your host application using the command above.
+This writes `artifacts/common-workspace-0.9.0.tgz`. `bun run build:module` creates the unpacked `module-dist/` directory instead. Install the archive in your host application using the command above.
 
 The package contains the server module, browser mounting module, types, and built Common frontend, including its fonts, diagrams, canvas libraries, and WebAssembly. It has no runtime npm dependencies. Installing the repository through a Git URL is not a substitute for this package build.
 

@@ -30,7 +30,7 @@ test('WebMCP is optional and the existing browser bridge works when the experime
 test('only granted semantic tools register, invoke the validated command layer, and cannot retag commands', async t => {
   const env = setup(t); await env.adapter.refresh(); assert.equal(env.tools.size, 0);
   env.context.enabled = true; env.permissions.grant({ capabilities: ['inspect'] }); await env.adapter.refresh();
-  assert.deepEqual([...env.tools.keys()].sort(), ['common_canvas_export', 'common_canvas_inspect']);
+  assert.deepEqual([...env.tools.keys()].sort(), ['common_canvas_export', 'common_canvas_inspect', 'common_canvas_read', 'common_canvas_search']);
   env.permissions.grant(); await env.adapter.refresh();
   const tool = env.tools.get('common_canvas_add'); assert.ok(tool); assert.equal(env.tools.has('common_recording_start'), false);
   const added = JSON.parse(await tool.execute({ entity: { id: 'note', type: 'text', text: 'Useful semantic tool' } }));

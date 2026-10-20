@@ -106,14 +106,14 @@ test('agent panel requires visible opt-in before JSON commands create shared obj
   assert.equal(JSON.parse(await env.run({ action: 'canvas.add', entity: { id: 'callout', type: 'rectangle', text: 'Feature', x: 120, y: 220, width: 320, height: 180 } })).ok, true);
   assert.equal(env.model.get('title').text, 'Product walkthrough');
   assert.equal(env.model.get('callout').width, 320);
-  assert.equal(env.query('[data-entity-id="title"] .board-text-content').textContent, 'Product walkthrough');
+  assert.equal(env.query('[data-entity-id="title"] .board-text-content').textContent.replaceAll('\n', ''), 'Product walkthrough');
   assert.ok(env.query('[data-entity-id="callout"] svg'));
   const batch = JSON.parse(await env.run([
     { action: 'canvas.update', id: 'title', patch: { text: 'Updated walkthrough' } },
     { action: 'canvas.update', id: 'callout', patch: { width: 420 } },
   ]));
   assert.equal(batch.ok, true);
-  assert.equal(env.query('[data-entity-id="title"] .board-text-content').textContent, 'Updated walkthrough');
+  assert.equal(env.query('[data-entity-id="title"] .board-text-content').textContent.replaceAll('\n', ''), 'Updated walkthrough');
   assert.equal(env.model.get('callout').width, 420);
   const peer = new SharedCanvas();
   t.after(() => peer.destroy());
@@ -141,7 +141,7 @@ test('malformed commands and HTML-looking text stay inert in the result, board a
   const invalid = JSON.parse(await env.run({ action: markup }));
   assert.equal(invalid.ok, false);
   await env.run({ action: 'canvas.add', entity: { id: 'inert', type: 'text', text: markup } });
-  assert.equal(env.query('[data-entity-id="inert"] .board-text-content').textContent, markup);
+  assert.equal(env.query('[data-entity-id="inert"] .board-text-content').textContent.replaceAll('\n', ''), markup);
   await env.run({ action: 'walkthrough.load', steps: [{ title: markup, text: markup, targetId: 'inert' }] });
   assert.equal(env.query('.agent-walkthrough h2').textContent, markup);
   assert.equal(env.query('.agent-walkthrough p').textContent, markup);
@@ -206,6 +206,8 @@ test('manual recording controls remain available with agent control disabled and
   env.query('[aria-label="Download Product demo"]').click(); await settle();
   assert.deepEqual(env.calls.at(-1), ['download', 'recording-1']);
   env.query('[aria-label="Discard Product demo"]').click(); await settle();
+  assert.equal(env.calls.some(([action]) => action === 'discard'), false);
+  env.query('[data-recording-action="confirm"]').click(); await settle();
   assert.deepEqual(env.calls.at(-1), ['discard', 'recording-1']);
   assert.equal(env.query('.agent-recording-item'), null);
   env.query('#agent-record-source').value = 'window';
@@ -318,7 +320,7 @@ test('the full application boots with opt-in agent control and shares a personal
   document.querySelector('#agent-command').value = JSON.stringify({ action: 'canvas.add', entity: { id: 'boot-check', type: 'text', text: 'Real application integration' } });
   document.querySelector('#agent-run').click(); await settle();
   assert.equal(JSON.parse(document.querySelector('#agent-result').textContent).ok, true);
-  assert.equal(document.querySelector('[data-entity-id="boot-check"] .board-text-content').textContent, 'Real application integration');
+  assert.equal(document.querySelector('[data-entity-id="boot-check"] .board-text-content').textContent.replaceAll('\n', ''), 'Real application integration');
   assert.ok(JSON.parse(localStorage.getItem('common.canvas')).some(entity => entity.id === 'boot-check'));
   assert.equal(permissionRequests.length, 0);
   assert.equal(track.stops, 0);

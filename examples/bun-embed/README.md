@@ -10,9 +10,9 @@ The host keeps its own `/api/health`, `/api/counter`, and `/echo` WebSocket. Com
 
 ### Get the package
 
-Obtain `common-workspace-0.8.1.tgz` and its SHA-256 checksum from the [v1.8.1 release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.8.1), or ask its owner for both files. Release access requires read access to the private repository. Installing an administrator-provided archive needs no cloud account or registry login.
+Obtain `common-workspace-0.9.0.tgz` and its SHA-256 checksum from the [v1.9.0 release assets](https://github.com/alexwelcing/common-workspace/releases/tag/v1.9.0), or ask its owner for both files. Release access requires read access to the private repository. Installing an administrator-provided archive needs no cloud account or registry login.
 
-In an existing Bun project, install it with `bun add /absolute/path/to/common-workspace-0.8.1.tgz`, then run the included example as described above.
+In an existing Bun project, install it with `bun add /absolute/path/to/common-workspace-0.9.0.tgz`, then run the included example as described above.
 
 If you have a Common source checkout instead, build the tarball there first:
 
@@ -21,7 +21,7 @@ bun install --frozen-lockfile
 bun run pack:module
 ```
 
-The resulting artifact is `artifacts/common-workspace-0.8.1.tgz`.
+The resulting artifact is `artifacts/common-workspace-0.9.0.tgz`.
 
 ### Run your own copy
 
@@ -30,7 +30,7 @@ From a source checkout, copy this example into your own directory and install th
 ```sh
 cp -R /path/to/common/examples/bun-embed ./my-common-host
 cd my-common-host
-bun add /absolute/path/to/common-workspace-0.8.1.tgz
+bun add /absolute/path/to/common-workspace-0.9.0.tgz
 bun run start
 ```
 

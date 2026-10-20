@@ -14,7 +14,7 @@ const definitions = [
   ['personal-canvas', 'The WASM canvas creates, edits, and undoes a local note; performance diagnostics measure that work.'],
   ['guided-room', 'A phone joins a styled room with its password and becomes ready without capture.'],
   ['chat-and-reload', 'Chat and host-only room styling update both browsers; reload preserves identity and the plan.'],
-  ['agent-consent', 'Visible consent controls agent edits; PNG preserves the room canvas colour and revocation blocks edits.'],
+  ['agent-consent', 'Visible consent permits bounded object discovery and targeted edits; PNG preserves room colour and revocation ends access.'],
   ['native-peers', 'Native peers share classic media and Space & Time; autosave, history, archives, and room cleanup work.'],
 ];
 
@@ -298,16 +298,69 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
       });
     });
     await journey(3, async () => {
-      await checkpoint('Agent writes are blocked before visible consent', async () => {
+      await checkpoint('Agent reads and writes are blocked before visible consent', async () => {
         await host.waitForFunction(() => !!window.commonAgent);
-        const denied = await host.evaluate(() => window.commonAgent.execute({ action: 'canvas.add', entity: { type: 'text', text: 'Unapproved annotation' } }));
-        assert.equal(denied.ok, false); assert.equal(denied.error.code, 'AGENT_DISABLED');
+        const denied = await host.evaluate(() => Promise.all([
+          { action: 'canvas.add', entity: { type: 'text', text: 'Unapproved annotation' } },
+          { action: 'canvas.search', query: 'checkout' },
+          { action: 'canvas.read', id: 'unapproved-object' },
+        ].map(command => window.commonAgent.execute(command))));
+        for (const result of denied) { assert.equal(result.ok, false); assert.equal(result.error.code, 'AGENT_DISABLED'); }
         assert.equal(await host.getByText('Unapproved annotation', { exact: true }).count(), 0);
       });
       await checkpoint('Allow an annotation through Agent tools', async () => {
         await host.getByRole('button', { name: 'Agent tools', exact: true }).click(); await host.locator('#agent-grant-apply').click();
         const allowed = await host.evaluate(() => window.commonAgent.execute({ action: 'canvas.add', entity: { type: 'text', text: 'Approved walkthrough annotation', x: 80, y: 80 } }));
         assert.equal(allowed.ok, true); await host.locator('.type-text').filter({ hasText: 'Approved walkthrough annotation' }).waitFor();
+      });
+      await checkpoint('Find a note, read every exact page, and edit only the selected object', async () => {
+        const evidence = await host.evaluate(async () => {
+          const api = window.commonAgent, before = api.state().entities;
+          const text = 'Checkout recovery notes\n' + 'Quoted "evidence" and a new line.\n'.repeat(80)
+            + '\u0001'.repeat(1500) + '\nKeep the exact ending: café 🌱.';
+          const added = await api.execute({ action: 'canvas.add', entity: { id: 'journey-discovery-note', type: 'text', title: 'Journey checkout recovery', text, x: 760, y: 180 } });
+          const unrelated = await api.execute({ action: 'canvas.add', entity: { id: 'journey-discovery-other', type: 'text', title: 'Journey checkout contrast', text: 'Keep this other note unchanged.', x: 760, y: 360 } });
+          const page = await api.execute({ action: 'canvas.search', query: 'JoUrNeY CHECKOUT', types: ['text'], limit: 1 });
+          const next = page.ok && page.result.nextOffset !== null
+            ? await api.execute({ action: 'canvas.search', query: 'JoUrNeY CHECKOUT', types: ['text'], offset: page.result.nextOffset, limit: 1 }) : null;
+          const search = await api.execute({ action: 'canvas.search', query: 'CHECKOUT recovery', types: ['text'] });
+          const id = search.ok ? search.result.items[0]?.id : undefined;
+          if (!id) return { added, unrelated, page, next, search };
+          const reads = []; let offset = 0;
+          do {
+            const response = await api.execute({ action: 'canvas.read', id, offset, limit: 2000 });
+            reads.push(response);
+            if (!response.ok) break;
+            offset = response.result.nextOffset;
+          } while (offset !== null && reads.length < 20);
+          const focus = await api.execute({ action: 'view.focus', id });
+          const selected = await api.execute({ action: 'canvas.search', selectedOnly: true });
+          const updated = await api.execute({ action: 'canvas.update', id, patch: { text: 'Clarified checkout recovery after bounded discovery' } });
+          const after = api.state().entities;
+          return { added, unrelated, page, next, search, text, reads, focus, selected, updated,
+            before, unchanged: after.filter(entity => !['journey-discovery-note', 'journey-discovery-other'].includes(entity.id)),
+            otherAfter: after.find(entity => entity.id === 'journey-discovery-other') };
+        });
+        for (const result of [evidence.added, evidence.unrelated, evidence.page, evidence.next, evidence.search, evidence.focus, evidence.selected, evidence.updated]) assert.equal(result?.ok, true);
+        assert.equal(evidence.page.result.total, 2); assert.equal(evidence.page.result.items.length, 1);
+        assert.equal(evidence.next.result.items.length, 1); assert.equal(evidence.next.result.nextOffset, null);
+        assert.notEqual(evidence.page.result.items[0].id, evidence.next.result.items[0].id);
+        assert.equal(evidence.search.result.total, 1); assert.equal(evidence.search.result.items[0].id, 'journey-discovery-note');
+        assert.ok(evidence.reads.length > 1, 'Long note discovery must use continuation rather than a whole-canvas response.');
+        for (const result of [evidence.page, evidence.next, evidence.search, evidence.selected, ...evidence.reads]) {
+          assert.equal(result.ok, true); assert.ok(JSON.stringify(result).length <= 6000, 'Discovery responses must remain bounded even when text requires JSON escaping.');
+        }
+        assert.equal(evidence.reads.map(page => page.result.text).join(''), evidence.text, 'Paged reads must preserve exact text, including escapes and Unicode.');
+        assert.equal(evidence.reads.at(-1).result.nextOffset, null);
+        assert.deepEqual(evidence.selected.result.items.map(item => item.id), ['journey-discovery-note']);
+        assert.deepEqual(evidence.unchanged, evidence.before); assert.deepEqual(evidence.otherAfter, evidence.unrelated.result);
+        await host.locator('.type-text').filter({ hasText: 'Clarified checkout recovery after bounded discovery' }).waitFor();
+        const cleaned = await host.evaluate(async () => {
+          const results = [];
+          for (const id of ['journey-discovery-note', 'journey-discovery-other']) results.push(await window.commonAgent.execute({ action: 'canvas.remove', id }));
+          results.push(await window.commonAgent.execute({ action: 'view.fit' })); return results;
+        });
+        for (const result of cleaned) assert.equal(result.ok, true);
       });
       await checkpoint('Download a manual PNG, then revoke agent writes', async () => {
         const [png] = await Promise.all([host.waitForEvent('download'), host.locator('#agent-snapshot').click()]);
@@ -321,8 +374,14 @@ export async function runBrowserJourney({ baseUrl = 'http://127.0.0.1:4173', art
         report.snapshotBackground = corner.slice(0, 3);
         assert.deepEqual(corner, [240, 247, 246, 255], 'PNG corner must preserve the opaque Lagoon/plain room background.');
         await host.locator('#agent-grant-revoke').click();
-        const denied = await host.evaluate(() => window.commonAgent.execute({ action: 'canvas.add', entity: { type: 'text', text: 'Revoked annotation' } }));
-        assert.equal(denied.ok, false); assert.ok(['AGENT_DISABLED', 'GRANT_REVOKED', 'PERMISSION_DENIED'].includes(denied.error.code));
+        const denied = await host.evaluate(() => Promise.all([
+          { action: 'canvas.add', entity: { type: 'text', text: 'Revoked annotation' } },
+          { action: 'canvas.search', query: 'checkout' },
+          { action: 'canvas.read', id: 'journey-discovery-note' },
+        ].map(command => window.commonAgent.execute(command))));
+        for (const result of denied) {
+          assert.equal(result.ok, false); assert.ok(['AGENT_DISABLED', 'GRANT_REVOKED', 'PERMISSION_DENIED'].includes(result.error.code));
+        }
         assert.equal(await host.getByText('Revoked annotation', { exact: true }).count(), 0);
         await host.getByRole('button', { name: 'Close agent tools', exact: true }).click();
       });

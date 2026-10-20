@@ -74,10 +74,10 @@ Put Common beside your product as an inline panel or a floating workspace.
 `mountCommon` loads the interface in a same-origin iframe. The host keeps its
 routes, authentication, and listener. Common adds no second port or UI framework.
 
-Download the module and checksum from the [v1.8.1 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.8.1),
+Download the module and checksum from the [v1.9.0 release](https://github.com/alexwelcing/common-workspace/releases/tag/v1.9.0),
 or obtain both from your administrator. Release assets require repository read
 access. Install your downloaded archive with
-`bun add /absolute/path/common-workspace-0.8.1.tgz`.
+`bun add /absolute/path/common-workspace-0.9.0.tgz`.
 
 Follow the [integration guide](docs/embedding.md), or run the
 [complete Bun example](examples/bun-embed/README.md). The package includes its

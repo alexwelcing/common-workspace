@@ -1,3 +1,5 @@
+import { DISCOVERY_LIMITS, searchCanvas, readCanvasContent } from './agent-discovery.js';
+
 const VERSION = '1';
 const MAX_BATCH = 50;
 const MAX_COMMAND_BYTES = 3 * 1024 * 1024;
@@ -16,7 +18,8 @@ const DEFAULTS = {
   diagram: { width: 440, height: 300, title: 'Diagram', language: 'mermaid', source: '' },
 };
 const SCHEMAS = {
-  'canvas.inspect': ['includeImageData'], 'canvas.add': ['entity'], 'canvas.update': ['id', 'patch'],
+  'canvas.inspect': ['includeImageData'], 'canvas.search': ['query', 'types', 'selectedOnly', 'offset', 'limit'],
+  'canvas.read': ['id', 'field', 'offset', 'limit'], 'canvas.add': ['entity'], 'canvas.update': ['id', 'patch'],
   'canvas.remove': ['id'], 'canvas.layer': ['id', 'position'], 'canvas.lock': ['id', 'locked'],
   'view.focus': ['id', 'bounds'], 'view.fit': [],
   'image.add': ['dataUrl', 'title', 'x', 'y', 'width', 'height'],
@@ -33,7 +36,7 @@ export const AGENT_CAPABILITIES = Object.freeze({
 const ACTION_CAPABILITIES = Object.fromEntries(Object.keys(SCHEMAS).map(action => [action,
   action === 'recording.stop' ? ['recording'] : action === 'recording.start' ? ['inspect', 'media-capture', 'recording']
     : action.startsWith('recording.') ? ['inspect', 'recording'] : action === 'capture.snapshot' ? ['inspect', 'media-capture']
-      : ['canvas.inspect', 'canvas.export'].includes(action) ? ['inspect'] : ['inspect', 'canvas-write'],
+      : ['canvas.inspect', 'canvas.search', 'canvas.read', 'canvas.export'].includes(action) ? ['inspect'] : ['inspect', 'canvas-write'],
 ]));
 const DEFAULT_GRANTS = ['inspect', 'canvas-write'];
 const GRANT_TTL_MS = 15 * 60_000;
@@ -149,15 +152,22 @@ export function getAgentToolDefinitions() {
   const properties = {
     ...content, id, requestId: { ...id, description: 'Optional idempotency key within this permission grant and canvas session.' },
     includeImageData: { type: 'boolean', default: false },
+    query: { type: 'string', maxLength: DISCOVERY_LIMITS.queryCharacters, description: 'Case-insensitive words matched across titles, text, and diagram source. Every word must match. Empty lists objects.' },
+    types: { type: 'array', minItems: 1, maxItems: TYPES.size + 1, uniqueItems: true, items: { type: 'string', enum: [...TYPES, 'screen'] } },
+    selectedOnly: { type: 'boolean', default: false, description: 'Limit results to the object selected in this browser.' },
+    offset: { type: 'integer', minimum: 0, maximum: DISCOVERY_LIMITS.offset, default: 0, description: 'Continue with nextOffset from the previous response.' },
+    field: { type: 'string', enum: ['text', 'source', 'title'], description: 'Exact content to read. Defaults to source for diagrams and text for other objects.' },
     entity: { type: 'object', additionalProperties: false, properties: { ...content, id, type: { type: 'string', enum: [...TYPES] } }, required: ['type'], description: 'Only supported canvas fields. Coordinates and sizes have defaults; images require url. Screen objects and ownership fields are managed by the app.' },
     patch: { type: 'object', minProperties: 1, additionalProperties: false, properties: content },
     position: { type: 'string', enum: ['front', 'back', 'forward', 'backward'] }, bounds: box, dataUrl: raster,
     steps: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'object', additionalProperties: false, properties: { title: { type: 'string', minLength: 1, maxLength: 200 }, text: { type: 'string', maxLength: 5000 }, targetId: id, bounds: box }, required: ['title'], not: { required: ['targetId', 'bounds'] } } },
     download: { type: 'boolean', default: false }, format: { type: 'string', enum: ['svg', 'json'], default: 'svg' },
   };
-  const required = { 'canvas.add': ['entity'], 'canvas.update': ['id', 'patch'], 'canvas.remove': ['id'], 'canvas.layer': ['id', 'position'], 'canvas.lock': ['id', 'locked'], 'image.add': ['dataUrl'], 'walkthrough.load': ['steps'], 'recording.start': ['source'], 'recording.download': ['id'] };
+  const required = { 'canvas.read': ['id'], 'canvas.add': ['entity'], 'canvas.update': ['id', 'patch'], 'canvas.remove': ['id'], 'canvas.layer': ['id', 'position'], 'canvas.lock': ['id', 'locked'], 'image.add': ['dataUrl'], 'walkthrough.load': ['steps'], 'recording.start': ['source'], 'recording.download': ['id'] };
   const descriptions = {
-    'canvas.inspect': 'Read the current shared canvas, participants, and view. Embedded image data is omitted unless explicitly requested.',
+    'canvas.inspect': 'Read the complete current canvas, participants, and view. Use for full-state integration; choose canvas search to find objects with compact results.',
+    'canvas.search': 'Find objects on the current canvas and return compact previews with reusable IDs. Use to discover relevant content or inspect the current selection before reading or editing.',
+    'canvas.read': 'Read exact text from one canvas object in small pages. Use after canvas search when you need complete wording or diagram source for an explanation or edit.',
     'canvas.add': 'Add text, a note, a shape, a drawing, an embedded image, or a diagram to the shared canvas.',
     'canvas.update': 'Patch supported fields of one canvas object. Respects screen ownership and position locks.',
     'canvas.remove': 'Remove one editable object from the shared canvas.', 'canvas.layer': 'Move one editable object forward, backward, to the front, or to the back.',
@@ -172,12 +182,15 @@ export function getAgentToolDefinitions() {
   };
   return Object.keys(SCHEMAS).map(action => {
     const args = Object.fromEntries([...SCHEMAS[action], 'requestId'].map(key => [key,
-      action === 'recording.start' && key === 'source' ? { type: 'string', enum: ['canvas', 'window'] } : properties[key],
+      key === 'limit' ? { type: 'integer', minimum: 1, maximum: action === 'canvas.search' ? DISCOVERY_LIMITS.searchPage : DISCOVERY_LIMITS.readPageCharacters,
+        default: action === 'canvas.search' ? DISCOVERY_LIMITS.searchDefaultPage : DISCOVERY_LIMITS.readDefaultCharacters,
+        description: action === 'canvas.search' ? 'Maximum objects in this page. Responses may contain fewer to stay compact.' : 'Maximum UTF-16 characters in this page. Follow nextOffset if more remains.' }
+        : action === 'recording.start' && key === 'source' ? { type: 'string', enum: ['canvas', 'window'] } : properties[key],
     ]));
     const inputSchema = { type: 'object', additionalProperties: false, properties: args, ...(required[action] ? { required: required[action] } : {}) };
     if (action === 'view.focus') inputSchema.oneOf = [{ required: ['id'], not: { required: ['bounds'] } }, { required: ['bounds'], not: { required: ['id'] } }];
     return clone({ name: `common_${action.replaceAll('.', '_')}`, action, description: descriptions[action], inputSchema,
-      capabilities: ACTION_CAPABILITIES[action], annotations: { readOnlyHint: ['canvas.inspect', 'recording.list'].includes(action), untrustedContentHint: true, consequentialHint: false } });
+      capabilities: ACTION_CAPABILITIES[action], annotations: { readOnlyHint: ['canvas.inspect', 'canvas.search', 'canvas.read', 'recording.list'].includes(action), untrustedContentHint: true, consequentialHint: false } });
   });
 }
 
@@ -205,6 +218,10 @@ function boolean(value, label, required = false) {
 }
 function number(value, max, label, positive = false) {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > max || (positive && value <= 0)) fail('INVALID_COMMAND', `${label} must be a finite ${positive ? 'positive ' : ''}number within ${max}.`);
+}
+function pageInteger(value, maximum, label, minimum = 0) {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value < minimum || value > maximum) fail('INVALID_COMMAND', `${label} must be an integer between ${minimum} and ${maximum}.`);
 }
 function bounds(value) {
   keys(value, ['x', 'y', 'width', 'height'], 'Bounds');
@@ -285,8 +302,23 @@ function normalize(input) {
   string(command.requestId, 100, 'Request id', false);
   if (command.requestId !== undefined && !command.requestId.trim()) fail('INVALID_COMMAND', 'Request id cannot be empty.');
   const action = command.action;
-  if (['canvas.update', 'canvas.remove', 'canvas.layer', 'canvas.lock', 'recording.download'].includes(action)) string(command.id, 100, 'Object id');
+  if (['canvas.read', 'canvas.update', 'canvas.remove', 'canvas.layer', 'canvas.lock', 'recording.download'].includes(action)) string(command.id, 100, 'Object id');
   if (action === 'canvas.inspect') boolean(command.includeImageData, 'Include image data');
+  if (action === 'canvas.search' || action === 'canvas.read') {
+    pageInteger(command.offset, DISCOVERY_LIMITS.offset, 'Page offset');
+    pageInteger(command.limit, action === 'canvas.search' ? DISCOVERY_LIMITS.searchPage : DISCOVERY_LIMITS.readPageCharacters, 'Page limit', 1);
+  }
+  if (action === 'canvas.search') {
+    string(command.query, DISCOVERY_LIMITS.queryCharacters, 'Search query', false);
+    boolean(command.selectedOnly, 'Selected only');
+    if (command.types !== undefined && (!Array.isArray(command.types) || !command.types.length || command.types.length > TYPES.size + 1
+      || new Set(command.types).size !== command.types.length || command.types.some(type => !TYPES.has(type) && type !== 'screen'))) {
+      fail('INVALID_COMMAND', 'Search types must be a nonempty list of unique canvas object types. Use describe() for supported types.');
+    }
+  }
+  if (action === 'canvas.read' && command.field !== undefined && !['text', 'source', 'title'].includes(command.field)) {
+    fail('INVALID_COMMAND', 'Read field must be text, source, or title. Omit it for the object’s default content.');
+  }
   if (action === 'canvas.add') fields(command.entity, { creation: true, type: command.entity?.type });
   if (action === 'canvas.update') fields(command.patch);
   if (action === 'canvas.layer' && !['front', 'back', 'forward', 'backward'].includes(command.position)) fail('INVALID_COMMAND', 'Layer position must be front, back, forward, or backward.');
@@ -377,7 +409,9 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
     } catch (error) { return envelope(error); }
   }
   function describe() {
-    return { version: VERSION, enabled: !!context().enabled, actions: clone(SCHEMAS), capabilities: clone(AGENT_CAPABILITIES), actionCapabilities: clone(ACTION_CAPABILITIES), grants: grants.state(), tools: getAgentToolDefinitions(), limits: { batch: MAX_BATCH, requestCache: 100, imageDataUrlCharacters: IMAGE_LIMIT, walkthroughSteps: 50, grantDurationMs: GRANT_TTL_MS, maxGrantDurationMs: MAX_GRANT_TTL_MS },
+    return { version: VERSION, enabled: !!context().enabled, actions: clone(SCHEMAS), capabilities: clone(AGENT_CAPABILITIES), actionCapabilities: clone(ACTION_CAPABILITIES), grants: grants.state(), tools: getAgentToolDefinitions(), limits: { batch: MAX_BATCH, requestCache: 100, imageDataUrlCharacters: IMAGE_LIMIT, walkthroughSteps: 50, grantDurationMs: GRANT_TTL_MS, maxGrantDurationMs: MAX_GRANT_TTL_MS,
+      searchQueryCharacters: DISCOVERY_LIMITS.queryCharacters, searchPage: DISCOVERY_LIMITS.searchPage,
+      readPageCharacters: DISCOVERY_LIMITS.readPageCharacters, discoveryResponseCharacters: DISCOVERY_LIMITS.responseCharacters },
       command: '{action, requestId?, ...arguments}', examples: [{ action: 'canvas.add', entity: { type: 'text', text: 'Product walkthrough', x: 40, y: 40 } }, { action: 'view.focus', id: 'object-id' }],
       notes: ['Enable Agent tools in the local browser first.', 'Use requestId for idempotent retries in the same session.', 'Batch validates all command shapes first and runs sequentially; execution failures do not roll back earlier commands. Session changes, disabled Agent tools, or disconnection abort the remaining commands.', 'Window recording uses an existing user-approved screen share. Image generation happens in the agent; image.add imports its raster output.', 'Position locks prevent geometry edits. Screen objects are created by browser screen sharing.'] };
   }
@@ -400,6 +434,12 @@ export function createAgentAPI({ getBoard, getModel, getContext, recording, walk
   async function run(command, ctx, isAllowed) {
     const model = getModel(); const board = getBoard(); const action = command.action;
     if (action === 'canvas.inspect') return state({ includeImageData: command.includeImageData ?? false });
+    if (action === 'canvas.search') return searchCanvas(model.all(), board.selectedId, command);
+    if (action === 'canvas.read') {
+      const entity = model.get(command.id);
+      if (!entity) fail('NOT_FOUND', 'The canvas object was not found. Use canvas.search to find a current object id.');
+      return readCanvasContent(entity, command);
+    }
     if (action === 'canvas.add' || action === 'image.add') {
       const input = action === 'canvas.add' ? command.entity : { type: 'image', url: command.dataUrl, ...Object.fromEntries(['title', 'x', 'y', 'width', 'height'].filter(key => command[key] !== undefined).map(key => [key, command[key]])) };
       const entity = { ...DEFAULTS[input.type], x: 0, y: 0, ...input, id: input.id || crypto.randomUUID() };

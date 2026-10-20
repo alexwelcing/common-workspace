@@ -36,7 +36,12 @@
       "global": "window.commonAgent",
       "window_scope": "Common's iframe when embedded; Common's top-level window when standalone",
       "version": "1",
-      "methods": ["describe", "state", "execute", "batch"],
+      "methods": [
+        "describe",
+        "state",
+        "execute",
+        "batch"
+      ],
       "command_field": "action"
     },
     "web_mcp": {
@@ -49,6 +54,8 @@
     }
   },
   "actions": [
+    "canvas.search",
+    "canvas.read",
     "canvas.inspect",
     "canvas.add",
     "canvas.update",
@@ -72,8 +79,16 @@
   "access": {
     "scope": "Current browser tab and its admitted canvas session",
     "editing": "Disabled by default; select timed capabilities in the visible Agent tools controls",
-    "capabilities": ["inspect", "canvas-write", "media-capture", "recording"],
-    "default_capabilities": ["inspect", "canvas-write"],
+    "capabilities": [
+      "inspect",
+      "canvas-write",
+      "media-capture",
+      "recording"
+    ],
+    "default_capabilities": [
+      "inspect",
+      "canvas-write"
+    ],
     "default_grant_minutes": 15,
     "maximum_grant_minutes": 60,
     "revocation": "Expiry, user revocation, disconnection, reload, or canvas session change ends access",
@@ -81,5 +96,28 @@
     "image_generation": "External agent capability; import generated raster output",
     "recordings": "Video-only local browser blobs; download before reload",
     "remote_mcp_endpoint": null
+  },
+  "documentation_map": "../llms.txt",
+  "manifest_type": "Common-specific browser interface discovery; not an A2A Agent Card",
+  "content_discovery": {
+    "scope": "Current admitted canvas; active board only in Space & Time",
+    "search": {
+      "action": "canvas.search",
+      "webmcp_tool": "common_canvas_search",
+      "matches": "Literal case-insensitive words across title, text, and diagram source",
+      "filters": [
+        "types",
+        "selectedOnly"
+      ]
+    },
+    "read": {
+      "action": "canvas.read",
+      "webmcp_tool": "common_canvas_read",
+      "content": "Exact pages of one object text, title, or diagram source"
+    },
+    "capability": "inspect",
+    "pagination": "Repeat the same request with returned nextOffset; null means the end. Pages reflect live content, not a frozen snapshot.",
+    "max_response_characters": 6000,
+    "privacy": "Public discovery files describe interfaces; canvas content requires admission and a current human inspection grant"
   }
 }

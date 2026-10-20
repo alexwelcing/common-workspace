@@ -62,7 +62,7 @@ export async function createApp(options = {}) {
         if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) throw httpError(403, 'FORBIDDEN', 'Invalid path.');
         return readFile(resolved);
       }
-      const extensions = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.wasm': 'application/wasm', '.json': 'application/json', '.woff2': 'font/woff2' };
+      const extensions = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon', '.wasm': 'application/wasm', '.json': 'application/json', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2' };
       let asset = filename;
       let content;
       try { content = await readStatic(asset); }
