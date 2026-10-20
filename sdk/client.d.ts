@@ -14,6 +14,24 @@ export interface CommonEntity extends CommonEntityFields {
   id: string; type: CommonEditableEntityType | 'screen'; orderKey?: string; z?: number;
   participantId?: string; externalConsent?: boolean; hasImageData?: boolean; imageDataLength?: number;
 }
+/** Compact discovery result. Image payloads, drawing points, and stream identifiers are omitted. */
+export interface CommonEntitySummary {
+  id: string; type: CommonEditableEntityType | 'screen'; bounds: CommonBounds;
+  title?: string; snippet?: string; locked?: boolean; selected?: boolean;
+}
+/** Live results from the active board, rather than a frozen snapshot. */
+export interface CommonCanvasSearchResult {
+  items: CommonEntitySummary[]; total: number; offset: number;
+  /** Follow this offset with the same filters. Null means the current results are exhausted. */
+  nextOffset: number | null;
+}
+export type CommonCanvasReadField = 'text' | 'source' | 'title';
+export interface CommonCanvasReadResult {
+  id: string; type: CommonEditableEntityType | 'screen'; field: CommonCanvasReadField;
+  /** Exact field substring. Offsets and total count JavaScript UTF-16 code units. */
+  text: string; total: number; offset: number;
+  nextOffset: number | null;
+}
 export type CommonNewEntity = Partial<CommonEntityFields> & { type: CommonEditableEntityType; id?: string };
 export type CommonWalkthroughStep = { title: string; text?: string } & (
   | { targetId: string; bounds?: never }
@@ -24,6 +42,26 @@ interface CommandId { requestId?: string; }
 /** Plain JSON only. Runtime authorization and bounded-value validation still apply. */
 export type CommonCommand = CommandId & (
   | { action: 'canvas.inspect'; includeImageData?: boolean }
+  | {
+    action: 'canvas.search';
+    /** Up to 200 characters. Case-insensitive literal tokens match title, text, and diagram source. */
+    query?: string;
+    types?: Array<CommonEditableEntityType | 'screen'>;
+    selectedOnly?: boolean;
+    /** Integer from 0 to 100,000. */
+    offset?: number;
+    /** 1–12 items; default 6. A 6,000-character envelope budget may reduce the page; follow nextOffset. */
+    limit?: number;
+  }
+  | {
+    action: 'canvas.read'; id: string;
+    /** Defaults to source for diagrams and text for other objects. */
+    field?: CommonCanvasReadField;
+    /** Integer from 0 to 100,000. */
+    offset?: number;
+    /** 1–2,000 characters; default 1,000. The envelope budget may reduce the page; follow nextOffset. */
+    limit?: number;
+  }
   | { action: 'canvas.add'; entity: CommonNewEntity }
   | { action: 'canvas.update'; id: string; patch: Partial<CommonEntityFields> }
   | { action: 'canvas.remove'; id: string }

@@ -13,6 +13,8 @@ const GRANT_PRESETS = [
   ['tour', 'Record a tour', ['inspect', 'canvas-write', 'media-capture', 'recording']],
 ];
 const EXAMPLES = {
+  search: { action: 'canvas.search', query: 'walkthrough' },
+  selection: { action: 'canvas.search', selectedOnly: true },
   text: {
     action: 'canvas.add',
     entity: { id: 'agent-intro', type: 'text', text: 'Product walkthrough', x: 120, y: 100, width: 440, height: 100, color: '#305e48' },
@@ -228,7 +230,7 @@ export function installAgentTools({
   exampleLabel.htmlFor = 'agent-example';
   const examples = element('select');
   examples.id = 'agent-example';
-  for (const [value, title] of [['text', 'Add text'], ['annotation', 'Add an annotation'], ['walkthrough', 'Start a walkthrough']]) {
+  for (const [value, title] of [['text', 'Add text'], ['search', 'Find objects'], ['selection', 'Find the selected object'], ['annotation', 'Add an annotation'], ['walkthrough', 'Start a walkthrough']]) {
     const option = element('option', '', title);
     option.value = value;
     examples.append(option);

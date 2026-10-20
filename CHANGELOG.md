@@ -1,5 +1,14 @@
 # Common releases
 
+## 1.9.0 — 2026-10-20
+
+Find the right canvas content before asking an agent to change it. Included in portable module **0.9.0**.
+
+- Add inspect-only `canvas.search` for literal text discovery, type filters, and the current local selection. Results include object IDs, short matched snippets, and geometry without image data or screen-stream identifiers.
+- Add `canvas.read` for exact, paginated text, titles, and diagram source. Search and read keep complete response envelopes below 6,000 characters and provide continuation offsets.
+- Publish both tools through the existing WebMCP adapter, browser API, generated tool manifest, and typed embedding SDK. Existing inspection and export behavior remains compatible.
+- Add a mount-relative `llms.txt` documentation map, discovery metadata, and search examples in Agent tools. Discovery covers public integration instructions; private canvas content remains behind the current tab's human-approved grant.
+
 ## 1.8.1 — 2026-10-19
 
 Fix classic recording controls on a fresh page, including portable module **0.8.1**.

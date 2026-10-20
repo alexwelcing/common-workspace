@@ -6,6 +6,7 @@ Common exposes the current browser canvas through `window.commonAgent` and a vis
 
 - Start with the [browser-agent setup instructions](agents.md#begin-in-the-users-tab) to join and request access in the user's tab.
 - Use [methods and results](#methods-and-results) and the [command reference](#commands) when writing commands.
+- Use [search and read](#search-and-read-canvas-content) to locate objects and retrieve exact content without reading the entire canvas.
 - Try the [agent workflow recipes](agent-examples.md) for feature demos, bug evidence, image comparisons, incident maps, embedded explanations, and an A2A design relay.
 - Follow the [self-hosting guide](self-hosting.html) for laptop and team setup.
 
@@ -13,7 +14,7 @@ Use this API after joining a room or opening a personal canvas in the browser. R
 
 ## Discovery and embedded installations
 
-Discovery files are served at [`agents.md`](agents.md) and [`.well-known/agent.json`](.well-known/agent.json), relative to the current Common mount, including local and embedded installations. [`agent-tools.json`](agent-tools.json) supplies machine-readable tool descriptions, JSON input schemas, and required capabilities from the same registry used by the browser adapter. For example, the default embedded mount serves schemas at `/__common/agent-tools.json`; keep requests beneath that mount. These files describe the interfaces; they do not imply that every agent client automatically discovers them.
+Start at [`llms.txt`](llms.txt) for a compact documentation map, [`agents.md`](agents.md) for browser operation, or [`.well-known/agent.json`](.well-known/agent.json) for Common-specific discovery metadata. The manifest is not an A2A Agent Card. [`agent-tools.json`](agent-tools.json) supplies machine-readable tool descriptions, JSON input schemas, and required capabilities from the same registry used by the browser adapter. All files are relative to the current Common mount, including local and embedded installations. For example, the default embedded mount serves its map at `/__common/llms.txt` and schemas at `/__common/agent-tools.json`; keep requests beneath that mount. These public files describe the interfaces and contain no private canvas content. They do not imply that every agent client automatically discovers them.
 
 In an embedded installation, `window.commonAgent` and **Agent tools** belong to the Common iframe. The host's `mountCommon` controller exposes asynchronous `agent.describe()`, `agent.state()`, `agent.execute()`, and `agent.batch()` proxies; no parent-window global or automatic permission grant is installed.
 
@@ -31,7 +32,7 @@ For tools that support DOM actions without page JavaScript, fill **Agent command
 
 | Permission | Capability | Allows |
 | --- | --- | --- |
-| Read the canvas | `inspect` | Canvas content, participants, geometry, and SVG/JSON export; image bytes are redacted by default. |
+| Read the canvas | `inspect` | Canvas search, exact text reads, content, participants, geometry, and SVG/JSON export; image bytes are redacted by default. |
 | Edit and present | `canvas-write` | Canvas edits, image imports, viewport focus, and walkthrough controls; also requires inspection. |
 | Capture canvas and shared windows | `media-capture` | PNG capture and use of an already approved local window; also requires inspection. |
 | Manage recordings | `recording` | Recording metadata/downloads and stopping a clip; starting also requires media capture and inspection. |
@@ -99,12 +100,16 @@ When a browser implements `document.modelContext.registerTool`, Common registers
 
 Tool names use `common_` plus the action with periods changed to underscores, such as `common_canvas_add`. Tool arguments omit `action`: `{entity:{type:"text",text:"Walkthrough"},requestId:"intro-1"}` maps to the normal `canvas.add` command. Tool execution returns a JSON string containing the same success/error envelope. Consult [agent-tools.json](agent-tools.json) beneath the current mount rather than guessing fields. This browser integration is experimental and creates no remote MCP HTTP endpoint.
 
+For discovery, call `common_canvas_search` with a query or filters, then `common_canvas_read` with a returned object ID. Both require inspection permission. They return bounded pages; use `nextOffset` to continue. The full-state `canvas.inspect` and export interfaces remain available when a client needs their larger payloads.
+
 ## Commands
 
-Coordinates use canvas world units, independent of pan and zoom. Objects have `x`, `y`, `width`, and `height`; coordinates range from −100000 to 100000, and sizes must be positive and no greater than 10000. Use object IDs returned by inspection or creation. Canvas object changes synchronize to admitted peers; local view focus, walkthrough playback, snapshots, and recordings do not.
+Coordinates use canvas world units, independent of pan and zoom. Objects have `x`, `y`, `width`, and `height`; coordinates range from −100000 to 100000, and sizes must be positive and no greater than 10000. Use object IDs returned by search, inspection, or creation. Canvas object changes synchronize to admitted peers; local view focus, walkthrough playback, snapshots, and recordings do not.
 
 | Action | Fields | Effect |
 | --- | --- | --- |
+| `canvas.search` | `query?`, `types?`, `selectedOnly?`, `offset?`, `limit?` | Find compact object summaries on the active canvas; follow `nextOffset` for more. |
+| `canvas.read` | `id`, `field?`, `offset?`, `limit?` | Read an exact page of one object's text, title, or diagram source. |
 | `canvas.inspect` | `includeImageData?` | Read current canvas state. Default inspection omits inline image data. |
 | `canvas.add` | `entity` | Create a supported canvas object. |
 | `canvas.update` | `id`, `patch` | Change allowed fields on an existing object. |
@@ -126,6 +131,38 @@ Coordinates use canvas world units, independent of pan and zoom. Objects have `x
 | `recording.download` | `id` | Download a retained recording. |
 
 For an exact runtime description, call `describe()`. Invalid or unsupported fields return errors rather than granting broader browser access.
+
+### Search and read canvas content
+
+Use `canvas.search` to find relevant objects before reading or editing them. Search runs locally against the current admitted canvas, or the active board in Space & Time. It does not search other rooms, inactive boards, timeline history, shared-window pixels, or external services. Search and read both use the `inspect` capability and leave canvas content, selection, and camera unchanged.
+
+| Search field | Meaning |
+| --- | --- |
+| `query?` | Up to 200 characters. Case-insensitive, literal words separated by whitespace; every word must occur across the object's title, text, or diagram source. Omit or leave blank to browse. No regular expressions. |
+| `types?` | Nonempty array of distinct types: `text`, `sticky`, `rectangle`, `ellipse`, `arrow`, `draw`, `image`, `diagram`, or `screen`. Omit for all types. |
+| `selectedOnly?` | Default `false`. When `true`, search only the object selected in this tab; an empty selection returns no items. |
+| `offset?` | Integer from 0 to 100000, default 0. Continue with the previous response's `nextOffset`. |
+| `limit?` | Requested item count, 1–12, default 6. The response budget can reduce the count. |
+
+```json
+{"action":"canvas.search","query":"checkout confirmation","types":["sticky","diagram"],"limit":3}
+```
+
+A successful response has `result: {items, total, offset, nextOffset}`. Each item includes `id`, `type`, compact `bounds`, `locked`, and `selected`, with optional `title` and `snippet`. Results follow canvas layer order, from back to front. `total` is the number of matching objects. Summaries omit image bytes, drawing points, and private screen transport identifiers. Snippets help locate a match; they are previews, not exact content to use as a replacement when editing.
+
+Use an item's ID with `canvas.read`:
+
+```json
+{"action":"canvas.read","id":"checkout-flow","field":"source","offset":0,"limit":1000}
+```
+
+Replace the example ID with the ID returned by search. `field` accepts `text`, `source`, or `title`; the default is `source` for diagrams and `text` for other objects. `offset` accepts 0–100000. `limit` requests 1–2000 characters, default 1000. The response has `result: {id, type, field, text, total, offset, nextOffset}`. `text` is the exact substring, including whitespace and line breaks; `total` is the selected field's length. Offsets and lengths use JavaScript UTF-16 string positions. An absent field returns empty text and `total: 0`; a missing object returns `NOT_FOUND`.
+
+For both commands, each complete serialized success envelope fits within 6000 characters. JSON escaping counts toward that budget, so a page can contain fewer items or characters than requested. A numeric `nextOffset` indicates where to continue; `null` means the end. Repeat the same query, filters, ID, and field with that offset. Do not calculate the next offset from your requested `limit` or silently treat a partial read as the whole object.
+
+Pages reflect live content rather than a frozen snapshot. A teammate can add, remove, or edit objects between requests. Re-read a target before an important edit, and check every response's `ok`. Omit `requestId` for a fresh search or read; supplying one reuses the normal identical-request cache within its grant/session. Expiry, revocation, or a board/session change stops access and requires a new human grant.
+
+After finding an object, `view.focus` with its `id` frames it only in this browser. `canvas.update` changes its shared content and additionally requires `canvas-write`. Existing `canvas.inspect`, `state()`, and SVG/JSON export retain their full-state behavior for clients that need it; their payloads do not use this pagination budget.
 
 ### Text, shapes, drawings, and diagrams
 

@@ -30,7 +30,7 @@
     {
       "name": "common_canvas_inspect",
       "action": "canvas.inspect",
-      "description": "Read the current shared canvas, participants, and view. Embedded image data is omitted unless explicitly requested.",
+      "description": "Read the complete current canvas, participants, and view. Use for full-state integration; choose canvas search to find objects with compact results.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -46,6 +46,131 @@
             "description": "Optional idempotency key within this permission grant and canvas session."
           }
         }
+      },
+      "capabilities": [
+        "inspect"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_canvas_search",
+      "action": "canvas.search",
+      "description": "Find objects on the current canvas and return compact previews with reusable IDs. Use to discover relevant content or inspect the current selection before reading or editing.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Case-insensitive words matched across titles, text, and diagram source. Every word must match. Empty lists objects."
+          },
+          "types": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 9,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "text",
+                "sticky",
+                "rectangle",
+                "ellipse",
+                "arrow",
+                "draw",
+                "image",
+                "diagram",
+                "screen"
+              ]
+            }
+          },
+          "selectedOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "Limit results to the object selected in this browser."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Continue with nextOffset from the previous response."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12,
+            "default": 6,
+            "description": "Maximum objects in this page. Responses may contain fewer to stay compact."
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        }
+      },
+      "capabilities": [
+        "inspect"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "untrustedContentHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "common_canvas_read",
+      "action": "canvas.read",
+      "description": "Read exact text from one canvas object in small pages. Use after canvas search when you need complete wording or diagram source for an explanation or edit.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "field": {
+            "type": "string",
+            "enum": [
+              "text",
+              "source",
+              "title"
+            ],
+            "description": "Exact content to read. Defaults to source for diagrams and text for other objects."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Continue with nextOffset from the previous response."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000,
+            "default": 1000,
+            "description": "Maximum UTF-16 characters in this page. Follow nextOffset if more remains."
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Optional idempotency key within this permission grant and canvas session."
+          }
+        },
+        "required": [
+          "id"
+        ]
       },
       "capabilities": [
         "inspect"

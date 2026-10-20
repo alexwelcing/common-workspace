@@ -22,6 +22,7 @@ the part you need and get back to your work.
 | Make something with an agent | [Six practical recipes](../public/agent-examples.md) |
 | Choose the right agent interface | [Agent API entry point](../AGENT_API.md) |
 | Look up canvas commands and grants | [Browser agent API reference](../public/agent-api.md) |
+| Discover agent interfaces or search active canvas content | [Public discovery map](../public/llms.txt) and [search/read reference](../public/agent-api.md#search-and-read-canvas-content) |
 | Understand room admission and signaling | [Room protocol reference](../API.md) |
 | Convert local recordings or PNG frames to MP4 | [Media worker](../media/README.md) |
 

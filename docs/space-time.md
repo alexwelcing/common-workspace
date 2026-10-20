@@ -1,6 +1,6 @@
 # Space & Time
 
-Space & Time is a regular optional experience in Common 1.8.1 and portable module 0.8.1. Classic remains the default. Choose Space & Time for multiple boards, board templates, a 3D overview, and automatic history; choose classic for chat, guided participant checklists, and featured-screen rotation. Space & Time does not yet have those classic session controls. It loads only when selected and requires no extra account or hosting service.
+Space & Time is a regular optional experience in Common 1.9.0 and portable module 0.9.0. Classic remains the default. Choose Space & Time for multiple boards, board templates, a 3D overview, and automatic history; choose classic for chat, guided participant checklists, and featured-screen rotation. Space & Time does not yet have those classic session controls. It loads only when selected and requires no extra account or hosting service.
 
 ## Open it
 

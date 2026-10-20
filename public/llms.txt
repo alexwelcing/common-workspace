@@ -1,0 +1,22 @@
+# Common
+
+> A shared browser canvas for product walkthroughs, annotations, diagrams, imported images, and local recordings. Runs standalone or inside an existing Bun application.
+
+Use the user's current Common installation and browser tab. Resolve the relative links below against this file's URL, including when Common is mounted beneath a path such as /__common/. Local and embedded installations have their own rooms.
+
+## Start here
+
+- [Browser-agent guide](agents.md): Join normally, request a timed permission grant, and operate the visible controls or browser API.
+- [Canvas API reference](agent-api.md): Exact commands, capabilities, results, errors, and limits.
+- [Tool schemas](agent-tools.json): Generated JSON input schemas and capability requirements for the current application.
+- [Discovery manifest](.well-known/agent.json): Common-specific interface metadata; not an A2A Agent Card.
+- [Workflow recipes](agent-examples.md): Product demos, bug evidence, image comparisons, and embedded explanations.
+- [Self-hosting guide](self-hosting.html): Run locally or on a private team network.
+
+## Find canvas content
+
+After the user grants inspection, call canvas.search to browse or search titles, text, and diagram source on the active canvas. Use returned IDs with canvas.read to retrieve exact text in bounded pages. Follow nextOffset until null; collaborators can change content between pages. Search stays inside the current admitted canvas and does not query other rooms or the web.
+
+Tools execute in the user's browser session through window.commonAgent, the visible Agent tools panel, or optional experimental WebMCP. In an embedded installation, the browser API belongs to Common's iframe; host applications can use the mount controller's asynchronous agent proxy. There is no remote MCP HTTP endpoint or A2A transport in this interface.
+
+Inspection, shared edits, capture, and recording require their granted capabilities. Access expires and can be revoked; tools cannot grant themselves access. Screen sharing also requires the person's native browser picker approval. Public discovery files contain interface documentation, not private room content.
