@@ -12,3 +12,7 @@ artifacts/
 
 .netlify/
 common-local-root.crt
+
+.wrangler/
+.dev.vars
+.dev.vars.*

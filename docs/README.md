@@ -11,7 +11,7 @@ the part you need and get back to your work.
 | Run a session, share windows, and organize the room | [Sessions and canvas tools](sessions.md) |
 | Use multiple boards, a 3D overview, and automatic history | [Space & Time](space-time.md) |
 | Run on a laptop or invite teammates over LAN/VPN | [Self-hosting walkthrough](../public/self-hosting.html) |
-| Configure hosting, network settings, and diagnostics | [Hosting and operations](hosting.md) |
+| Deploy to Cloudflare or configure local hosting, network settings, and diagnostics | [Hosting and operations](hosting.md) |
 
 ## Build with Common
 

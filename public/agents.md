@@ -1,6 +1,6 @@
 # Common for browser agents
 
-Common is a shared browser canvas for product walkthroughs, live windows, text, drawings, diagrams, generated image imports, and local recordings. Open the user's session at its current origin and mount path. A local or embedded installation has its own rooms; use its links and documentation without switching to a hosted instance or the host application's root. The [self-hosting guide](self-hosting.html) explains laptop and team setup.
+Common is a shared browser canvas for product walkthroughs, live windows, text, drawings, diagrams, generated image imports, and local recordings. Open the user's session at its current origin and mount path. A local or embedded installation has its own rooms; use its links and documentation without switching to a hosted instance or the host application's root. The primary hosted app uses Cloudflare Workers and SQLite-backed Durable Objects for temporary room coordination. Canvas documents, streams, and recordings remain in browsers. The [self-hosting guide](self-hosting.html) explains laptop and team setup.
 
 ## Find your starting point
 

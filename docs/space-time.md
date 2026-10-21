@@ -4,7 +4,7 @@ Space & Time is a regular optional experience in Common 1.10.0 and portable modu
 
 ## Open it
 
-Visit [Space & Time](https://commonwork.netlify.app/?experience=space), or add `?experience=space` to your local Common address, such as `http://localhost:3001/?experience=space`. For source development, use `http://localhost:5173/?experience=space` after `bun run dev`. The earlier `?beta=space` URL remains a supported alias. Local installation, HTTPS, and team networking follow the [existing instructions](../README.md#run-on-your-own-laptop).
+Visit [Space & Time](https://commonwork.aw-ab5.workers.dev/?experience=space), or add `?experience=space` to your local Common address, such as `http://localhost:3001/?experience=space`. For source development, use `http://localhost:5173/?experience=space` after `bun run dev`. The earlier `?beta=space` URL remains a supported alias. Local installation, HTTPS, and team networking follow the [existing instructions](../README.md#run-on-your-own-laptop).
 
 You start with a local workspace. Choose **Start a shared room** in the room-actions menu to bring teammates into a password-protected session. Keep your current boards or choose **Team walkthrough**, **Design review**, or **Open room**. Share the generated invitation and send the password separately. Invitations use `/room/<id>?experience=space`; room metadata also routes an ordinary room link to the right experience, taking precedence over a conflicting query parameter. The query parameter selects an interface, not an access permission.
 
@@ -47,7 +47,7 @@ Existing opt-in agent tools inspect and edit the active flat board, guide walkth
 
 ## Current boundaries
 
-Loro 1.16.4 provides the browser's WASM history engine. A workspace manifest and one document per board form the synchronization boundary. Connected browsers currently synchronize **all** board documents and their history; selective board loading is future work. The room service handles admission, presence, and signaling; it does not store spatial content. Chat is currently exposed only in classic. Hosted Netlify and standalone Bun use the same Space & Time frontend and native peer connections.
+Loro 1.16.4 provides the browser's WASM history engine. A workspace manifest and one document per board form the synchronization boundary. Connected browsers currently synchronize **all** board documents and their history; selective board loading is future work. The room service handles admission, presence, and signaling; it does not store spatial content. Chat is currently exposed only in classic. Hosted Cloudflare and standalone Bun use the same Space & Time frontend and native peer connections.
 
 | Limit | Current budget |
 | --- | --- |
