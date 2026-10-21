@@ -23,7 +23,7 @@ bunx playwright-core install chromium
 
 The check command never downloads a browser or starts Docker. Playwright Core is a development dependency, with no additional test framework.
 
-`bun run check` checks setup, runs lint, builds once, and starts a temporary loopback server. It creates and ends synthetic rooms, then stops its processes and removes their local data. It does not connect to your running app or Netlify deployment. `bun run test` is a compatibility alias for the same command.
+`bun run check` checks setup, runs lint, builds once, and starts a temporary loopback server. It creates and ends synthetic rooms, then stops its processes and removes their local data. It does not connect to your running app or a production deployment. `bun run test` is a compatibility alias for the same command.
 
 ### What the five journeys cover
 
@@ -47,21 +47,34 @@ There are no automatic retries. Missing browsers or a missing hosted database fa
 
 Password fields and invite links are masked in screenshots. Tokens, request bodies, storage dumps, raw SDP, and traces are not written. Artifacts contain synthetic check content, not a copy of an existing room.
 
-## Check both hosting adapters
+## Check the Cloudflare runtime
 
-CI uses the same five journeys against both the standalone Bun adapter and the Netlify polling adapter, with one built frontend and a disposable real Postgres schema:
+The primary hosted adapter runs on Cloudflare Workers with SQLite-backed Durable Objects. Check it locally through Wrangler, using an isolated local storage directory:
+
+```sh
+bun run check:cloudflare
+bun run check:cloudflare --browser
+```
+
+The first command exercises the native API, admission, and room storage boundary. `--browser` also runs the existing desktop/phone journeys against that Worker. It uses local Durable Objects and synthetic rooms, not a production account or the legacy Postgres harness. CI includes the native runtime check with `--browser`. Use this check when changing `cloudflare/`, Wrangler bindings/migrations, static-asset routing, or shared protocol behavior. Validate the standalone Bun adapter too when a change spans both implementations.
+
+A local pass does not prove a deployed binding, version, or real network works. After deployment, verify `/api/health`, `/api/config`, the deployed Worker version, and the [two-browser walkthrough](../public/self-hosting.html#smoke-test) at the actual HTTPS origin.
+
+### Legacy Netlify compatibility
+
+The Netlify polling adapter remains available for compatibility and rollback checks. The existing hosted harness uses the same five journeys with one built frontend and a disposable real Postgres schema:
 
 ```sh
 # Configure COMMON_TEST_DATABASE_URL to a disposable Postgres database first.
 bun run check --all-adapters
 
-# Or investigate just the hosted adapter.
+# Or investigate just the legacy Netlify adapter.
 bun run check --hosted
 ```
 
-Set `COMMON_TEST_DATABASE_URL` to a **disposable** Postgres database. The hosted harness owns and drops a randomly named schema and never reads Netlify credentials. Never use a production database.
+`--all-adapters` covers standalone Bun plus legacy Netlify; it does not include Cloudflare. Set `COMMON_TEST_DATABASE_URL` to a **disposable** Postgres database. The hosted harness owns and drops a randomly named schema and never reads Netlify credentials. Never use a production database. These flags and the `hosted` deep-check scope retain their existing meaning.
 
-Use the adapter runs when changing their shared boundary; validate both before merging a change that spans them. CI uploads failure evidence for seven days and cancels superseded runs. The workflow runs on pull requests and pushes to `main`; feature-branch pushes and release tags do not trigger duplicate full runs.
+CI uploads failure evidence for seven days and cancels superseded runs. The workflow runs on pull requests and pushes to `main`; feature-branch pushes and release tags do not trigger duplicate full runs.
 
 ## Deeper checks when the change needs them
 
@@ -71,7 +84,7 @@ Choose an existing scope when the changed behavior needs closer investigation. T
 | --- | --- |
 | Shared document, ordering, merge or topology | `bun run check:deep canvas` |
 | Room protocol, local admission or polling transport | `bun run check:deep sessions` |
-| Hosted transactions, lease races or cross-room access | `bun run check:deep hosted` |
+| Legacy Netlify transactions, lease races or cross-room access | `bun run check:deep hosted` |
 | Capture lifecycle, video transport or local exports | `bun run check:deep media` |
 | Agent permissions, expiry or session boundaries | `bun run check:deep agents` |
 | Configuration, startup or diagnostics | `bun run check:deep runtime` |

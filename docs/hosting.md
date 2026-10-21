@@ -1,7 +1,7 @@
 # Hosting and operating Common
 
 Run Common on a laptop for a local team, keep a standalone Bun server behind HTTPS,
-or deploy the same frontend to Netlify. This guide covers the settings, storage,
+or deploy the same frontend to Cloudflare Workers. This guide covers the settings, storage,
 and network behavior behind those choices. For step-by-step laptop setup, start
 with the [self-hosting guide](../public/self-hosting.html).
 For an existing Bun application, use the [embedding guide](embedding.md).
@@ -29,7 +29,7 @@ bun run build:local
 bun run start
 ```
 
-`build:local` remains a compatibility build command. The served `/api/config` now determines transport and network policy, so you can move the built frontend between standalone and Netlify hosting without rebuilding it for a different transport. Bare `bun run start` uses your environment settings; set `COMMON_NETWORK_PROFILE=private` in `.env` for the organization's private profile.
+`build:local` remains a compatibility build command. The served `/api/config` now determines transport and network policy, so you can move the built frontend between standalone and Cloudflare hosting without rebuilding it for a different transport. Bare `bun run start` uses your environment settings; set `COMMON_NETWORK_PROFILE=private` in `.env` for the organization's private profile.
 
 Open http://localhost:3001. The server serves `dist/` and the API on the same port. See [API.md](../API.md) for the collaboration protocol.
 
@@ -47,17 +47,55 @@ Everyone, including the host, opens the same address, for example `https://192.1
 
 Fonts are bundled, and the private profile uses no default external STUN or PlantUML service. You can explicitly configure organization STUN/TURN or a diagram renderer. The standard profile retains public Google/Cloudflare STUN and the consented public PlantUML renderer; Mermaid stays local. Installation still needs dependencies, and private hosting does not overcome blocked peer connections. The guide explains the network boundaries and optional services.
 
-## Deploy to Netlify
+## Deploy to Cloudflare
 
-Import this repository from GitHub into your Netlify team. The committed `netlify.toml` pins Bun 1.4.3, builds the Vite/WASM frontend, publishes `dist`, and bundles the API, rate-limited room admission and scheduled cleanup functions. The hosted `/api/config` selects HTTP polling. Functions run on Node.js 22; they do not require a persistent Bun process or a separate WebSocket host.
+The primary hosted address is [commonwork.aw-ab5.workers.dev](https://commonwork.aw-ab5.workers.dev/). The committed `wrangler.jsonc` deploys `cloudflare/worker.mjs`, serves `dist/` through Worker Static Assets, and binds SQLite-backed `CommonRoom` and `CommonAdmission` Durable Objects. API routes run before asset routing. The frontend reads `/api/config` and uses the existing HTTP polling protocol; no persistent Bun server, Postgres service, or Netlify runtime credential is needed.
 
-`@netlify/database` and the committed SQL migrations provision the small room database during deployment. Netlify Database requires a credit-based plan; this setup does not change your account plan. If the team's plan does not support it, enable a supported database plan before importing. No canvas objects, images, or screen recordings are stored in the database.
+Each room has its own Durable Object for password admission, token hashes, presence, chat, and signaling. `CommonAdmission` provides the global room budget and IP-based create/join gates. The bindings and initial SQLite migration are versioned in Wrangler configuration. Keep migration tags stable and add a new migration when changing Durable Object classes; deployment configuration is not a room-data import.
 
-The default deployment connects browsers directly and requires no separate relay service. Standard mode uses public STUN to discover possible peer routes; STUN does not forward canvas content or video. Network settings are optional: keep the defaults for your team, and use **Connection details** to investigate a connection that fails on an actual device. See the [runtime settings](#standalone-bun-hosting) if your organization explicitly wants to configure its own discovery or relay service.
+### Connect GitHub Workers Builds
 
-After the first deploy, open the HTTPS site in two separate browser profiles, create a room, join its invite link, and check shared objects, chat, each person's window capture, and Watch/Pause controls. Verify the operating system picker and the networks and devices your team actually uses before wider use. The absence of a participant cap does not establish a supported room size or video audience.
+Connect this repository to a Cloudflare Worker and select `main` as the production branch. Use the repository root and these settings:
 
-For local Netlify development, authenticate the Netlify CLI, link the project, run `bun run dev:netlify`, then apply local migrations in a second terminal with `bunx netlify-cli@26.0.0 database migrations apply`. Netlify applies the committed migrations automatically on hosted deploys. The regular `bun run dev` uses the standalone Bun/WebSocket backend.
+| Setting | Value |
+| --- | --- |
+| Build command | `bun install --frozen-lockfile && bun run build` |
+| Deploy command | `bunx wrangler deploy` |
+| `BUN_VERSION` | `1.4.3` |
+| `SKIP_DEPENDENCY_INSTALL` | `1` |
+
+Dependency installation is explicit in the build command so the committed Bun lockfile is used. Wrangler is pinned in the repository. Workers Builds supplies its deployment authentication; runtime secrets belong on the Worker, not in the frontend build or Git history. For a local deploy from an authenticated Cloudflare account:
+
+```sh
+bun install --frozen-lockfile
+bun run build
+bun run deploy:cloudflare
+```
+
+Configure optional network variables from the [runtime settings](#standalone-bun-hosting) as Worker variables. Put credentials such as `TURN_SECRET`, `TURN_CREDENTIAL`, and `COMMON_OTLP_TOKEN` in Worker secrets using the dashboard or `bunx wrangler secret put NAME`. Never prefix secrets with `VITE_`. `public/_headers` supplies static-asset response headers; API responses receive their headers in the Worker. `COMMON_VERSION` exposes the deployed Worker version for request diagnostics, with an optional `COMMON_BUILD_ID` override.
+
+### Develop and verify the Worker
+
+```sh
+bun run build
+bun run dev:cloudflare
+```
+
+Wrangler runs the native Worker, Static Assets, and local SQLite-backed Durable Objects. This is a separate local room store; it does not inspect production rooms. Use `bun run check:cloudflare` for the native API/storage check and `bun run check:cloudflare --browser` to include the desktop/phone journeys. The regular `bun run dev` still uses the standalone Bun/WebSocket backend. See [validation](validation.md) for the adapter boundaries.
+
+After deploying, confirm the intended Worker version, `/api/health` reporting `platform: "cloudflare"`, and `/api/config` selecting polling. Then open the HTTPS site in two separate browser profiles, create a room, join its invite link, and check shared objects, chat, each person's window capture, and Watch/Pause controls. Verify the operating system picker and the networks and devices your team actually uses before wider use. A healthy API does not prove peer media works or establish a supported room size.
+
+The default deployment connects browsers directly and requires no separate relay service. Standard mode uses public STUN to discover possible peer routes; STUN does not forward canvas content or video. Use **Connection details** to investigate a connection that fails on an actual device before configuring a relay.
+
+### Moving from Netlify
+
+The Cloudflare and Netlify backends have separate room stores. Existing Netlify room IDs, passwords, and access tokens do not by themselves create a room on Cloudflare, and no automatic import is provided. Keep an active session on its original origin until participants finish; create new rooms on the Cloudflare address. Browser storage is also origin-specific: export Space & Time work as a `.common` archive from its original origin and import it at the new one. Download retained recordings before closing their tab. Do not treat deployment or a changed link as evidence that old sessions or local work migrated.
+
+### Legacy Netlify compatibility and rollback
+
+The Netlify adapter remains in `netlify/`, with `netlify.toml` and SQL migrations, for compatibility checks and rollback. It uses Functions on Node.js 22 and `@netlify/database` Postgres; it is not part of the Cloudflare runtime. Its database and deployment history remain separate, so rolling back to that adapter does not carry Cloudflare rooms with it.
+
+For an existing Netlify project, the committed configuration builds `dist/`, bundles the API and cleanup functions, and applies committed migrations. Netlify Database requires a supported credit-based plan. For local compatibility work, authenticate the Netlify CLI, link that project, run `bun run dev:netlify`, and apply local migrations in a second terminal with `bunx netlify-cli@26.0.0 database migrations apply`. Keep platform credentials out of the Cloudflare runtime. The [legacy adapter checks](validation.md#legacy-netlify-compatibility) use a disposable Postgres schema without Netlify credentials.
 
 ## Standalone Bun hosting
 
@@ -97,13 +135,13 @@ Open **Canvas options → Connection details** to see the effective profile/buil
 
 Open **Canvas options → Performance**, or **Room → Performance** in Space & Time, for a local responsiveness index, measured work, and workload context. Measurements stay in the browser; reports download only when requested. See the [performance guide](performance.md) for coverage, interpretation, and comparing changes.
 
-`/api/config` identifies the effective transport, profile, protocol, and build; `/api/health` checks the hosting adapter's health. The public configuration contains STUN settings and a TURN-availability flag, never credentials. Both adapters share validation and session policy. Hosted polling delivers targeted batches, skips unchanged rosters, catches up immediately when more events remain, and retries only idempotent signaling when the server advertises support. Chat is not retried automatically.
+`/api/config` identifies the effective transport, profile, protocol, and build; `/api/health` checks the hosting adapter's health. The public configuration contains STUN settings and a TURN-availability flag, never credentials. The hosting adapters share protocol validation and network policy. Hosted polling delivers targeted batches, skips unchanged rosters, catches up immediately when more events remain, and retries only idempotent signaling when the server advertises support. Chat is not retried automatically.
 
 ### Request logs and traces
 
 Responses include `X-Common-Request-Id`, `X-Common-Build`, `X-Common-Protocol`, and `traceparent` for correlation. Diagnostics are off by default. Set `COMMON_LOG_DIAGNOSTICS=1` for redacted JSON with route category, method, status, duration, build/protocol, and generated IDs. It omits room IDs, URLs/queries, message bodies, canvas content, and credentials.
 
-For an organization OpenTelemetry collector, set `COMMON_OTLP_ENDPOINT` to its full HTTP(S) traces URL, such as `http://127.0.0.1:4318/v1/traces`. `COMMON_OTLP_TOKEN` is an optional server-side Bearer secret. Export waits at most `COMMON_OTLP_TIMEOUT_MS` (default 500 ms; bounded to 25–750 ms); collector failures do not fail a room request. No Cloudflare or observability account is required. Use the guide's short two-browser walkthrough to confirm actual peer video and capture on your devices.
+For an organization OpenTelemetry collector, set `COMMON_OTLP_ENDPOINT` to its full HTTP(S) traces URL, such as `http://127.0.0.1:4318/v1/traces`. `COMMON_OTLP_TOKEN` is an optional server-side Bearer secret. Export waits at most `COMMON_OTLP_TIMEOUT_MS` (default 500 ms; bounded to 25–750 ms); collector failures do not fail a room request. A separate observability account is not required. Use the guide's short two-browser walkthrough to confirm actual peer video and capture on your devices.
 
 ### Peer connections and video
 
@@ -115,7 +153,7 @@ Direct WebRTC is the default path for canvas and video; the private profile has 
 
 ### An optional organization relay
 
-If your organization chooses a TURN relay, set `TURN_URLS` plus `TURN_SECRET`, or `TURN_USERNAME` and `TURN_CREDENTIAL`, in the server environment. On Netlify, scope these to Functions and never prefix secrets with `VITE_`. Credentials are returned only after room-token authentication and never appear in public runtime configuration. With coturn REST authentication, match `TURN_SECRET` to `static-auth-secret` with `use-auth-secret` so the server generates expiring credentials; static credentials should use a dedicated, restricted account. The browser refreshes cached ICE settings before connection restarts. Common does not operate a relay service.
+If your organization chooses a TURN relay, set `TURN_URLS` plus `TURN_SECRET`, or `TURN_USERNAME` and `TURN_CREDENTIAL`, in the server environment. On Cloudflare, use Worker secrets for credentials; on legacy Netlify, scope them to Functions. Never prefix secrets with `VITE_`. Credentials are returned only after room-token authentication and never appear in public runtime configuration. With coturn REST authentication, match `TURN_SECRET` to `static-auth-secret` with `use-auth-secret` so the server generates expiring credentials; static credentials should use a dedicated, restricted account. The browser refreshes cached ICE settings before connection restarts. Common does not operate a relay service.
 
 ## Docker
 
@@ -132,13 +170,15 @@ To customize network policy or an origin allowlist, pass the relevant environmen
 
 Room creation is open to visitors; there is no separate administrator account, identity provider, invitation allowlist, or host recovery flow. The creator's browser holds the host access token in session storage. Room metadata can be looked up by its opaque room ID; participation requires a password-derived session token. Passwords are hashed with scrypt and are not included in room URLs.
 
-On Netlify, rooms expire after 24 hours, connected presence leases last two minutes, and an initial admission lease lasts one minute before connecting. These leases track connection activity; they do not reserve seats. An expired presence lease requires reconnecting with a still-valid token. Connecting renews the 24-hour token lifetime, while the room's expiry remains unchanged. Reloading preserves the participant identity and host access; explicitly leaving revokes that token. Scheduled cleanup removes expired room data, with additional cleanup on room creation and connect.
+On Cloudflare, rooms expire after 24 hours, connected presence leases last two minutes, and an initial admission lease lasts one minute before connecting. These leases track connection activity; they do not reserve seats. An expired presence lease requires reconnecting with a still-valid token. Connecting renews the 24-hour token lifetime, while the room's expiry remains unchanged. Reloading preserves the participant identity and host access; explicitly leaving revokes that token. Durable Object alarms and request-time cleanup remove expired room data. Password hashing retains the Node-compatible scrypt format used by the existing adapters; this does not make their room stores interchangeable.
+
+The admission object permits at most 1000 live room reservations globally, with per-IP limits of 15 creates and 30 joins per minute. Events are retained for up to ten minutes; delivery batches are bounded to 64 events and 512 KiB. A reconnect can require a fresh roster and peer synchronization. These controls are service protections, not a participant cap or measured capacity promise.
 
 The standalone Bun service retains its seven-day room lifetime and refreshes token expiry on a WebSocket connection.
 
 ### Capacity and growth
 
-Sparse routing bounds each browser's canvas neighbors, but every browser still receives and stores the full shared document. Local edits are constrained by a 1000-object limit and a 16 MiB materialized-content budget; concurrent peer changes can exceed local budgets, so they are not a global memory guarantee. Yjs history and decoded images add overhead. Hosted delivery omits unchanged rosters and irrelevant signals, but roster changes, presence, chat fan-out, and database/polling work still grow with usage. Backend room serialization and rate/resource limits remain relevant. There is no measured room-size or simultaneous-video capacity guarantee.
+Sparse routing bounds each browser's canvas neighbors, but every browser still receives and stores the full shared document. Local edits are constrained by a 1000-object limit and a 16 MiB materialized-content budget; concurrent peer changes can exceed local budgets, so they are not a global memory guarantee. Yjs history and decoded images add overhead. Hosted delivery omits unchanged rosters and irrelevant signals, but roster changes, presence, chat fan-out, and Durable Object/polling work still grow with usage. Backend room serialization and rate/resource limits remain relevant. There is no measured room-size or simultaneous-video capacity guarantee.
 
 Larger canvases need interest regions or document/awareness sharding, so devices receive relevant content. Larger rooms need incremental roster deltas and less room-wide presence work beyond today's omission of unchanged rosters. A large audience may need a separately operated SFU to receive one upstream presenter stream and forward it. Common does not include that server or a turnkey integration. These remain further development steps.
 
@@ -146,7 +186,7 @@ Before a public rollout, assess your deployment's capacity, access requirements,
 
 ## How the pieces fit
 
-WebAssembly runs the canvas geometry kernel for grid snapping and drawing simplification. The interface is JavaScript, with a JavaScript geometry fallback. Yjs synchronizes standard canvas content directly between browsers over a sparse WebRTC network. Video connections are selected separately, so joining a room does not require receiving everyone's screen. The standalone Bun server handles temporary room access, presence, chat, and connection signaling on your own machine. The optional Netlify deployment uses Functions and a small Postgres database for those same tasks. The frontend reads `/api/config` at startup, so the same built files select the local WebSocket or hosted polling transport at runtime.
+WebAssembly runs the canvas geometry kernel for grid snapping and drawing simplification. The interface is JavaScript, with a JavaScript geometry fallback. Yjs synchronizes standard canvas content directly between browsers over a sparse WebRTC network. Video connections are selected separately, so joining a room does not require receiving everyone's screen. The standalone Bun server handles temporary room access, presence, chat, and connection signaling on your own machine. Cloudflare Workers uses one SQLite-backed Durable Object per room for those same tasks, with a separate admission object for global controls. The legacy Netlify adapter uses Functions and Postgres. The frontend reads `/api/config` at startup, so the same built files select the local WebSocket or hosted polling transport at runtime.
 
 ## Development and troubleshooting
 

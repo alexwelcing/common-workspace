@@ -51,6 +51,11 @@ jobs:
         env:
           # GitHub's Ubuntu image includes Chrome; use it without a download.
           CHROMIUM_PATH: /usr/bin/google-chrome
+      - name: Cloudflare API contracts and five browser journeys
+        if: github.event_name != 'workflow_dispatch' || inputs.scope == 'journeys'
+        run: bun run check:cloudflare --browser
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
       - name: Investigate the selected area
         if: github.event_name == 'workflow_dispatch' && inputs.scope != 'journeys'
         env:
@@ -71,6 +76,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: check-failure-${{ github.run_id }}
-          path: artifacts/check/
+          path: |
+            artifacts/check/
+            artifacts/check-cloudflare/
           retention-days: 7
           if-no-files-found: ignore

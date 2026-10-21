@@ -15,11 +15,15 @@
     "build:module": "bun scripts/build-module.mjs",
     "pack:module": "bun scripts/pack-module.mjs",
     "start": "bun server.mjs",
-    "lint": "oxlint src sdk lib netlify scripts examples/bun-embed server.mjs vite.config.js tests/browser-smoke.mjs",
+    "lint": "oxlint src sdk lib cloudflare netlify scripts examples/bun-embed server.mjs vite.config.js tests/browser-smoke.mjs",
     "test": "bun scripts/check.mjs",
     "check": "bun scripts/check.mjs",
     "check:deep": "bun scripts/check-deep.mjs",
-    "check:page-context": "bun scripts/check-page-context.mjs"
+    "check:page-context": "bun scripts/check-page-context.mjs",
+    "dev:cloudflare": "bun run build && wrangler dev --ip 127.0.0.1",
+    "check:cloudflare": "bun scripts/check-cloudflare.mjs",
+    "deploy": "bun run build && wrangler deploy",
+    "deploy:cloudflare": "bun run build && wrangler deploy"
   },
   "dependencies": {
     "@netlify/database": "^2.0.1",
@@ -38,7 +42,8 @@
     "pg": "^8.23.1",
     "playwright-core": "1.64.1",
     "vite": "^6.3.6",
-    "wabt": "^1.0.38"
+    "wabt": "^1.0.38",
+    "wrangler": "4.151.3"
   },
   "packageManager": "bun@1.4.3",
   "engines": {

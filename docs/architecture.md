@@ -2,14 +2,14 @@
 
 Common puts the shared workspace in people's browsers. A small room service
 helps them join, find each other, and exchange connection information. The same
-frontend runs with a standalone Bun server, inside another Bun app, or on Netlify.
+frontend runs with a standalone Bun server, inside another Bun app, or on Cloudflare Workers.
 
 ## Follow a room from the browser
 
 ```mermaid
 flowchart LR
   A[Browser A] <-->|Canvas edits and selected video over WebRTC| B[Browser B]
-  A <-->|Admission, presence, chat, signaling| R[Room service: Bun or Netlify]
+  A <-->|Admission, presence, chat, signaling| R[Room service: Bun or Cloudflare]
   B <-->|Admission, presence, chat, signaling| R
 ```
 
@@ -24,7 +24,7 @@ The [room protocol](../API.md) also documents legacy server-canvas rooms.
 | --- | --- | --- |
 | Workspace | Objects, tools, personal views, and presentation | [`src/main.js`](../src/main.js), [`src/spatial/main.js`](../src/spatial/main.js), [`src/board.js`](../src/board.js) |
 | Shared documents | Canvas convergence and, for Space & Time, board history | [`src/shared-canvas.js`](../src/shared-canvas.js), [`src/peer-canvas.js`](../src/peer-canvas.js), [`src/spatial/store.js`](../src/spatial/store.js) |
-| Room service | Password admission, participant presence, signaling, chat, and session metadata | [`lib/local-session.mjs`](../lib/local-session.mjs), [`netlify/lib/api.mjs`](../netlify/lib/api.mjs), [`lib/session-protocol.mjs`](../lib/session-protocol.mjs) |
+| Room service | Password admission, participant presence, signaling, chat, and session metadata | [`cloudflare/worker.mjs`](../cloudflare/worker.mjs), [`cloudflare/session.mjs`](../cloudflare/session.mjs), [`lib/local-session.mjs`](../lib/local-session.mjs), [`lib/session-protocol.mjs`](../lib/session-protocol.mjs) |
 
 Classic is the default and uses Yjs for shared canvas state. Space & Time uses
 Loro's WebAssembly engine for boards and automatic history. Resolve a room's
@@ -57,12 +57,15 @@ retention rules. See [hosting and data handling](hosting.md) for the details.
 - **Embedded Bun:** `createCommon` attaches to the host's existing fetch and
   WebSocket server; `mountCommon` loads the UI in a same-origin iframe. The
   adapter defaults to in-memory rooms and private networking.
-- **Netlify:** static frontend assets use Functions and Postgres for room
-  coordination through HTTP polling.
+- **Cloudflare Workers:** Worker Static Assets serves the frontend. The Worker
+  routes the polling API to one SQLite-backed `CommonRoom` Durable Object per
+  room; a `CommonAdmission` object controls creation and admission limits.
+- **Legacy Netlify:** Functions and Postgres remain available for compatibility
+  checks and rollback; they are separate from the Cloudflare room store.
 
 The frontend reads `/api/config` at startup to select the transport and network
 profile. The [embedding guide](embedding.md) explains SDK ownership and cleanup;
-the [hosting guide](hosting.md) covers standalone and Netlify setup.
+the [hosting guide](hosting.md) covers standalone and Cloudflare setup, plus the legacy Netlify adapter.
 
 ## Add an agent at the canvas boundary
 

@@ -2,7 +2,7 @@
 
 Open **Canvas options → Performance** in the standard canvas, or **Room → Performance** in Space & Time. The panel describes the current browser. It cannot report the health of every participant, the host server, or the whole room.
 
-Measurements stay in this tab. There is no analytics service, account, or diagnostic upload. The same collector runs in local Bun installations and on Netlify.
+Measurements stay in this tab. There is no analytics service, account, or diagnostic upload. The same collector runs in local Bun installations and on Cloudflare.
 
 Use it during feature development to spot expensive work, compare a change, and decide where to profile next. The score is a starting point; operation timings and the complete user action provide the evidence.
 
@@ -42,7 +42,7 @@ Autosave and replay import/export include asynchronous waiting. A slow storage t
 3. Perform the sequence several times. Read coverage, sample counts, raw operation median/p95/maximum, failures, and workload alongside the score. Check that the expected operations were actually measured. Download the baseline report and keep its build identifiers with the action sequence and environment notes. Development build identifiers describe committed source; record the working-tree diff as well.
 4. Make one change, reload the same scene, reset, warm up, and repeat. Keep the second report beside the baseline. Compare complete-action time as well as named operations; fewer repeated renders or history reads can matter even when each individual sample is fast.
 5. Use Chrome DevTools **Performance** to record the specific action when the expensive call is unclear. Inspect the main-thread call tree and self time; use temporary numeric counters to check suspected repeated work. Capture this trace separately from the comparison runs because profiling adds overhead. Check idle periods, inactive boards, and hidden tabs for work that should have stopped or reused a cached result.
-6. For collaboration changes, repeat with two real browser profiles and the intended network. Compare local Bun and Netlify runs when the hosting boundary matters; reports from different devices are not interchangeable benchmarks.
+6. For collaboration changes, repeat with two real browser profiles and the intended network. Compare local Bun and Cloudflare runs when the hosting boundary matters; reports from different devices are not interchangeable benchmarks.
 
 Timing boundaries matter. The [first developer investigation](performance-investigation.md) found spatial edit preflight work outside the `spatial-edit` timer. A fast named operation can miss expensive work before or after it, and short delays may escape the responsiveness signals. Follow a suspicious action through the profiler rather than treating a healthy index as proof that it is cheap.
 

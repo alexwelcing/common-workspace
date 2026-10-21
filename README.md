@@ -4,7 +4,7 @@ A shared browser canvas for the work you want to talk through. Share live window
 write and draw together, arrange ideas, and let an agent help you explain what is
 happening. Use it for a team walkthrough, a design review, or a quiet solo session.
 
-- **Try it now:** open [commonwork.netlify.app](https://commonwork.netlify.app/).
+- **Try it now:** open [commonwork.aw-ab5.workers.dev](https://commonwork.aw-ab5.workers.dev/).
 - **Run it locally:** follow the [Bun quickstart](#run-on-your-own-laptop) below.
 - **Add it to your app:** use the [Bun integration guide](docs/embedding.md).
 - **Work with an agent:** pick an [agent recipe](public/agent-examples.md), or connect your app’s [page context](docs/page-context.md) for a product walkthrough.
@@ -25,8 +25,8 @@ create a room with a password of at least eight characters and share its invite
 link. Send the password separately.
 
 The launcher builds and starts Common with the private network profile: no
-default public STUN or external PlantUML service. Local hosting needs no Netlify
-account, Postgres database, or hosted API key. Run `bun run doctor` if setup needs
+default public STUN or external PlantUML service. Local hosting needs no cloud
+account, database service, or hosted API key. Run `bun run doctor` if setup needs
 attention.
 
 To invite people on other laptops, everyone uses the same reachable HTTPS
@@ -41,7 +41,7 @@ covers built-app commands, Docker, configuration, storage, and network limits.
 | **Classic canvas**, the default | A shared canvas with text, notes, images, drawing, diagrams, layers, chat, and simultaneous window sharing. Guided sessions add participant checklists and featured-screen rotation. |
 | **Space & Time** | Multiple boards, templates, a 3D overview, and automatic history saved on each device. Agents work on the active board. Chat, participant checklists, and featured-screen rotation are classic features. |
 
-Open [Space & Time](https://commonwork.netlify.app/?experience=space), or add
+Open [Space & Time](https://commonwork.aw-ab5.workers.dev/?experience=space), or add
 `?experience=space` to your local address. Existing rooms keep their experience;
 invitations open the right one. Earlier `?beta=space` links still work.
 
@@ -102,14 +102,15 @@ external MCP connections and proposed A2A handoffs. Common imports images from
 your agent’s own generator and has no embedded model credential, remote MCP
 endpoint, or built-in A2A transport.
 
-## Deploy to Netlify
+## Deploy to Cloudflare
 
-Import the repository from GitHub into your Netlify team. The committed
-configuration builds the frontend and deploys the room API and database
-migrations. Netlify Database requires a supported credit-based plan.
+Cloudflare Workers serves the frontend and room API. SQLite-backed Durable
+Objects store temporary room coordination data; canvas documents, window
+streams, and recordings remain in participating browsers.
 
-The [Netlify instructions](docs/hosting.md#deploy-to-netlify) cover build settings,
-local platform development, and what to check after deploying. Browser-to-browser
+The [Cloudflare instructions](docs/hosting.md#deploy-to-cloudflare) cover GitHub
+Workers Builds, Wrangler, local platform development, and deployment checks.
+The same browser polling protocol is used on the hosted app. Browser-to-browser
 canvas and video connections need no mandatory relay service; investigate actual
 connection failures through Connection details.
 

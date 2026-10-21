@@ -27,7 +27,7 @@ Pick the boundary below, reproduce the behavior, and make the smallest useful ch
 | Device persistence and replay files | [`src/spatial/storage.js`](../src/spatial/storage.js), [`src/spatial/archive.js`](../src/spatial/archive.js) | IndexedDB transactions/upgrades and the bounded binary/legacy archive codecs. |
 | Space & Time presentation | [`src/spatial/view.js`](../src/spatial/view.js), [`src/spatial/style.css`](../src/spatial/style.css) | Render controls, board previews, timeline, and personal camera. Shared interaction helpers live in the [UI primitives](workspace-ui.md). |
 | Browser performance | [`src/performance-index.js`](../src/performance-index.js), [`src/performance-panel.js`](../src/performance-panel.js) | Bounded local responsiveness evidence, operation budgets, workload context, and explicit report download; see the [performance guide](performance.md). |
-| Room access and transport | [`src/spatial/session.js`](../src/spatial/session.js), [`src/session-transport.js`](../src/session-transport.js), [`lib/session-protocol.mjs`](../lib/session-protocol.mjs) | Admission, reconnects, signaling, and portable room validation. Adapters live in `lib/local-session.mjs` and `netlify/lib/api.mjs`. |
+| Room access and transport | [`src/spatial/session.js`](../src/spatial/session.js), [`src/session-transport.js`](../src/session-transport.js), [`lib/session-protocol.mjs`](../lib/session-protocol.mjs) | Admission, reconnects, signaling, and portable room validation. Adapters live in `cloudflare/worker.mjs`, `cloudflare/session.mjs`, and `lib/local-session.mjs`; `netlify/lib/api.mjs` is the legacy adapter. |
 | Capture and agent consent | [`src/media.js`](../src/media.js), [`src/capture.js`](../src/capture.js), [`src/spatial/agent.js`](../src/spatial/agent.js) | Browser capture, recording, and selected-board agent permissions. |
 | Embedding and packaging | [`sdk/client.js`](../sdk/client.js), [`sdk/bun.mjs`](../sdk/bun.mjs), [`scripts/build-module.mjs`](../scripts/build-module.mjs) | Host integration, owned-resource cleanup, and the self-contained module artifact. |
 
@@ -117,20 +117,21 @@ Start with the visible error and reproduce in a synthetic room. Preserve a devic
 | Menus trap focus, clip on a phone, or remain active after unmount | View cleanup and `src/ui/workspace-primitives.js`; modal interaction, hidden/inert state, visual viewport placement, reduced motion, and destroyed listeners. |
 | Slow input, drawing, navigation, or replay work | **Canvas options → Performance** or Space & Time **Room → Performance**. Compare signal coverage, operation p95/max/count/failures, and workload in the same scene. Likely contributors are clues, not causal proof; async storage/request waiting alone does not establish UI blocking. Follow the [performance guide](performance.md) before changing budgets or adding hooks. |
 | A `.common` file fails to open | `archive.js` header/length/compression/CRC validation, then `store.js` document/schema/resource validation. Retain legacy import compatibility. |
-| Hosted-only failure | API status/error code, request ID, `netlify/lib/api.mjs`, committed migrations, and deploy logs. See [request diagnostics](hosting.md#runtime-and-reliability-diagnostics); do not assume Space & Time has the classic canvas's diagnostics menu. |
+| Hosted-only failure | API status/error code, request ID, `cloudflare/worker.mjs`, `cloudflare/session.mjs`, Wrangler bindings/migrations, and Worker logs. For legacy Netlify, inspect its adapter, SQL migrations, and deploy logs. See [request diagnostics](hosting.md#runtime-and-reliability-diagnostics); do not assume Space & Time has the classic canvas's diagnostics menu. |
 
 ## Validate the affected behavior
 
 For application behavior changes, start with `bun run check`. It runs lint, builds once, and runs the existing five desktop/phone journeys against a disposable Bun app. The fifth includes native peer media and Space & Time shared edits, placement, autosave/reload, read-only history, and archive export. Read the first failing checkpoint and `artifacts/check/` evidence before rerunning. Use `--skip-build` only while application source is unchanged. Prose-only edits need a review of their links and instructions; see [validation](validation.md).
 
-For adapter changes, set `COMMON_TEST_DATABASE_URL` to a **disposable** Postgres database and run `bun run check --all-adapters`; CI does the same. Never use a production database. Missing native peer connectivity is an incomplete check, not a reason to replace it with simulated success.
+For Cloudflare adapter changes, run `bun run check:cloudflare --browser`; CI includes that native Worker/Durable Object check. Also run the default Bun check when shared behavior changes. The legacy `bun run check --all-adapters` covers Bun and Netlify only and requires `COMMON_TEST_DATABASE_URL` set to a **disposable** Postgres database. Never use a production database. Missing native peer connectivity is an incomplete check, not a reason to replace it with simulated success.
 
 Run existing deep checks only where needed:
 
 | Changed boundary | Command |
 | --- | --- |
 | Classic document merging, ordering, or topology | `bun run check:deep canvas` |
-| Admission/protocol and hosted transactions | `bun run check:deep sessions hosted` |
+| Admission/protocol | `bun run check:deep sessions` plus `bun run check:cloudflare --browser` |
+| Legacy Netlify transactions | `bun run check:deep hosted` |
 | Capture, video, or recording | `bun run check:deep media` |
 | Agent access and cancellation | `bun run check:deep agents` |
 | Startup, configuration, or request diagnostics | `bun run check:deep runtime` |
@@ -145,7 +146,7 @@ For UI changes, check keyboard entry and dismissal, phone layout, reduced motion
 
 Update `package.json` for the application release and `module/package.json` for a changed distributed module. Keep `CHANGELOG.md`, release links, and archive filenames in the README, embedding guide, and Bun example consistent. The application tag is `v<application version>`; the module has its own version.
 
-Review the diff and pass the relevant checks. Verify `public/agent-tools.json` matches its source: builds generate that public schema, so commit intentional changes. Validate both adapters before merging changes that span them.
+Review the diff and pass the relevant checks. Verify `public/agent-tools.json` matches its source: builds generate that public schema, so commit intentional changes. Validate each affected hosting adapter before merging changes that span them.
 
 ### 2. Verify the packaged module
 
@@ -155,9 +156,11 @@ Install that archive into a fresh Bun consumer. Exercise the included example, m
 
 ### 3. Review the deployment
 
-Review the Netlify Deploy Preview for the intended commit. Netlify uses `netlify.toml` to build `dist/`; committed migrations apply through deployment. Review additive migrations in source instead of making production-only schema changes.
+Review the Cloudflare Workers Build for the intended commit. It installs the frozen Bun lockfile, builds `dist/`, and deploys through `wrangler.jsonc`. Review Durable Object binding and migration changes in source; keep existing migration tags stable. A successful frontend build alone does not verify the room backend.
 
-After merging, confirm production's deploy commit, migration result, and `/api/health`. Correlate `X-Common-Build` with the configured commit/deploy ID.
+After merging, confirm production's deploy commit and Worker version, `/api/health` reporting `platform: "cloudflare"`, and `/api/config` selecting polling. Correlate `X-Common-Build` with Worker version metadata or the configured build ID. Run a fresh two-profile room at the production origin, including shared edits, chat, reconnect, and peer video. A new deployment does not import legacy Netlify rooms or origin-specific browser storage; follow the [migration notes](hosting.md#moving-from-netlify).
+
+The Netlify adapter and its committed SQL migrations remain for compatibility/rollback. Validate its separate deploy and database only when operating that legacy path.
 
 ### 4. Publish and verify the release artifact
 

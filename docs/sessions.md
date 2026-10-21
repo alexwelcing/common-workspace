@@ -26,7 +26,7 @@ The planning list is not an identity check or invitation restriction. Everyone s
 
 In classic, choose **Room style** while creating a session, or open **Canvas options → Room style** afterward. In Space & Time, open **Room → Room style**. Start with **Meadow**, **Rose**, **Lagoon**, or **Lavender**, then choose custom accent and canvas colors and a **Little dots**, **Quiet grid**, or **Plain canvas** background. The preview stays in the editor until you apply it.
 
-The host controls the shared style; everyone receives it when joining, reconnecting, or reloading. Room style works in freeform and guided rooms on Netlify, standalone Bun, and embedded installations. Participants can inspect the style, while only the host can apply changes. Existing rooms start in Meadow.
+The host controls the shared style; everyone receives it when joining, reconnecting, or reloading. Room style works in freeform and guided rooms on Cloudflare, standalone Bun, and embedded installations. Participants can inspect the style, while only the host can apply changes. Existing rooms start in Meadow.
 
 Room colors style the interface and background. Existing notes, drawings, and diagrams keep their own colors; a dark canvas can need lighter text. PNG snapshots, canvas recordings, and SVG exports include the background. A personal canvas has **Canvas options → Canvas style**, saved only in this browser. Styling needs no account, external asset, or new service.
 
