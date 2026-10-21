@@ -181,48 +181,51 @@ export class CommonRoom {
   }
 
   async fetch(request) {
-    // Password derivation and streamed request parsing yield. Hold the room gate
-    // across them, then atomically commit SQLite changes before releasing it.
+    const url = new URL(request.url), prepared = {};
+    // Read untrusted streams and derive passwords before taking the room gate:
+    // a slow upload must not block other participants or reset the room object.
+    try {
+      if (!['GET', 'POST'].includes(request.method)) throw error(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
+      if (request.method === 'POST') verifyOrigin(request);
+      const route = url.pathname.match(/^\/api\/rooms\/([A-Za-z0-9_-]{1,100})(?:\/(join|session|connect|events|messages|leave))?$/);
+      if (url.pathname !== '/api/rooms' && url.pathname !== '/api/ice' && !route) throw error(404, 'NOT_FOUND', 'Endpoint not found.');
+      if (route) {
+        const action = route[2];
+        const expected = ['join', 'connect', 'messages', 'leave'].includes(action) ? 'POST' : 'GET';
+        if (request.method !== expected) throw error(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
+        if (action === 'events') {
+          const after = url.searchParams.get('after') ?? '0';
+          if (!/^\d{1,19}$/.test(after) || BigInt(after) > 9223372036854775807n) throw error(400, 'INVALID_CURSOR', 'Invalid event cursor.');
+        }
+      } else if ((url.pathname === '/api/rooms' && request.method !== 'POST') || (url.pathname === '/api/ice' && request.method !== 'GET')) {
+        throw error(404, 'NOT_FOUND', 'Endpoint not found.');
+      }
+      if (request.method === 'POST') prepared.input = await body(request, url.pathname === '/api/rooms' ? 64 * 1024 : MAX_BODY);
+      if (url.pathname === '/api/rooms' && request.method === 'POST') {
+        prepared.input = normalizeRoomCreation(prepared.input);
+        prepared.salt = randomBytes(16).toString('hex');
+        prepared.passwordHash = (await scrypt(prepared.input.password, prepared.salt, 64)).toString('hex');
+      } else if (url.pathname.endsWith('/join') && request.method === 'POST') {
+        prepared.input = normalizeJoin(prepared.input);
+        const id = url.pathname.split('/')[3];
+        // Room identity/password are immutable; handle() revalidates lifetime and
+        // ended state inside the transaction after this asynchronous derivation.
+        const room = this.readRoom(id);
+        prepared.passwordHash = await scrypt(prepared.input.password, room.password_salt, 64);
+      } else if (url.pathname.endsWith('/messages') && request.method === 'POST') {
+        prepared.input = normalizeEnvelope(prepared.input, { maxBytes: MAX_BODY });
+      }
+    } catch (failure) {
+      if (request.body && !request.bodyUsed) await request.body.cancel().catch(() => {});
+      return failureResponse(failure);
+    }
     return this.state.blockConcurrencyWhile(async () => {
       try {
-        const url = new URL(request.url);
-        if (!['GET', 'POST'].includes(request.method)) throw error(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
-        if (request.method === 'POST') verifyOrigin(request);
-        const route = url.pathname.match(/^\/api\/rooms\/([A-Za-z0-9_-]{1,100})(?:\/(join|session|connect|events|messages|leave))?$/);
-        if (url.pathname !== '/api/rooms' && url.pathname !== '/api/ice' && !route) throw error(404, 'NOT_FOUND', 'Endpoint not found.');
-        if (route) {
-          const action = route[2];
-          const expected = ['join', 'connect', 'messages', 'leave'].includes(action) ? 'POST' : 'GET';
-          if (request.method !== expected) throw error(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
-          if (action === 'events') {
-            const after = url.searchParams.get('after') ?? '0';
-            if (!/^\d{1,19}$/.test(after) || BigInt(after) > 9223372036854775807n) throw error(400, 'INVALID_CURSOR', 'Invalid event cursor.');
-          }
-        } else if ((url.pathname === '/api/rooms' && request.method !== 'POST') || (url.pathname === '/api/ice' && request.method !== 'GET')) {
-          throw error(404, 'NOT_FOUND', 'Endpoint not found.');
-        }
-        const prepared = {};
-        if (request.method === 'POST') prepared.input = await body(request, url.pathname === '/api/rooms' ? 64 * 1024 : MAX_BODY);
-        if (url.pathname === '/api/rooms' && request.method === 'POST') {
-          prepared.input = normalizeRoomCreation(prepared.input);
-          prepared.salt = randomBytes(16).toString('hex');
-          prepared.passwordHash = (await scrypt(prepared.input.password, prepared.salt, 64)).toString('hex');
-        } else if (url.pathname.endsWith('/join') && request.method === 'POST') {
-          prepared.input = normalizeJoin(prepared.input);
-          const id = url.pathname.split('/')[3];
-          const room = this.readRoom(id);
-          prepared.passwordHash = await scrypt(prepared.input.password, room.password_salt, 64);
-        }
         const response = this.state.storage.transactionSync(() => this.handle(request, url, prepared));
         await this.scheduleAlarm();
         await this.state.storage.sync();
         return response;
-      } catch (failure) {
-        // A rejected content type/origin can leave the forwarded request stream
-        // unread. Cancel it before returning across the Durable Object boundary.
-        if (request.body && !request.bodyUsed) await request.body.cancel().catch(() => {});
-        return failureResponse(failure);
-      }
+      } catch (failure) { return failureResponse(failure); }
     });
   }
 

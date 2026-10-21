@@ -152,7 +152,7 @@ export class CommonAdmission extends BaseAdmission {}
     throw new Error(`Local Wrangler did not become healthy. ${clean(server.output())}`);
   };
   await step('Start disposable Cloudflare runtime', () => start('workerd'));
-  await step('Real Worker HTTP contract tests', () => command(process.execPath, process.versions.bun ? ['test', './tests/cloudflare.test.mjs'] : ['--test', './tests/cloudflare.test.mjs'], 'api-tests', { COMMON_TEST_CLOUDFLARE_URL: baseUrl }));
+  await step('Real Worker HTTP contract tests', () => command('node', ['--test', './tests/cloudflare.test.mjs'], 'api-tests', { COMMON_TEST_CLOUDFLARE_URL: baseUrl }));
   await step('Worker API has no uncaught runtime exceptions', () => {
     assert.doesNotMatch(server.output(), /\bUncaught\b/, 'workerd reported an uncaught exception; inspect workerd.log');
   });

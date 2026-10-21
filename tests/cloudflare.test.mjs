@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import { creationCases, joinCases, activityCases, validCreation } from './protocol-cases.mjs';
 
 const endpoint = process.env.COMMON_TEST_CLOUDFLARE_URL;
@@ -20,9 +21,10 @@ if (endpoint) {
 function fixture() {
   let offset = 0;
   const ip = `192.0.2.${nextAddress++}`;
-  async function request(route, { method = 'GET', body, auth, headers = {}, raw } = {}) {
+  async function request(route, { method = 'GET', body, auth, headers = {}, raw, signal } = {}) {
     const response = await fetch(new URL(route, endpoint), {
       method,
+      signal,
       headers: {
         'CF-Connecting-IP': ip,
         // This header is interpreted only by the generated local test subclass.
@@ -174,6 +176,47 @@ test('Cloudflare connection takeover rejects stale pollers and preserves one ide
   assert.equal((await f.send(stale, { type: 'chat', text: 'stale' })).code, 'CONNECTION_REPLACED');
   const current = await f.poll(host);
   assert.equal(current.participants.filter(person => person.id === host.participantId).length, 1);
+});
+
+test('Cloudflare slow unauthenticated uploads cannot block an admitted room', integration, async () => {
+  const f = fixture(), host = await f.create();
+  assert.equal(host.status, 201);
+  assert.equal((await f.connect(host)).status, 200);
+  let upload, responseStatus;
+  const completed = new Promise((resolve, reject) => {
+    upload = httpRequest(new URL(`/api/rooms/${host.room.id}/messages`, endpoint), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked', 'CF-Connecting-IP': '192.0.2.240' },
+    }, response => {
+      responseStatus = response.statusCode;
+      response.resume();
+      response.once('end', () => resolve(response.statusCode));
+      response.once('error', reject);
+    });
+    upload.once('error', reject);
+    upload.setTimeout(8000, () => upload.destroy(new Error('Slow-upload regression request timed out.')));
+  });
+  // Attach rejection handling before any socket event can occur. The assertion
+  // below still awaits the original result after releasing the body.
+  void completed.catch(() => {});
+  try {
+    upload.flushHeaders();
+    await new Promise((resolve, reject) => upload.write('{"type":', error => error ? reject(error) : resolve()));
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(responseStatus, undefined, 'the incomplete upload must remain pending during the competing read');
+    const result = await f.request(`/api/rooms/${host.room.id}/events?after=${host.cursor}`, {
+      auth: host, signal: AbortSignal.timeout(3000),
+    });
+    assert.equal(result.status, 200, 'an admitted participant must remain able to poll before the unauthenticated upload finishes');
+    assert.equal(responseStatus, undefined, 'the authenticated poll must finish before releasing the uploaded body');
+    upload.end('"ping"}');
+    assert.equal(await completed, 401);
+  } finally {
+    if (!upload.destroyed && !upload.writableEnded) upload.end('"ping"}');
+    // Destroy even when a poll assertion fails so an incomplete upload cannot
+    // keep the test process or disposable Worker alive.
+    upload.destroy();
+  }
 });
 
 test('Cloudflare expired leases cannot be revived by polling or messages', integration, async () => {
